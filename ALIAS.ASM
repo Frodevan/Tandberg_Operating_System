@@ -8,10 +8,11 @@
 ;//
 ;//                 filename    Name of file
 ;//                 aliasname   Name of alias to file
-;//                 Tn          Drive type and number, default :F1:
+;//                 Tn          Drive type and number, default :F0:
 ;//
 ;//                 Drive type T:
 ;//                     F       Floppy
+;//                     M       Tape
 ;//
 ;//                 Drive number n:
 ;//                     0-3
@@ -23,7 +24,12 @@
 ;//         update the contents of the original file and all other aliases of the
 ;//         file.
 ;//
-;//         NOTE: Uses XMON API calls for disk operations.
+;//         NOTE: Uses XMON API calls for tape and disk operations. For some XMON
+;//               versions, the tape API was an optional add-on. For other versions
+;//               the API calls previously used by tape may be repurposed for other
+;//               things, like a double-sided double-density floppy disk API. Care
+;//               should therefore be taken if running this with a tape device.
+;//
 ;//
 ;//         Changelog:
 ;//
@@ -36,6 +42,23 @@
 ;//                 -> Has a bug where the pointer to the alias filename to be
 ;//                    printed if file already exists, is off by one
 ;//
+;//             1.5: Entry at 0xC000
+;//
+;//                 -> Clears file-entry buffer at program start
+;//                 -> Adds support for files on tape
+;//                 -> Flushes the remaining console input before program ends
+;//                 -> Fixes drive-number check from v1.3
+;//                 -> Fixes default-drive bug from v1.3
+;//                 -> Fixes off-by-one pointer bug from v1.3
+;//                 -> Prints alias name after making alias
+;//                 -> Preserves all but the system attribute for the alias file,
+;//                    instead of clearing them
+;//                 -> Double-buffers alias file-entry before writing to disk
+;//                 -> Uses XMON API call for LOCDIR instead of TOS wrapper call
+;//                 -> Removes "ALREADY" from the "ALREADY EXISTS" error message
+;//                 -> Adds a bug where the last 9 bytes of the tape buffer does
+;//                    not get cleared to zero on program start
+;//
 
 
 ;//////////////////////////////////////////////////////////////////////////////
@@ -47,12 +70,19 @@
 ;
 ; ASCII control characters
 ;
+NULL        EQU     000H        ; Null character
 CR          EQU     00DH        ; Cartridge Return
 
 ;
 ; XMON system calls
 ;
 DSWRW       EQU     00076H      ; Write to disk and wait
+LOCDIR      EQU     00085H      ; Look up filetable entry of filename on disk
+CBWRW       EQU     000B2H      ; Write data to tape cartridge
+CBBSW       EQU     000B5H      ; Backspace one block on tape cartridge and wait
+CBTMW       EQU     000B8H      ; Write tape mark to tape cartridge
+CLOCDIR     EQU     000C1H      ; Look up filetable entry of filename on tape
+CCAL        EQU     00091H      ; Reset tape cartridge
 
 ;
 ; XMON and TOS system data
@@ -65,9 +95,9 @@ BUF2        EQU     02600H      ; Sector data of last filesystem operation
 ;
 INCHAR      EQU     0FD09H      ; Input single character
 OUTCHAR     EQU     0FD0CH      ; Output single character
+GET         EQU     0FD0FH      ; Input string, inclusive CR
 PUT         EQU     0FD12H      ; Output string of characters, inclusive CR
 PUTSTR      EQU     0FD15H      ; Output string of characters, exclusive CR
-LOCDIR      EQU     0FD85H      ; Look up filetable entry of filename
 FILENAME    EQU     0FDCDH      ; Input TOS filename
 
 ;
@@ -86,11 +116,23 @@ CO_FCB      EQU     0FF02H      ; Console output abstract file FCB pointer
         ORG         0C000H
 start:
         ;
+        ; Clear filename input and tape block buffers to zero
+        ;
+        LXI         D,filename_input_buffer
+        MVI         C,29
+        XRA         A
+clear_buffers_loop:
+        STAX        D
+        INX         D
+        DCR         C
+        JNZ         clear_buffers_loop
+        ;
         ; Assess existence of command line arguments
         ;
         LHLD        CI_FCB
         CALL        INCHAR
         RC
+        STA         previous_input_char
         CPI         CR
         JZ          invalid_input
         ;
@@ -100,16 +142,26 @@ start:
         JNZ         drive_set
         CALL        INCHAR
         RC
+        CALL        to_uppercase
+        STA         previous_input_char
+        STA         drive_designator_str+1
+        CPI         'M'
+        JZ          drive_type_set
         CPI         'F'
         JNZ         invalid_drive
+drive_type_set:
         CALL        INCHAR
         RC
+        STA         previous_input_char
+        STA         drive_designator_str+2
         SUI         '0'
+        JC          invalid_input
         CPI         4
         JNC         invalid_input
         STA         drive_number
         CALL        INCHAR
         RC
+        STA         previous_input_char
         CPI         ':'
         JNZ         invalid_input
         CALL        INCHAR
@@ -121,6 +173,7 @@ drive_set:
         LXI         D,filename_input_buffer
         CALL        FILENAME
         RC
+        STA         previous_input_char
         CPI         ','
         JNZ         invalid_input
         LXI         H,filename_input_buffer
@@ -128,42 +181,55 @@ drive_set:
         RC
         JNZ         invalid_filename
         ;
-        ; Copy filetable entry data to alias filetable entry
+        ; Copy filetable entry data to alias filetable entry and set attributes
         ;
         LXI         D,alias_filetable_entry+00AH
         LXI         B,00AH
         DAD         B
+        MVI         C,9
+        LDA         drive_designator_str+1
+        CPI         'M'
+        JZ          file_metadata_length_set
         MVI         C,6
+file_metadata_length_set:
         CALL        mem_copy
+        LXI         H,alias_filetable_entry+00AH
+        LDA         drive_designator_str+1
+        CPI         'F'
+        JZ          make_alias
+        LXI         H,alias_filetable_entry+012H
+make_alias:
+        MVI         A,008H
+        ORA         M
+        ANI         0FDH
+        MOV         M,A
         ;
         ; Get alias filename and check that it does not exist
         ;
         LHLD        CI_FCB
         CALL        INCHAR
         RC
+        STA         previous_input_char
         CPI         ':'
         JZ          invalid_input
         LXI         D,alias_filetable_entry+001H
         CALL        FILENAME
         RC
+        STA         previous_input_char
         LXI         H,alias_filetable_entry+001H
         CALL        locate_directory
         RC
         JZ          file_exists
         ;
-        ; Copy alias entry into filetable and set file-attribute A
+        ; Copy alias entry into filetable
         ;
-        MVI         M,000H
-        PUSH        H
-        INX         H
-        MVI         C,15
-        LXI         D,alias_filetable_entry+001H
+        LDA         drive_designator_str+1
+        CPI         'M'
+        JZ          update_filetable_on_tape
+        MVI         C,16
+        LXI         D,alias_filetable_entry
         XCHG
         CALL        mem_copy
-        LXI         D,00AH
-        POP         H
-        DAD         D
-        MVI         M,008H
         ;
         ; Write updated filetable back to disk
         ;
@@ -175,22 +241,64 @@ drive_set:
         LXI         H,BUF2
         LDA         drive_number
         CALL        DSWRW
-        RET
+        RC
+        JMP         alias_made
 
 
 ;//////////////////////////////////////
 
+update_filetable_on_tape:
         ;
-        ; Copy memory of length C from (HL) to (DE)
+        ; Verify and save copy of end block on tape directory track
         ;
-mem_copy:
-        MOV         A,M
-        STAX        D
-        INX         H
-        INX         D
-        DCR         C
-        JNZ         mem_copy
-        RET
+        MVI         A,07FH
+        CMP         M
+        MVI         A,03BH
+        STC
+        RNZ
+        MVI         C,32
+        LXI         D,tape_end_block_buffer
+        CALL        mem_copy
+        ;
+        ; Write new filetable entry for alias to tape cartridge
+        ;
+        LDA         drive_number
+        MVI         B,0
+        CALL        CBBSW
+        RC
+        LXI         H,alias_filetable_entry
+        LXI         D,32
+        MVI         B,0
+        LDA         drive_number
+        CALL        CBWRW
+        RC
+        LXI         H,tape_end_block_buffer
+        LDA         drive_number
+        CALL        CBWRW
+        RC
+        LDA         drive_number
+        CALL        CBTMW
+        JNC         reset_tape
+        CPI         048H
+        STC
+        RNZ
+reset_tape:
+        ;
+        ; Rewind tape
+        ;
+        LDA         drive_number
+        CALL        CCAL
+        RC
+
+alias_made:
+        ;
+        ; Print status message and quit program
+        ;
+        LXI         B,alias_filetable_entry+1
+        CALL        print_filename
+        RC
+        LXI         D,made_alias_str
+        JMP         print_and_quit
 
 
 ;//////////////////////////////////////
@@ -199,11 +307,14 @@ invalid_drive:
         LXI         D,improper_unit_str
 
 print_and_quit:
-        ;
-        ; Print error-string and quit program
-        ;
-        LHLD        CO_FCB
+        LHLD        (CO_FCB)
         CALL        PUT
+        RC
+        LDA         (previous_input_char)
+        CPI         CR
+        RZ
+        LHLD        (CI_FCB)
+        CALL        GET
         RET
 
 
@@ -227,11 +338,26 @@ invalid_filename:
 ;//////////////////////////////////////
 
 file_exists:
-        LXI         B,alias_filetable_entry
+        LXI         B,alias_filetable_entry+1
         CALL        print_filename
         RC
         LXI         D,already_exists_str
         JMP         print_and_quit
+
+
+;//////////////////////////////////////
+
+        ;
+        ; Copy memory of length C from (HL) to (DE)
+        ;
+mem_copy:
+        MOV         A,M
+        STAX        D
+        INX         H
+        INX         D
+        DCR         C
+        JNZ         mem_copy
+        RET
 
 
 ;//////////////////////////////////////////////////////////////////////////////
@@ -244,11 +370,38 @@ file_exists:
         ; Locate filetable entry of filename (HL)
         ;
 locate_directory:
+        LDA         drive_designator_str+1
+        CPI         'M'
         LDA         drive_number
+        JZ          locate_directory_tape
         CALL        LOCDIR
         RC
         XRA         A
         ORA         M
+        RET
+
+
+;//////////////////////////////////////
+
+locate_directory_tape:
+        CALL        CLOCDIR
+        RC
+        XRA         A
+        ORA         M
+        RET
+
+
+;//////////////////////////////////////////////////////////////////////////////
+
+        ;
+        ; Convert char in A to uppercase
+        ;
+to_uppercase:
+        CPI         'a'
+        RM
+        CPI         'z'+1
+        RP
+        ANI         0DFH
         RET
 
 
@@ -267,12 +420,10 @@ print_filename:
         ;
         ; Print drive designator
         ;
-        LDA         drive_number
-        ADI         '0'
-        STA         drive_designator_str+2
         LXI         D,drive_designator_str
         LHLD        CO_FCB
         CALL        PUTSTR
+        RC
         ;
         ; Check for file extension and prepare to print filename as a string
         ;
@@ -321,14 +472,22 @@ improper_parameters_str:
 not_found_str:
         DB          '   NOT FOUND',CR
 already_exists_str:
-        DB          '   ALREADY EXISTS',CR
+        DB          '   EXISTS',CR
+made_alias_str:
+        DB          '   MADE ALIAS',CR
 
+previous_input_char:
+        DB          NULL
 drive_number:
-        DB          1
+        DB          0
 
 filename_input_buffer:
         DS          10
 
+tape_end_block_buffer:
+        DS          32
+
 alias_filetable_entry:
-        DS          16
+        DB          000H
+        DS          31
 
