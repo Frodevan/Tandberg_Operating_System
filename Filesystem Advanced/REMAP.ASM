@@ -30,6 +30,11 @@
 ;//                    mapping the remaining entries of the current block of the
 ;//                    directory
 ;//
+;//             1.5: Entry at 0xC000
+;//
+;//                 -> Accepts lowercase input
+;//                 -> Adds a status print after remapping is done
+;//
 
 
 ;//////////////////////////////////////////////////////////////////////////////
@@ -54,12 +59,14 @@ DSWRW       EQU     00076H      ; Write to disk with wait
 ; TOS system calls
 ;
 INCHAR      EQU     0FD09H      ; Input single character
+PUT         EQU     0FD12H      ; Output string of characters, inclusive CR
 LOCDIR      EQU     0FD85H      ; Look up filetable entry of filename on disk
 
 ;
 ; TOS standard files
 ;
 CI_FCB      EQU     0FF00H      ; Console input abstract file FCB pointer
+CO_FCB      EQU     0FF02H      ; Console output abstract file FCB pointer
 
 ;
 ; TOS Errors
@@ -119,6 +126,7 @@ beginning:
         JNZ         invalid_input
         CALL        INCHAR
         RC
+        CALL        to_uppercase
         CPI         'F'
         JNZ         invalid_drive_type
         CALL        INCHAR
@@ -361,6 +369,13 @@ remap_files_done:
         LXI         H,mapfile_data_buffer + 128
         LDA         drive_number
         CALL        DSWRW
+        RC
+        ;
+        ; Print status message
+        ;
+        LXI         D,remapping_done_str
+        LHLD        CO_FCB
+        CALL        PUT
         RET
 
 
@@ -506,6 +521,20 @@ verify_block_reference:
 
 
 ;//////////////////////////////////////////////////////////////////////////////
+
+        ;
+        ; Convert ASCII character in A to uppercase
+        ;
+to_uppercase:
+        CPI         'a'
+        RM
+        CPI         'z'+1
+        RP
+        ANI         0DFH
+        RET
+
+
+;//////////////////////////////////////////////////////////////////////////////
 ;//
 ;//     Errors
 ;//
@@ -540,7 +569,7 @@ quit_with_error:
 
 ;//////////////////////////////////////////////////////////////////////////////
 ;//
-;//     Data
+;//     Strings and data
 ;//
 ;//////////////////////////////////////////////////////////////////////////////
 
@@ -574,3 +603,6 @@ mapfile_data_buffer:
         DS          256
 file_entry_status_byte_ptr:
         DS          2
+
+remapping_done_str:
+        DB          'DISKETTE MAP RE-ESTABLISHED',CR

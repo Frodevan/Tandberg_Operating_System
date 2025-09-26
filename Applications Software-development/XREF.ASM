@@ -1,12 +1,20 @@
 ;//////////////////////////////////////////////////////////////////////////////
 ;//
-;//     XREF - Create cross-reference list from ASM assembly source file
+;//     XREF - Create cross-reference list from RASM/ASM assembly source file
+;//
+;//         Extra parameters:
+;//
+;//             [$[[PL]<pl_nr>][PW<pw_nr>]]
+;//
+;//                 pl_nr       Force $PL argument, page-length (64-132)
+;//                 pw_nr       Force $PW argument, page-width (12-255)
+;//
 ;//
 ;//         Creates a cross-reference listing from an input file containing valid
-;//         assembly-code for ASM, the Tandberg TDV-2100 series Assembler. Input-
-;//         file is defined by SI, and must be set for the program to run. Output
-;//         is printed to SL if set, otherwise CO if SL is not assigned. Page width
-;//         and length is taken from arguments in the source code file.
+;//         assembly-code for ASM/RASM, the Tandberg TDV-2100 series Assemblers.
+;//         Input-file is defined by SI, and must be set for the program to run.
+;//         Output is printed to SL if set, otherwise SO if set, or CO if neither
+;//         SL or SO has been given.
 ;//
 ;//         This program will print out a list of references by line number to all
 ;//         labels in a source code file for the ASM assembler. The list will be
@@ -44,6 +52,23 @@
 ;//                 -> Has a bug where the final page will not be fed out of the
 ;//                    printer all the way
 ;//
+;//             1.4: Entry at 0xC800
+;//
+;//                 -> Fixes the bottom margin bug of v1.2
+;//                 -> Fixes the off-by-one last label database bug from v1.2
+;//                 -> Fixes the final page feed-out bug from v1.2
+;//                 -> Default page length changed from 72 to 48
+;//                 -> Default page width changed from 79 to 110
+;//                 -> Can accept user-input numbers up to and including 65535,
+;//                    instead of the limit of 255 as seen in previous versions
+;//                 -> No longer ignores unexpected non-numeral characters
+;//                    preceding numbers from user input
+;//                 -> Adds new reserved words from RASM
+;//                 -> Adds extra command line arguments
+;//                 -> Adds a bug if PL is set as an extra parameter, but without
+;//                    the explicit PL prefix. The most significant digit will be
+;//                    incorrectly ignored in this case.
+;//
 
 
 ;//////////////////////////////////////////////////////////////////////////////
@@ -55,6 +80,7 @@
 ;
 ; Flag values
 ;
+FALSE       EQU     0           ; Boolean False
 TRUE        EQU     -1          ; Boolean True
 
 ;
@@ -79,8 +105,10 @@ PUTSTR      EQU     0FD15H      ; Output string of characters, exclusive CR
 ;
 ; TOS standard files
 ;
+CI_FCB      EQU     0FF00H      ; Console input abstract file FCB pointer
 CO_FCB      EQU     0FF02H      ; Console output abstract file FCB pointer
 SI_FCB      EQU     0FF04H      ; Standard input abstract file FCB pointer
+SO_FCB      EQU     0FF06H      ; Standard output abstract file FCB pointer
 SL_FCB      EQU     0FF08H      ; Standard line-printer output abstract file FCB pointer
 
 ;
@@ -95,7 +123,7 @@ ERROR_2E    EQU     02EH        ; IMPROPER ASSIGNMENT FORMAT
 ;//
 ;//////////////////////////////////////////////////////////////////////////////
 
-        ORG         0D000H
+        ORG         0C800H
 start:
         ;
         ; Zero all uninitialized working variables
@@ -127,13 +155,13 @@ start:
         CALL        test_memory
         JNZ         ram_to_7fff
         ;
-        ; Memory at both 4000H & 8000H, continous ram pool from 4000H to CFFFH
+        ; Memory at both 4000H & 8000H, continous ram pool from 4000H to C7FFH
         ;
-ram_to_cfff:
+ram_to_c7ff:
         ;
-        ; Set free memory end to CFFFH
+        ; Set free memory end to C7FFH
         ;
-        MVI         A,0CFH
+        MVI         A,0C7H
 set_primary_ram_pool_end:
         STA         free_mem_end_addr_msb
         JMP         verify_files
@@ -146,7 +174,7 @@ check_ram_from_8000:
         CALL        test_memory
         JNZ         ram_from_c000
         ;
-        ; Memory at 8000H only, continous ram pool from 8000H to CFFFH
+        ; Memory at 8000H only, continous ram pool from 8000H to C7FFH
         ;
         JMP         set_continous_ram_pool
 
@@ -159,15 +187,15 @@ ram_to_7fff:
 
 ram_from_c000:
         ;
-        ; No extra memory, so only ram pool available is at C000H-CFFFH
+        ; No extra memory, so only ram pool available is at C000H-C7FFH
         ;
         LXI         H,0C000H
 set_continous_ram_pool:
         ;
-        ; Use one continous block as ram pool, ending at CFFFH
+        ; Use one continous block as ram pool, ending at C7FFH
         ;
         SHLD        free_mem_start_addr
-        JMP         ram_to_cfff
+        JMP         ram_to_c7ff
 
 
 ;//////////////////////////////////////
@@ -183,14 +211,126 @@ verify_files:
         STC
         RZ
         ;
-        ; If output file SL is not assigned, use console instead
+        ; Check if output file SL is assigned
         ;
         LHLD        SL_FCB
         MOV         A,L
         ORA         H
-        JNZ         main
+        JNZ         check_for_cli_args
+        ;
+        ; If not, check if file SO is assigned instead
+        ;
+        LHLD        SO_FCB
+        MOV         A,L
+        ORA         H
+        JNZ         assign_output_file
+        ;
+        ; If neither SL or SO is assigned, use CO as a last-resort
+        ;
         LHLD        CO_FCB
+assign_output_file:
+        ;
+        ; Swap selected output file with SL
+        ;
         SHLD        SL_FCB
+        LXI         H,00000H
+        SHLD        SO_FCB
+
+
+;//////////////////////////////////////
+
+check_for_cli_args:
+        ;
+        ; Check if console input is a buffered input file
+        ;
+        LHLD        CI_FCB
+        MOV         A,M
+        CPI         4
+        JNZ         main
+        ;
+        ; Point to last character in the console input buffer
+        ;
+        INX         H
+        INX         H
+        MOV         C,M         ; CI_FCB + FCB_BUFIDX
+        INX         H
+        MOV         B,M
+        INX         H
+        INX         H
+        INX         H
+        MOV         E,M         ; CI_FCB + FCB_BUFPTR
+        INX         H
+        MOV         D,M
+        XCHG
+        DAD         B
+        ;
+        ; Skip parsing command line arguments if console input buffer is empty
+        ;
+        MOV         A,M
+        CPI         LF
+        JZ          main
+        ;
+        ; Read out command line argument string
+        ;
+        LXI         D,input_line_buffer
+        LHLD        CI_FCB
+        CALL        GET
+        RC
+        ;
+        ; Prepare to parse command line argument string
+        ;
+        LXI         H,input_line_buffer
+        CALL        input_to_uppercase
+        LXI         H,input_line_buffer-1
+parse_next_cli_arg:
+        ;
+        ; Assume a deliminator character between several arguments
+        ;
+        INX         H
+parse_cli_arg:
+        ;
+        ; Check for end of argument string
+        ;
+        MOV         A,M
+        CPI         CR
+        JZ          main
+        ;
+        ; Check if explicit page-size related argument
+        ;
+        CPI         'P'
+        JNZ         implied_page_length_arg
+        INX         H
+        MOV         A,M
+        CPI         'L'
+        JZ          parse_page_length_arg
+        CPI         'W'
+        JNZ         parse_cli_arg
+        INX         H
+        ;
+        ; Set page width from command line argument
+        ;
+        CALL        set_page_width
+        MVI         A,TRUE
+        STA         page_width_from_cli_arg_flag
+        JMP         parse_cli_arg
+
+implied_page_length_arg:
+        ;
+        ; Check for implied page length, without the PL prefix
+        ;
+        CPI         '0'
+        JC          parse_next_cli_arg
+        CPI         '9'+1
+        JNC         parse_next_cli_arg
+parse_page_length_arg:
+        INX         H
+        ;
+        ; Set page length from command line argument
+        ;
+        CALL        set_page_length
+        MVI         A,TRUE
+        STA         page_length_from_cli_arg_flag
+        JMP         parse_cli_arg
 
 
 ;//////////////////////////////////////////////////////////////////////////////
@@ -214,39 +354,21 @@ main:
         RET
 
 parse_input_line:
-        ;
-        ; Convert the entire input string to uppercase
-        ;
-        LXI         H,input_line_buffer
-input_str_to_uppercase_loop:
-        MOV         A,M
-        CPI         CR
-        JZ          input_str_is_uppercase
-        CPI         'a'
-        JC          convert_next_input_str_char
-        CPI         'z'+1
-        JNC         convert_next_input_str_char
-        ANI         0DFH
-        MOV         M,A
-convert_next_input_str_char:
-        INX         H
-        JMP         input_str_to_uppercase_loop
-
-input_str_is_uppercase:
+        CALL        input_to_uppercase
         ;
         ; Advance line counter (BCD format)
         ;
-        LHLD        line_counter_bcd_nr
-        INX         H
+        LXI         H,line_counter_bcd_nr
         XRA         A
-        MOV         A,L
+        MOV         A,M
+        INR         A
         DAA
-        MOV         L,A
-        MOV         A,H
+        MOV         M,A
+        INX         H
+        MOV         A,M
         ACI         0
         DAA
-        MOV         H,A
-        SHLD        line_counter_bcd_nr
+        MOV         M,A
         ;
         ; Replace any alternative whitespace-characters with spaces
         ;
@@ -270,15 +392,13 @@ input_str_is_uppercase:
         CALL        compare_arg_name
         JNZ         check_for_page_length_arg
         ;
-        ; Parse page width, and limit value to within the range of 64 and 132
+        ; Only update page width from source code args if not already set
         ;
+        LDA         page_width_from_cli_arg_flag
+        ORA         A
+        JNZ         main
         SHLD        input_line_ptr
-        CALL        ascii_number_to_bin
-        LXI         H,page_width
-        MVI         D,132
-        MVI         E,64
-store_arg_value:
-        CALL        store_value_limit_range
+        CALL        set_page_width
         JMP         main
 
 check_for_page_length_arg:
@@ -289,14 +409,14 @@ check_for_page_length_arg:
         CALL        compare_arg_name
         JNZ         check_for_title_arg
         ;
-        ; Parse page length, and limit value to within the range of 10 and 255
+        ; Only update page length from source code args if not already set
         ;
+        LDA         page_length_from_cli_arg_flag
+        ORA         A
+        JNZ         main
         SHLD        input_line_ptr
-        CALL        ascii_number_to_bin
-        LXI         H,page_length
-        MVI         D,255
-        MVI         E,10
-        JMP         store_arg_value
+        CALL        set_page_length
+        JMP         main
 
 check_for_title_arg:
         ;
@@ -360,7 +480,7 @@ parse_code_word:
         ;
         ; Check if word matches an opcode from the list
         ;
-        MVI         B,84
+        MVI         B,88
         LXI         H,opcode_database
 compare_next_opcode:
         SHLD        opcode_database_ptr
@@ -827,16 +947,21 @@ print_on_next_line:
         DCR         M
         JNZ         next_line_ready
         ;
-        ; If so, print new page header before continuing
+        ; If so, print bottom margin and new page header before continuing
         ;
-        CALL        print_page_header
+        LXI         D,four_newline_str
+        CALL        print_str_newline
         RC
+        CALL        print_page_header
+        JMP         continue_on_line_start
+
 next_line_ready:
         ;
         ; Move print head or cursor to the next line, and print indentation
         ;
         LXI         D,newline_str
         CALL        print_str_newline
+continue_on_line_start:
         RC
         LXI         D,seven_space_str
         CALL        print_str
@@ -870,15 +995,42 @@ print_label_entry_done:
         ; Check for last entry in label database
         ;
         LHLD        current_label_db_ptr
-        MOV         A,L
-        ORA         H
+        INX         H
+        INX         H
+        XRA         A
+        ORA         M
+        INX         H
+        ORA         M
         JNZ         start_next_page
+        JMP         quit
+
 finish_page_and_quit:
         ;
-        ; Print another bit of margin at the final page of report
+        ; Check if there are any lines of last page to feed out of printer
+        ;
+        LDA         lines_left_on_page
+        ORA         A
+        JZ          final_page_filled
+        ;
+        ; Feed out remaining lines on final page
+        ;
+        MOV         B,A
+fill_final_page_loop:
+        DCR         B
+        JZ          final_page_filled
+        MVI         A,LF
+        CALL        print_char
+        RC
+        JMP         fill_final_page_loop
+
+final_page_filled:
+        ;
+        ; Print bottom margin at the final page of report
         ;
         LXI         D,four_newline_str
         CALL        print_str_newline
+        RET
+
 quit:
         XRA         A
         RET
@@ -931,14 +1083,14 @@ available_mem_block_full:
         ;
         ; Check if available memory is continous or split
         ;
-        CPI         0CFH
+        CPI         0C7H
         JZ          completely_out_of_memory
         ;
         ; If split, forget about first block and start using second block
         ;
         LXI         H,0C000H
         SHLD        free_mem_start_addr
-        MVI         A,0CFH
+        MVI         A,0C7H
         STA         free_mem_end_addr_msb
         POP         PSW
         JMP         allocate_in_current_block
@@ -1002,10 +1154,10 @@ ascii_number_to_bin:
         ;
         ; Get pointer to first digit and prepare accumulator
         ;
-        LHLD        input_line_ptr
+        SHLD        input_line_ptr
         CALL        get_next_char
         XCHG
-        LXI         H,00000H
+        LXI         H,0
 ascii_to_bin_loop:
         ;
         ; Get next character, and check for end of line
@@ -1017,19 +1169,23 @@ ascii_to_bin_loop:
         ; Verify that character is a numerical digit, and get digit's value
         ;
         CPI         '0'
-        JC          ascii_to_bin_next_char
+        JC          end_of_number
         CPI         '9'+1
-        JNC         ascii_to_bin_next_char
+        JNC         end_of_number
         SUI         '0'
         ;
-        ; Shift accumulator to add digit as BCD
+        ; Multiply accumulator by 10 to add new digit
         ;
         DAD         H
+        MOV         B,H
+        MOV         C,L
         DAD         H
         DAD         H
-        DAD         H
-        ORA         L
+        DAD         B
+        ADD         L
         MOV         L,A
+        JNC         ascii_to_bin_next_char
+        INR         H
 ascii_to_bin_next_char:
         ;
         ; Advance to next digit in string
@@ -1039,47 +1195,69 @@ ascii_to_bin_next_char:
 
 end_of_number:
         ;
-        ; Convert from BCD to binary value
+        ; Set returned zero-flag based on if number is greater than 256 or not
         ;
-        MVI         B,0
-bcd_to_bin_hundreds_div_loop:
-        ;
-        ; Check if BCD is greater than 100
-        ;
-        XRA         A
-        ORA         H
-        JZ          bcd_to_bin_tens_div_loop
-        ;
-        ; Transfer 100 from BCD to binary value
-        ;
-        LXI         D,-00100H
-        DAD         D
-        MVI         A,100
-        ADD         B
-        MOV         B,A
-        JMP         bcd_to_bin_hundreds_div_loop
-
-bcd_to_bin_tens_div_loop:
-        ;
-        ; Check if BCD is greater than 10
-        ;
+        MOV         A,H
+        ORA         A
         MOV         A,L
-        CPI         010H
-        JC          bcd_to_bin_add_and_ret
-        CALL        bcd_to_bin_move_ten
-        JMP         bcd_to_bin_tens_div_loop
-
-bcd_to_bin_move_ten:
-        ;
-        ; Transfer 10 from BCD to binary value
-        ;
-        LXI         D,-00010H
-        DAD         D
-        MVI         A,10
-bcd_to_bin_add_and_ret:
-        ADD         B
-        MOV         B,A
+        XCHG
+        RZ
+        MVI         A,TRUE
         RET
+
+
+;//////////////////////////////////////////////////////////////////////////////
+
+        ;
+        ; Parse page width, and limit value to within the range of 64 and 132
+        ;
+set_page_width:
+        CALL        ascii_number_to_bin
+        PUSH        H
+        LXI         H,page_width
+        MVI         D,132
+        MVI         E,64
+        CALL        store_value_limit_range
+        POP         H
+        RET
+
+
+;//////////////////////////////////////////////////////////////////////////////
+
+        ;
+        ; Parse page length, and limit value to within the range of 10 and 255
+        ;
+set_page_length:
+        CALL        ascii_number_to_bin
+        PUSH        H
+        LXI         H,page_length
+        MVI         D,255
+        MVI         E,12
+        CALL        store_value_limit_range
+        POP         H
+        RET
+
+
+;//////////////////////////////////////////////////////////////////////////////
+
+        ;
+        ; Convert the entire input string to uppercase
+        ;
+input_to_uppercase:
+        LXI         H,input_line_buffer
+input_str_to_uppercase_loop:
+        MOV         A,M
+        CPI         CR
+        RZ
+        CPI         'a'
+        JM          convert_next_input_str_char
+        CPI         'z'+1
+        JP          convert_next_input_str_char
+        ANI         0DFH
+        MOV         M,A
+convert_next_input_str_char:
+        INX         H
+        JMP         input_str_to_uppercase_loop
 
 
 ;//////////////////////////////////////////////////////////////////////////////
@@ -1499,7 +1677,7 @@ print_and_quit:
 four_newline_str:
         DB          LF,LF,LF,LF,CR
 program_title_str:
-        DB          'TOS21 SYMBOL CROSS REFERENCE, V1.2'
+        DB          'TOS21 SYMBOL CROSS REFERENCE, V1.4'
 program_title_str_end:
         DB          CR
 page_number_str:
@@ -1537,10 +1715,14 @@ whitespace_chars_list:
         DB          CURR
         DB          NULL
 
+page_length_from_cli_arg_flag:
+        DB          FALSE
+page_width_from_cli_arg_flag:
+        DB          FALSE
 page_length:
-        DB          72
+        DB          48
 page_width:
-        DB          79
+        DB          110
 
 variables_memory:
 lines_left_on_page:
@@ -1630,6 +1812,7 @@ opcode_database:
         DB          0,5,'CPE'
         DB          0,5,'CPI'
         DB          0,5,'CPO'
+        DB          0,6,'CSEG'
         DB          0,4,'CZ'
         DB          0,5,'DAA'
         DB          1,5,'DAD'
@@ -1638,10 +1821,12 @@ opcode_database:
         DB          1,5,'DCX'
         DB          0,4,'DI'
         DB          0,4,'DS'
+        DB          0,6,'DSEG'
         DB          0,4,'DW'
         DB          0,4,'EI'
         DB          0,5,'END'
         DB          0,5,'EQU'
+        DB          0,7,'EXTRN'
         DB          0,5,'HLT'
         DB          0,4,'IN'
         DB          1,5,'INR'
@@ -1668,6 +1853,7 @@ opcode_database:
         DB          0,5,'OUT'
         DB          0,6,'PCHL'
         DB          1,5,'POP'
+        DB          0,8,'PUBLIC'
         DB          1,6,'PUSH'
         DB          0,5,'RAL'
         DB          0,5,'RAR'

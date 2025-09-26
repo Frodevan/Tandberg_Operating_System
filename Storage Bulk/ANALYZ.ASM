@@ -6,7 +6,7 @@
 ;//
 ;//             [$[<x>][:<Tn>:]]
 ;//
-;//                 x           Number of reads per sector. 1-99, default 20
+;//                 x           Number of reads per sector. 1-99, default 10
 ;//                 Tn          Drive type and number, default :F0:
 ;//
 ;//                 Drive type T:
@@ -42,6 +42,12 @@
 ;//                    than two digits are entered
 ;//                 -> Has a bug where the number of reads will be wrong if two
 ;//                    digits are entered and a particular drive is specified
+;//
+;//             1.5: Entry at 0xC000
+;//
+;//                 -> Fixes both number-of-reads parsing bugs from v1.3, now only
+;//                    up to the last two digits of the number are parsed
+;//                 -> Default number of reads changed to 10
 ;//
 
 
@@ -131,6 +137,7 @@ get_nr_of_reads_argument_digit:
         RRC
         RRC
         RRC
+        ANI         0F0H
         ORA         C
         MOV         B,A
         JMP         get_nr_of_reads_argument_digit
@@ -183,26 +190,26 @@ valid_drive_type:
         RC
         CPI         CR
         JNZ         invalid_parameters
-        JMP         input_arguments_parsed
 
 
 ;//////////////////////////////////////
 
 parse_nr_of_reads_digits:
         ;
+        ; Use default nr of reads if none specified
+        ;
+        XRA         A
+        ORA         B
+        JZ          input_arguments_parsed
+        ;
         ; Convert nr of retries from BCD to binary
         ;
         MVI         C,0
 bcd_to_bin_loop:
         ;
-        ; 00H in BCD is less than 10
-        ;
-        MOV         A,B
-        ORA         A
-        JZ          nr_of_reads_ready
-        ;
         ; less or equal to 0AH in BCD is less than 10
         ;
+        MOV         A,B
         CPI         10
         JC          nr_of_reads_ready
         ;
@@ -600,7 +607,7 @@ bad_sectors_str:
 drive_number:
         DB          0
 number_of_reads:
-        DB          20
+        DB          10
 
 final_report_line_buffer_ptr:
         DS          2

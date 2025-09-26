@@ -21,7 +21,7 @@
 ;//
 ;//         Changelog:
 ;//
-;//             1.3: Entry at 0x2095
+;//             1.3: Entry at 0x2095, 0x2000
 ;//
 ;//                 -> First version I have
 ;//
@@ -68,11 +68,12 @@ ERROR_0B    EQU     00BH        ; PROGRAM NAME NOT FOUND
 
 ;//////////////////////////////////////////////////////////////////////////////
 ;//
-;//     Legacy program entry
+;//     Program entry
 ;//
 ;//////////////////////////////////////////////////////////////////////////////
 
         ORG         02000H
+start:
         JMP         beginning
 
 
@@ -108,7 +109,6 @@ data_buffer:
 ;//
 ;//////////////////////////////////////////////////////////////////////////////
 
-start:
 beginning:
         ;
         ; Get filename of target MYCROP file from command line arguments

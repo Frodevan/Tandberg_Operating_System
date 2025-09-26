@@ -6,10 +6,11 @@
 ;//
 ;//             [$:<Tn>:]
 ;//
-;//                 Tn          Drive type and number, default :I0:
+;//                 Tn          Drive type and number, default :F0:
 ;//
 ;//                 Drive type T:
-;//                     I       Floppy
+;//                     F       Floppy (Interlaced)
+;//                     I       Floppy (Non-interlaced)
 ;//
 ;//                 Drive number n:
 ;//                     0-3
@@ -40,17 +41,9 @@
 ;//         with track 0 and ending with track 77. A track is written in a single
 ;//         revolution, and then verified by reading each sector. The data read is
 ;//         then compared with what was initially written. In the case of any
-;//         mismatch, the track will be read and compared multiple times in order
-;//         to try to get at least one good read. If not successfull in any of
-;//         these, the entire track will be re-written and re-verified up to 5
-;//         times.
-;//
-;//         NOTE: This version overwrites large portions of TOS in memory as it
-;//               loads, and as it runs almost all of the remaining parts of TOS
-;//               will also be overwritten. At the same time it depends on some
-;//               simple TOS API calls at the start of program execution. Due to
-;//               this, the program may crash under some versions of TOS, if these
-;//               API calls gets overwritten for the TOS version in question.
+;//         mismatch, the track will be read and compared up to 5 times in order to
+;//         try to get at least one good read. If not successfull in any of these,
+;//         the entire track will be re-written and re-verified up to 5 times.
 ;//
 ;//
 ;//         Changelog:
@@ -70,6 +63,22 @@
 ;//                 -> Introduces a bug where the last character of the label
 ;//                    record is a T, not W as expected
 ;//
+;//             Early-b: Entry at 0x8000
+;//
+;//                 -> Requires at least 32KB RAM, instead of only 16KB
+;//                 -> Allows for spaces before drive-type command line argument
+;//                 -> Adds default drive, in case no drive is specified
+;//                 -> Recognizes drive type F, adding interlacing sector-order
+;//                 -> Only prints startup-prompt once, instead of also after each
+;//                    invalid input
+;//                 -> Number of max write-attempts per track reduced from 20 to 5
+;//                 -> Fixes the verification attempt-countdown bug from v1.3,
+;//                    setting the count for maximum number of read-attempts to 5
+;//                 -> Adds prompt to insert a system disk after initialization is
+;//                    done if drive 0 was used
+;//                 -> Flushes excess input if invalid parameters
+;//                 -> Fixes the software-autoscroll bug from v1.3
+;//
 
 
 ;//////////////////////////////////////////////////////////////////////////////
@@ -83,7 +92,9 @@
 ;
 NULL        EQU     000H        ; Null character
 ETX         EQU     003H        ; End of text
+BEL         EQU     007H        ; Bell (short beep)
 LF          EQU     00AH        ; Line Feed
+ROLUP       EQU     00CH        ; Scroll screen up one row
 CR          EQU     00DH        ; Cartridge Return
 
 ;
@@ -111,6 +122,7 @@ LOADD       EQU     00088H      ; Load and unpack file from floppy disk to memor
 ;
 ; XMON and TOS system data
 ;
+ROLLSW      EQU     0271FH      ; Cursor line number if no hardware autoscroll
 DPROG       EQU     02761H      ; Floppy prog status
 DCONT       EQU     02763H      ; Floppy cont address
 DTRK        EQU     02767H      ; Floppy track nr
@@ -121,23 +133,15 @@ DRETRY      EQU     0276DH      ; Floppy retry address
 ;
 MON         EQU     0FD00H      ; Restart TOS resident monitor
 INCHAR      EQU     0FD09H      ; Input single character
+PUT         EQU     0FD12H      ; Output string of characters, inclusive CR
+PUTSTR      EQU     0FD15H      ; Output string of characters, exclusive CR
 
 ;
 ; TOS standard files
 ;
 CI_FCB      EQU     0FF00H      ; Console input abstract file FCB pointer
+CO_FCB      EQU     0FF02H      ; Console output abstract file FCB pointer
 
-
-;//////////////////////////////////////////////////////////////////////////////
-;//
-;//     Track pattern
-;//
-;//////////////////////////////////////////////////////////////////////////////
-
-        ORG         0C000H
-track_pattern_buffer:
-        DS          72*2 + 26*(24*2 + 164*2) + 537*2
-        DS          6
 
 ;//////////////////////////////////////////////////////////////////////////////
 ;//
@@ -145,34 +149,88 @@ track_pattern_buffer:
 ;//
 ;//////////////////////////////////////////////////////////////////////////////
 
+        ORG         08000H
 start:
         ;
-        ; Parse drive designator from command line arguments
+        ; Set default drive number to 0
         ;
+        XRA         A
+        STA         drive_number
+        ;
+        ; Peek at the next byte of the command line arguments input
+        ;
+        LHLD        CI_FCB
+        INX         H
+        INX         H
+        MOV         E,M         ; CI_FCB + FCB_BUFIDX
+        INX         H
+        MOV         D,M
+        INX         H
+        INX         H
+        INX         H
+        MOV         C,M         ; CI_FCB + FCB_BUFPTR
+        INX         H
+        MOV         B,M
+        XCHG
+        DAD         B
+        DCX         H
+        MOV         A,M
+        ;
+        ; Print unit prompt if no cli args have been given
+        ;
+        CPI         CR
+        JNZ         prune_initial_spaces_loop
+        LXI         D,unit_prompt_str
+        LHLD        CO_FCB
+        CALL        PUTSTR
+        RC
+        ;
+        ; Skip any leading whitespaces
+        ;
+prune_initial_spaces_loop:
         LHLD        CI_FCB
         CALL        INCHAR
         RC
+        CPI         ' '
+        JZ          prune_initial_spaces_loop
+        ;
+        ; Set default sector order to that of drive type F (interlaced)
+        ;
+        LXI         D,interlaced_sector_order
+        CPI         CR
+        JZ          drive_set
+        ;
+        ; Parse drive designator from command line arguments
+        ;
         CPI         ':'
         JNZ         invalid_drive
         CALL        INCHAR
         RC
+        CALL        to_uppercase
+        CPI         'F'
+        JZ          sector_layout_set
+        LXI         D,noninterlaced_sector_order
         CPI         'I'
         JNZ         invalid_drive
+sector_layout_set:
         CALL        INCHAR
         RC
-        CPI         '0'
-        JC          invalid_drive
-        CPI         '4'
-        JNC         invalid_drive
         SUI         '0'
+        JC          invalid_drive
+        CPI         4
+        JNC         invalid_drive
         STA         drive_number
         CALL        INCHAR
         RC
         CPI         ':'
         JNZ         invalid_drive
         CALL        INCHAR
+        RC
         CPI         CR
         JNZ         invalid_drive
+drive_set:
+        XCHG
+        SHLD        sector_order_ptr
         ;
         ; Check if drive 0 is to be low-level formatted
         ;
@@ -183,15 +241,12 @@ start:
         ; If so, prompt the user so they have time to change disk
         ;
         LXI         D,welcome_prompt_str
+        LHLD        CO_FCB
+        CALL        PUTSTR
+        RC
 get_next_prompt_input:
-        CALL        print_str
         CALL        TTI
-        CPI         'a'
-        JM          is_uppercase
-        CPI         'z'+1
-        JP          is_uppercase
-        ANI         0DFH
-is_uppercase:
+        CALL        to_uppercase
         ;
         ; Validate prompt input
         ;
@@ -203,11 +258,13 @@ parse_prompt_input:
         ;
         ; Exit if No was chosen
         ;
-        PUSH        PSW
+        MOV         C,A
         CALL        TTO
         LXI         D,newline_str
-        CALL        print_str
-        POP         PSW
+        LHLD        CO_FCB
+        CALL        PUT
+        RC
+        MOV         A,C
         CPI         'N'
         JZ          operation_interrupted
 
@@ -228,6 +285,8 @@ format_first_track:
         ;
         XRA         A
         STA         track_number
+        LXI         H,noninterlaced_sector_order
+        SHLD        next_sector_number_ptr
         LXI         H,write_low_level_track_one
         SHLD        next_track_routine_ptr
         LXI         H,first_track_pattern_set
@@ -239,12 +298,11 @@ format_first_track:
         ;
         LXI         D,track_header_pattern
         CALL        unpack_pattern_to_buffer
-        MVI         A,1
-        STA         sector_number
 add_next_track_zero_sector:
         ;
         ; Add address-mark + gap2 for next sector, updating the sector number
         ;
+        CALL        get_next_sector_number
         LXI         D,sector_header_pattern
         CALL        unpack_pattern_to_buffer
         LHLD        current_pattern_entry_ptr
@@ -294,15 +352,7 @@ track_zero_sector_done:
         ; Check if this is the last sector in the track
         ;
         CPI         26
-        JNC         last_track_zero_sector_done
-        ;
-        ; Prepare to add pattern for next sector
-        ;
-        INR         A
-        STA         sector_number
-        JMP         add_next_track_zero_sector
-
-last_track_zero_sector_done:
+        JC          add_next_track_zero_sector
         ;
         ; Add gap4b to finalize pattern
         ;
@@ -322,14 +372,25 @@ write_low_level_track_one:
         ;
         MVI         A,1
         STA         track_number
-        STA         sector_number
+        LHLD        sector_order_ptr
+        SHLD        next_sector_number_ptr
         LXI         H,format_bulk_track
         SHLD        next_track_routine_ptr
         ;
-        ; Point to start of data-mark of first sector in low-level pattern
+        ; Point to start of address-mark of first sector in low-level pattern
         ;
-        LXI         H,track_pattern_buffer + 96*2
+        LXI         H,track_pattern_buffer + 72*2
 update_next_track_one_sector:
+        ;
+        ; Update sector number to use the currently selected interlace order
+        ;
+        SHLD        track_pattern_data_ptr
+        CALL        get_next_sector_number
+        LXI         D,9*2 + 1
+        DAD         D
+        MOV         M,A
+        LXI         D,14*2 + 1
+        DAD         D
         ;
         ; Overwrite old data-mark pattern with data-mark of an empty sector
         ;
@@ -339,21 +400,13 @@ update_next_track_one_sector:
         ;
         ; Check if this is the last sector in the track
         ;
+        LHLD        track_pattern_data_ptr
         LDA         sector_number
         CPI         26
-        JNC         finalize_track_pattern
-        ;
-        ; Advance to next sector data-mark in pattern
-        ;
-        INR         A
-        STA         sector_number
-        LHLD        track_pattern_data_ptr
-        LXI         D,24*2
-        DAD         D
-        JMP         update_next_track_one_sector
+        JC          update_next_track_one_sector
 
 
-;//////////////////////////////////////////////////////////////////////////////
+;//////////////////////////////////////
 
 finalize_track_pattern:
         ;
@@ -440,7 +493,7 @@ write_low_level_track:
         ;
         CALL        DSWT
         JC          operation_aborted
-        MVI         A,20
+        MVI         A,5
         STA         write_retry_countdown
 start_formatting_track:
         ;
@@ -503,11 +556,13 @@ format_track_failed:
         ;
 verify_formatted_track:
         ;
-        ; Wait for XMON floppy disk API to be ready
+        ; Wait for XMON floppy disk API to be ready and prepare to verify track
         ;
         EI
         CALL        DSWT
         JC          operation_aborted
+        MVI         A,5
+        STA         verification_retry_countdown
 start_track_verification:
         ;
         ; Prepare to read all sectors in track, starting on sector 1
@@ -642,6 +697,22 @@ bitfield_ready:
 ;//////////////////////////////////////////////////////////////////////////////
 
         ;
+        ; Gets the next sector number of the selected sector order in A
+        ;
+get_next_sector_number:
+        PUSH        H
+        LHLD        next_sector_number_ptr
+        MOV         A,M
+        STA         sector_number
+        INX         H
+        SHLD        next_sector_number_ptr
+        POP         H
+        RET
+
+
+;//////////////////////////////////////////////////////////////////////////////
+
+        ;
         ; Unpack a pattern pointed to by DE and append to track format buffer
         ;
 unpack_pattern_to_buffer:
@@ -766,65 +837,15 @@ crc_next_byte:
 
 
 ;//////////////////////////////////////////////////////////////////////////////
-
-operation_aborted:
-        LXI         D,operation_aborted_str
-        CALL        print_str
-        JMP         operation_completed
-
-
-;//////////////////////////////////////
-
-invalid_drive:
-        LXI         D,invalid_drive_str
-        CALL        print_str
-        RET
-
-
-;//////////////////////////////////////
-
-        ;
-        ; Print string pointed to by DE
-        ;
-print_str:
-        LDAX        D
-        CPI         ETX
-        RZ
-        CALL        TTO
-        INX         D
-        JMP         print_str
-
-
-;//////////////////////////////////////
-
-operation_interrupted:
-        LXI         D,operation_interrupted_str
-        CALL        print_str
-        RET
-
-
-;//////////////////////////////////////////////////////////////////////////////
 ;//
-;//     Strings and data
+;//     Data
 ;//
 ;//////////////////////////////////////////////////////////////////////////////
 
-invalid_drive_str:
-        DB          'IMPROPER UNIT SPECIFICATION',CR,LF,ETX
-operation_aborted_str:
-        DB          'OPERATION ABORTED'
-newline_str:
-        DB          CR,LF,ETX
-welcome_prompt_str:
-        DB          'INITIALIZE DISKETTE IN DRIVE 0, TYPE Y/N :',ETX
-operation_interrupted_str:
-        DB          'OPERATION INTERRUPTED',CR,LF,ETX
-operation_completed_str:
-        DB          'OPERATION COMPLETED',CR,LF,ETX
-
-system_filename_str:
-        DB          'SYSTEM'
-        DB          NULL,NULL,NULL
+noninterlaced_sector_order:
+        DB          1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,16,17,18,19,20,21,22,23,24,25,26
+interlaced_sector_order:
+        DB          1,14,2,15,3,16,4,17,5,18,6,19,7,20,8,21,9,22,10,23,11,24,12,25,13,26
 
 first_track_pattern_set:
         DW          blank_sector_pattern
@@ -1073,6 +1094,10 @@ write_retry_countdown:
         DS          1
 next_track_routine_ptr:
         DS          2
+sector_order_ptr:
+        DS          2
+next_sector_number_ptr:
+        DS          2
 track_readback_buffer:
         DS          26*128
 
@@ -1088,6 +1113,7 @@ operation_completed:
         ; Print status message
         ;
         LXI         D,operation_completed_str
+print_and_quit:
         CALL        print_str
         ;
         ; Check if a non-system drive was formatted
@@ -1095,7 +1121,20 @@ operation_completed:
         LDA         drive_number
         ORA         A
         JNZ         reload_system_and_exit
-        RST         0
+        ;
+        ; Prompt for system disk before reloading TOS
+        ;
+        LXI         D,sys_disk_prompt_str
+        CALL        print_str
+system_disk_prompt:
+        CALL        TTI
+        CPI         'C'
+        JZ          reload_system_and_exit
+        CPI         'c'
+        JZ          reload_system_and_exit
+        MVI         A,BEL
+        CALL        TTO
+        JMP         system_disk_prompt
 
 reload_system_and_exit:
         ;
@@ -1106,3 +1145,151 @@ reload_system_and_exit:
         CALL        LOADD
         JC          ERR
         JMP         MON
+
+
+;//////////////////////////////////////
+
+operation_aborted:
+        LXI         D,operation_aborted_str
+        JMP         print_and_quit
+
+
+;//////////////////////////////////////////////////////////////////////////////
+
+invalid_drive:
+        ;
+        ; Flush any remaining command line arguments
+        ;
+flush_remaining_args_loop:
+        CPI         CR
+        JZ          args_flushed
+        LHLD        CI_FCB
+        CALL        INCHAR
+        RC
+        JMP         flush_remaining_args_loop
+
+args_flushed:
+        ;
+        ; Print status and quit program
+        ;
+        LXI         D,invalid_drive_str
+print_and_ret:
+        LHLD        CO_FCB
+        CALL        PUT
+        RET
+
+
+;//////////////////////////////////////
+
+operation_interrupted:
+        LXI         D,operation_interrupted_str
+        JMP         print_and_ret
+
+
+;//////////////////////////////////////////////////////////////////////////////
+;//
+;//     Subroutines
+;//
+;//////////////////////////////////////////////////////////////////////////////
+
+        ;
+        ; Convert ASCII character in A into uppercase
+        ;
+to_uppercase:
+        CPI         'a'
+        RM
+        CPI         'z'+1
+        RP
+        ANI         0DFH
+        RET
+
+
+;//////////////////////////////////////////////////////////////////////////////
+
+        ;
+        ; Print string pointed to by DE
+        ;
+print_str:
+        LDAX        D
+        CPI         CR
+        JZ          print_str_newline
+        CPI         ETX
+        RZ
+print_next_char:
+        CALL        TTO
+        INX         D
+        JMP         print_str
+
+
+;//////////////////////////////////////
+
+        ;
+        ; Handle new-line cases
+        ;
+print_str_newline:
+        CALL        TTO
+        ;
+        ; Check autoscroll flag for line number if no autoscroll
+        ;
+        LDA         ROLLSW
+        ORA         A
+        JZ          print_str_has_autoscroll
+        ;
+        ; Manually scroll if cursor is at the very last line
+        ;
+        CPI         'Y'
+        JC          print_str_no_need_to_scroll
+        MVI         A,ROLUP
+        JMP         print_next_char
+
+print_str_no_need_to_scroll:
+        ;
+        ; Update autoscroll flag line number
+        ;
+        INR         A
+        STA         ROLLSW
+print_str_has_autoscroll:
+        ;
+        ; Move cursor to next line
+        ;
+        MVI         A,LF
+        JMP         print_next_char
+
+
+;//////////////////////////////////////////////////////////////////////////////
+;//
+;//     Strings
+;//
+;//////////////////////////////////////////////////////////////////////////////
+
+unit_prompt_str:
+        DB          'UNIT: ',CR
+invalid_drive_str:
+        DB          'IMPROPER UNIT SPECIFICATION',CR,ETX
+operation_aborted_str:
+        DB          'OPERATION ABORTED'
+newline_str:
+        DB          CR,ETX
+welcome_prompt_str:
+        DB          'INITIALIZE DISKETTE IN DRIVE 0  (Y/N): ',CR
+operation_interrupted_str:
+        DB          'OPERATION INTERRUPTED',CR,ETX
+operation_completed_str:
+        DB          'OPERATION COMPLETED',CR,ETX
+sys_disk_prompt_str:
+        DB          'CHANGE TO SYSTEM DISKETTE, TYPE "C" TO CONTINUE',BEL,CR,ETX
+
+system_filename_str:
+        DB          'SYSTEM'
+        DB          NULL,NULL,NULL
+
+
+;//////////////////////////////////////////////////////////////////////////////
+;//
+;//     Track pattern
+;//
+;//////////////////////////////////////////////////////////////////////////////
+
+        ORG         0C000H
+track_pattern_buffer:
+        DS          72*2 + 26*(24*2 + 164*2) + 537*2
