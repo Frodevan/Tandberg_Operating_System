@@ -12,6 +12,10 @@
 ;//
 ;//                 -> First version I have
 ;//
+;//             1.3: Entry at 0xC000
+;//
+;//                 -> Adds a check for if input file is indeed a block device
+;//
 
 
 ;//////////////////////////////////////////////////////////////////////////////
@@ -21,14 +25,21 @@
 ;//////////////////////////////////////////////////////////////////////////////
 
 ;
+; ASCII control characters
+;
+CR          EQU     00DH        ; Cartridge Return
+
+;
 ; TOS system calls
 ;
+PUT         EQU     0FD12H      ; Output string of characters, inclusive CR
 READ        EQU     0FD21H      ; Read next block from block device
 WRITE       EQU     0FD24H      ; Write next block to block device
 
 ;
 ; TOS standard files
 ;
+CO_FCB      EQU     0FF02H      ; Console output abstract file FCB pointer
 SI_FCB      EQU     0FF04H      ; Standard input abstract file FCB pointer
 SO_FCB      EQU     0FF06H      ; Standard output abstract file FCB pointer
 
@@ -45,16 +56,45 @@ FCB_BUFPTR  EQU     006H        ; Pointer to block/buffered-device data buffer
 
 ;//////////////////////////////////////////////////////////////////////////////
 ;//
-;//     Main program
+;//     Program entry
 ;//
 ;//////////////////////////////////////////////////////////////////////////////
 
         ORG         0C000H
 start:
         ;
-        ; Get pointer to input/output file buffers
+        ; Check input filetype, print error and quit if not a block device
         ;
         LHLD        SI_FCB
+        MOV         A,M
+        CPI         5
+        JZ          start_copy
+        LHLD        CO_FCB
+        LXI         D,wrong_filetype_str
+        CALL        PUT
+        RET
+
+
+;//////////////////////////////////////////////////////////////////////////////
+;//
+;//     Strings
+;//
+;//////////////////////////////////////////////////////////////////////////////
+
+wrong_filetype_str:
+        DB          "INPUT FILENAME NOT BLOCK ORIENTED FILE",CR
+
+
+;//////////////////////////////////////////////////////////////////////////////
+;//
+;//     Main program
+;//
+;//////////////////////////////////////////////////////////////////////////////
+
+start_copy:
+        ;
+        ; Get pointer to input/output file buffers
+        ;
         LXI         D,FCB_BUFPTR
         DAD         D
         MOV         E,M

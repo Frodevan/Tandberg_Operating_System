@@ -1,6 +1,6 @@
 ;//////////////////////////////////////////////////////////////////////////////
 ;//
-;//     TPGEN - Copy all files from floppy to tape
+;//     DGEN - Copy all files from floppy to floppy
 ;//
 ;//         Extra parameters:
 ;//
@@ -9,23 +9,19 @@
 ;//                 Y       Immediately start the transfer
 ;//
 ;//
-;//         Copy every single file from floppy disk :F0: to tape :M0:, using TOS
+;//         Copy every single file from floppy disk :F0: to floppy :F1:, using TOS
 ;//         system-calls to do the binary transfers. If a file already exsists on
-;//         a tape cartridge, the copying of that file is skipped.
+;//         the target floppy, the copying of that file is skipped.
 ;//
 ;//         Files with the format attribute will not be included in the copy.
 ;//
 ;//
 ;//         Changelog:
 ;//
-;//             1.2: Entry at 0xC000
-;//
-;//                 -> First version I have
-;//                 -> Has a bug where aliases will be copied as normal files
-;//
 ;//             1.3: Entry at 0xC000
 ;//
-;//                 -> Adds welcome prompt and reports on copied files
+;//                 -> First verifiable version I have
+;//                 -> Has a bug where aliases will be copied as normal files
 ;//
 
 
@@ -56,7 +52,6 @@ CLOSE       EQU     0FD27H      ; Close block device
 ;
 ; TOS constants
 ;
-TABTC_PTR   EQU     0FDE6H      ; Pointer to Tandberg tape cartridge device driver
 TABIN_PTR   EQU     0FDEAH      ; Pointer to Intel floppy disk device driver
 
 ;
@@ -68,7 +63,7 @@ CO_FCB      EQU     0FF02H      ; Console output abstract file FCB pointer
 ;
 ; TOS Errors
 ;
-ERROR_3C    EQU     03CH        ; OUTPUT FILE ALREADY ON CARTR.
+ERROR_32    EQU     032H        ; OUTPUT FILE ALREADY ON DISKETTE
 
 ;
 ; TOS file attributes
@@ -175,22 +170,20 @@ output_file_fcb:
         DS          2
         DS          2
         DS          2
-        DB          1
         DB          0
+        DB          1
         DS          9
         DB          001H
-        DW          out_file_overrun_word
-        DS          1
         DS          2
         DS          1
         DS          1
-        DS          1
-        DS          15
+        DW          out_file_linking_block_buffer
 
+        DS          4
 file_transfer_data_buffer:
         DS          128
-out_file_overrun_word:
-        DS          2
+out_file_linking_block_buffer:
+        DS          128
 
 
 ;//////////////////////////////////////
@@ -199,7 +192,7 @@ flush_outlet:
         DS          16
 
 welcome_prompt_str:
-        DB          'DATASET COPY FROM DISKETTE 0 TO CARTRIDGE 0 - TYPE Y TO START',CR
+        DB          'DATASET COPY FROM DISKETTE 0 TO DISKETTE 1 - TYPE Y TO START',CR
 not_copied_str:
         DB          ' NOT'
 copied_ok_str:
@@ -243,9 +236,9 @@ start_copying:
         SHLD        directory_file_fcb + FCB_CLOSE
         SHLD        input_file_fcb + FCB_CLOSE
         ;
-        ; Assign Tape Cartridge device driver to output file
+        ; Assign Intel Floppy device driver to output file
         ;
-        LHLD        TABTC_PTR
+        LHLD        TABIN_PTR
         LXI         B,003H
         DAD         B
         SHLD        output_file_fcb + FCB_OPEN
@@ -371,7 +364,7 @@ copy_filename_loop:
         MVI         A,FM_OUTPUT
         CALL        OPEN
         JNC         write_output_data
-        CPI         ERROR_3C
+        CPI         ERROR_32
         JZ          not_copied
         STC
         RET

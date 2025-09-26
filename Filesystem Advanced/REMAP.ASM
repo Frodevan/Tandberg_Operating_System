@@ -32,6 +32,10 @@
 ;//                    mapping the remaining entries of the current block of the
 ;//                    directory
 ;//
+;//             1.3: Entry at 0xC000
+;//
+;//                 -> Fixes the write bug from v1.2
+;//
 
 
 ;//////////////////////////////////////////////////////////////////////////////
@@ -362,7 +366,7 @@ remap_files_done:
         MOV         C,L
         LXI         H,mapfile_data_buffer + 128
         LDA         drive_number
-        CALL        DSRDW
+        CALL        DSWRW
         RET
 
 
