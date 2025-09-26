@@ -41,6 +41,17 @@
 ;//                    report
 ;//                 -> Has a bug where EQU is parsed as having too many operands
 ;//
+;//             1.2: Entry at 0xD000
+;//
+;//                 -> Fixes the EQU operands bug from v1.1
+;//                 -> The Aphostrophe character is no longer ignored in a title
+;//                 -> Leading zeroes will now be trimmed from numbers
+;//                 -> Adds wider top and bottom margins
+;//                 -> Adds a bug where the bottom margin will not be printed if a
+;//                    paragraph of references prints over a pagebreak
+;//                 -> Adds a bug where the final page will not be fed out of the
+;//                    printer all the way
+;//
 
 
 ;//////////////////////////////////////////////////////////////////////////////
@@ -59,8 +70,9 @@ TRUE        EQU     -1          ; Boolean True
 ;
 NULL        EQU     000H        ; Null character
 HTAB        EQU     009H        ; Horizontal tabulation
-ROLUP       EQU     00CH        ; Scroll screen up one row
+LF          EQU     00AH        ; Line Feed
 CR          EQU     00DH        ; Cartridge Return
+CURR        EQU     018H        ; Cursor right
 APOSTROPHE  EQU     027H        ; Aphostrophe
 SEMICOLON   EQU     03BH        ; Semicolon
 
@@ -309,13 +321,10 @@ check_for_title_arg:
         LXI         D,header_str
 copy_next_title_char:
         MOV         A,M
-        CPI         APOSTROPHE
-        JZ          next_title_char_done
         STAX        D
         CPI         CR
         JZ          main
         INX         D
-next_title_char_done:
         INX         H
         JMP         copy_next_title_char
 
@@ -458,7 +467,7 @@ compare_next_db_label:
         ; Get next item in label database, and point to its name
         ;
         CALL        get_next_label_db_item
-        JZ          operation_aborted
+        JC          operation_aborted
         LXI         D,004H
         DAD         D
         ;
@@ -697,6 +706,8 @@ update_ref_list_head:
         ;
         ; Store line number as ASCII in the reference list entry
         ;
+        XRA         A
+        STA         first_bcd_digit_found_flag
         LHLD        line_counter_bcd_nr
         MOV         A,H
         CALL        convert_bcd_byte_to_ascii
@@ -857,6 +868,12 @@ print_label_entry_done:
         LXI         H,lines_left_on_page
         DCR         M
         JNZ         print_next_label_entry
+        ;
+        ; Print bottom margin before eventually starting new page
+        ;
+        LXI         D,margin_str
+        CALL        print_str
+        RC
         ;
         ; Check for last entry in label database
         ;
@@ -1237,13 +1254,14 @@ print_page_header:
         ; Reserve top and bottom margin, as well as header lines
         ;
         LDA         page_length
-        SUI         3
+        SUI         11
         STA         lines_left_on_page
         ;
         ; Get and advance page count
         ;
         LXI         H,page_count_bcd
         XRA         A
+        STA         first_bcd_digit_found_flag
         ORA         M
         INR         A
         DAA
@@ -1257,7 +1275,7 @@ print_page_header:
         ; Print top margin and start of header line
         ;
         LXI         D,margin_str
-        CALL        print_str_newline
+        CALL        print_str
         RC
         LXI         D,program_title_str
         CALL        print_str
@@ -1373,7 +1391,6 @@ convert_bcd_byte_to_ascii:
         ; Convert most significant digit
         ;
         PUSH        PSW
-        ANI         0F0H
         RRC
         RRC
         RRC
@@ -1383,7 +1400,6 @@ convert_bcd_byte_to_ascii:
         ;
         ; Convert least significant digit
         ;
-        ANI         00FH
 
 
 ;//////////////////////////////////////
@@ -1395,8 +1411,29 @@ convert_bcd_digit_to_ascii:
         ;
         ; Convert and store digit
         ;
+        ANI         00FH
         ADI         '0'
         STAX        D
+        ;
+        ; Check if first non-zero digit has been encountered
+        ;
+        LDA         first_bcd_digit_found_flag
+        ORA         A
+        JNZ         bcd_digit_converted
+        ;
+        ; Otherwise blank leading zeroes
+        ;
+        LDAX        D
+        CPI         '0'
+        JNZ         first_bcd_digit_stored
+        MVI         A,' '
+        STAX        D
+        JMP         bcd_digit_converted
+
+first_bcd_digit_stored:
+        MVI         A,TRUE
+        STA         first_bcd_digit_found_flag
+bcd_digit_converted:
         INX         D
         RET
 
@@ -1468,9 +1505,9 @@ print_and_quit:
 ;//////////////////////////////////////////////////////////////////////////////
 
 margin_str:
-        DB          ROLUP,CR
+        DB          LF,LF,LF,LF,CR
 program_title_str:
-        DB          'TOS21 SYMBOL CROSS REFERENCE, V1.1'
+        DB          'TOS21 SYMBOL CROSS REFERENCE, V1.2'
 program_title_str_end:
         DB          CR
 page_number_str:
@@ -1505,12 +1542,13 @@ deliminator_chars_list:
         DB          '*'
 whitespace_chars_list:
         DB          HTAB
+        DB          CURR
         DB          NULL
 
 page_length:
-        DB          66
+        DB          72
 page_width:
-        DB          80
+        DB          79
 
 variables_memory:
 lines_left_on_page:
@@ -1530,6 +1568,8 @@ line_counter_bcd_nr:
 free_mem_end_addr_msb:
         DS          1
 is_label_def_flag:
+        DS          1
+first_bcd_digit_found_flag:
         DS          1
 input_line_ptr:
         DS          2
@@ -1609,7 +1649,7 @@ opcode_database:
         DB          0,4,'DW'
         DB          0,4,'EI'
         DB          0,5,'END'
-        DB          3,5,'EQU'
+        DB          0,5,'EQU'
         DB          0,5,'HLT'
         DB          0,4,'IN'
         DB          1,5,'INR'

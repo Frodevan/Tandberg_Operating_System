@@ -4,7 +4,7 @@
 ;//
 ;//         Extra parameters:
 ;//
-;//             [$[:<Tn>:][<x>]]
+;//             [$[<x>][:<Tn>:]]
 ;//
 ;//                 x           Number of reads per sector. 1-99, default 20
 ;//                 Tn          Drive type and number, default :F0:
@@ -41,6 +41,17 @@
 ;//                 -> Has a bug where the wrong error will be returned if the
 ;//                    command line arguments are invalid
 ;//
+;//             1.3: Entry at 0xC000
+;//
+;//                 -> Swaps the order of the command line arguments
+;//                 -> Adds support for lower-case drive type in arguments
+;//                 -> Adds a line with the final number of bad sectors when the
+;//                    test has completed
+;//                 -> Adds a bug where the number of reads will be wrong if two
+;//                    digits are entered and a particular drive is specified
+;//                 -> Adds a bug where the number of reads per sector will default
+;//                    to 256 rather than 20
+;//
 
 
 ;//////////////////////////////////////////////////////////////////////////////
@@ -48,6 +59,12 @@
 ;//     Defines
 ;//
 ;//////////////////////////////////////////////////////////////////////////////
+
+;
+; Flag values
+;
+FALSE       EQU     0           ; Boolean False
+TRUE        EQU     -1          ; Boolean True
 
 ;
 ; ASCII control characters
@@ -90,25 +107,60 @@ start:
         ;
         ; Prepare to parse arguments
         ;
+        MVI         B,000H
         LHLD        CI_FCB
+get_nr_of_reads_argument_digit:
         ;
-        ; Get first input character
+        ; Get next input character
         ;
         CALL        INCHAR
         RC
-        CPI         CR
-        JZ          input_arguments_parsed
         CPI         ':'
-        JNZ         parse_nr_of_reads
+        JZ          parse_drive_argument
+        ;
+        ; Assume argument is next digit in nr of reads
+        ;
+        CPI         CR
+        JZ          parse_nr_of_reads_digits
+        ;
+        ; Convert and validate from ASCII to BCD digit
+        ;
+        SUI         '0'
+        JC          invalid_parameters
+        CPI         10
+        CMC
+        JC          invalid_parameters
+        ;
+        ; Shift BCD digit into B
+        ;
+        MOV         C,A
+        MOV         A,B
+        RRC
+        RRC
+        RRC
+        RRC
+        ORA         C
+        MOV         B,A
+        JMP         get_nr_of_reads_argument_digit
 
 
 ;//////////////////////////////////////
 
+parse_drive_argument:
         ;
         ; Parse remaining argument as drive designator
         ;
         CALL        INCHAR
         RC
+        ;
+        ; Convert drive type to uppercase
+        ;
+        CPI         'a'
+        JM          is_uppercase
+        CPI         'z'+1
+        JP          is_uppercase
+        ANI         0DFH
+is_uppercase:
         ;
         ; Verify drive type
         ;
@@ -135,63 +187,27 @@ valid_drive_type:
         RC
         CPI         ':'
         JNZ         invalid_parameters
-
-
-;//////////////////////////////////////
-
-parse_nr_of_reads:
-        ;
-        ; Assume upcoming argument is next digit in nr of reads
-        ;
-        MVI         B,000H
-        JMP         get_nr_of_reads_argument_digit
-
-;//////////////////////////////////////
-
-prepare_nr_of_reads_digit:
-        ;
-        ; Convert and validate from ASCII to BCD digit
-        ;
-        CPI         '0'
-        JC          invalid_parameters
-        CPI         '9'+1
-        JNC         invalid_parameters
-        SUI         '0'
-        ;
-        ; Shift BCD digit into B
-        ;
-        MOV         C,A
-        MOV         A,B
-        RLC
-        RLC
-        RLC
-        RLC
-        ORA         C
-        MOV         B,A
-
-get_nr_of_reads_argument_digit:
-        ;
-        ; Get next input character
-        ;
         CALL        INCHAR
         RC
         CPI         CR
-        JNZ         prepare_nr_of_reads_digit
-        ;
-        ; Use default nr of reads if none or zero specified
-        ;
-        MOV         A,B
-        ORA         A
-        JZ          input_arguments_parsed
+        JNZ         invalid_parameters
+        JMP         input_arguments_parsed
 
 
 ;//////////////////////////////////////
 
+parse_nr_of_reads_digits:
         ;
         ; Convert nr of retries from BCD to binary
         ;
         MVI         C,0
 bcd_to_bin_loop:
+        ;
+        ; Use default nr of reads if none or zero specified
+        ;
+        MOV         A,B
+        ORA         A
+        JZ          nr_of_reads_ready
         ;
         ; less or equal to 0AH in BCD is less than 10
         ;
@@ -200,19 +216,17 @@ bcd_to_bin_loop:
         ;
         ; Move value 10 from BCD number to binary number
         ;
+        SUI         010H
+        MOV         B,A
         MVI         A,10
         ADD         C
         MOV         C,A
-        MOV         A,B
-        SUI         010H
-        MOV         B,A
         JMP         bcd_to_bin_loop
 
 nr_of_reads_ready:
         ;
         ; Add leftover ones
         ;
-        MOV         A,B
         ADD         C
         STA         number_of_reads
 
@@ -289,6 +303,20 @@ register_bad_sector:
         DAD         B
         MVI         M,1
         POP         B
+        ;
+        ; Increase count of bad sectors
+        ;
+        XRA         A
+        LHLD        bad_sector_count_bcd
+        INX         H
+        MOV         A,L
+        DAA
+        MOV         L,A
+        MOV         A,H
+        ACI         000H
+        DAA
+        MOV         H,A
+        SHLD        bad_sector_count_bcd
 read_next_sector:
         ;
         ; Advance one secor
@@ -415,6 +443,23 @@ print_overall_summary:
         LXI         H,final_report_line_buffer
         SHLD        final_report_line_buffer_ptr
         CALL        print_final_report_buffer
+        ;
+        ; Print total bad sectors count
+        ;
+        LHLD        bad_sector_count_bcd
+        MOV         A,L
+        ORA         H
+        JZ          print_bad_secrors_string
+        MVI         C,FALSE
+        LXI         D,bad_sectors_str
+        MOV         A,H
+        CALL        add_bcd_number_to_string
+        MOV         A,L
+        CALL        add_bcd_number_to_string
+print_bad_secrors_string:
+        LXI         D,bad_sectors_str
+        LHLD        CO_FCB
+        CALL        PUT
         RET
 
 
@@ -510,10 +555,56 @@ add_lower_nibble_to_string:
 
 
 ;//////////////////////////////////////////////////////////////////////////////
+
+        ;
+        ; Add the BCD number in A to string, without leading zeroes
+        ;
+add_bcd_number_to_string:
+        ;
+        ; Swap digits to add most signifficant digit first
+        ;
+        PUSH        PSW
+        RRC
+        RRC
+        RRC
+        RRC
+        CALL        add_bcd_digit_to_string
+        POP         PSW
+add_bcd_digit_to_string:
+        ;
+        ; Convert BCD digit to ASCII and add
+        ;
+        ANI         00FH
+        ADI         '0'
+        STAX        D
+        ;
+        ; Check leading zeroes flag, and replace any leading zero with space
+        ;
+        MOV         A,C
+        ORA         A
+        JNZ         digit_ready
+        LDAX        D
+        CPI         '0'
+        JNZ         first_digit_found
+        MVI         A,' '
+        STAX        D
+        JMP         digit_ready
+
+first_digit_found:
+        MVI         C,TRUE
+digit_ready:
+        INX         D
+        RET
+
+
+;//////////////////////////////////////////////////////////////////////////////
 ;//
 ;//     Strings and data
 ;//
 ;//////////////////////////////////////////////////////////////////////////////
+
+bad_sectors_str:
+        DB          '  NO BAD SECTORS FOUND',CR
 
 drive_number:
         DB          0
@@ -524,6 +615,9 @@ final_report_line_buffer_ptr:
         DS          2
 bad_sectors_table_ptr:
         DS          2
+
+bad_sector_count_bcd:
+        DB          000H,000H
 
 bad_sectors_table:
         DS          2002

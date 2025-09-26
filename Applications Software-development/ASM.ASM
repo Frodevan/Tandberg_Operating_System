@@ -2,6 +2,13 @@
 ;//
 ;//     ASM - Tandberg 8080 Assembler
 ;//
+;//         Extra parameters:
+;//
+;//             [$<length>]
+;//
+;//                 length      Fixed page-length of listing (12 - 72, default 72)
+;//
+;//
 ;//         This program is a 2-pass absolute-address 8080 assembler. This has
 ;//         several modes of operation, depending on which input and output files
 ;//         are assigned. Typical output of this program is a hex-file with the
@@ -13,33 +20,30 @@
 ;//
 ;//         Input and output standard TOS-file assignments:
 ;//
-;//             SI  Source code input (must be a block-device)
+;//             SI  Source code input (must be a, or a chain of, block-devices)
 ;//             SO  Hex file output
-;//             SL  Code listing output
+;//             SL  Code and error listing output
 ;//             AO  Source code output
-;//             AL  Error listing output
 ;//
 ;//
 ;//         If SI is assigned, dual-pass assembler mode with hexadecimal output
-;//         will be used. In this mode error-messages will be copied to console
-;//         even if AL is assigned.
+;//         will be used.
 ;//
 ;//         If SI is not assigned, input is taken from the keyboard in single-pass
 ;//         'interactive' assembler mode. If AO is also defined, any valid source
 ;//         code typed in will be written to this file with proper tabulaton. In
 ;//         this mode symbols can be used as single-part expressions before being
-;//         defined, as long as the symbol is defined later at some point.
+;//         defined, as long as the symbol is defined later at some point. In this
+;//         mode error-messages will only be written to the console and not SL,
+;//         even if SL is set.
 ;//
 ;//         If neither SI or SO is assigned, the assembled output binary data will
 ;//         will be put directly into memory. This mode is meant to be used in
 ;//         conjunction with the XMON debugger in ROM to enter, run and eventually
 ;//         debug short programs.
 ;//
-;//         If SL is not set, CO will be used for the code lising using a console-
-;//         friendly layout. Error listing will also be copied to CO, even if AL
-;//         is set.
-;//
-;//         If AL is not set, SL and/or CO will be used for error-listings.
+;//         If SL is not set, CO will be used for the code and error lising using a
+;//         console-friendly layout.
 ;//
 ;//
 ;//         Assembly follows standard Intel 8080 syntax, with certain quirks:
@@ -48,6 +52,14 @@
 ;//             * Only +/- arithmetic is supported for expressions, no parantheses
 ;//             * Symbols can't be more than 5 characters long
 ;//             * Input source-file must end with an END or EOF pseudo-instruction
+;//
+;//
+;//         Layout codes for program listing:
+;//
+;//             $TITLE <title>  Set title of the program listing
+;//             $PW <width>     Set new page width of program listing (50 - 127)
+;//             $PL <length>    Set new page length of program listing (24 - 255)
+;//             $E              Insert page-break in program listing
 ;//
 ;//
 ;//         Extra control codes:
@@ -95,6 +107,43 @@
 ;//
 ;//             v1.4: Entry at 0xC203
 ;//
+;//                 -> Checks if any TOS file-assignments are overwritten after ASM
+;//                    has loaded
+;//                 -> Simplifies default abstract-file selection
+;//                 -> Uses TOS null-file rather than a dedicated local null-file
+;//                 -> No longer possible to assign AL independently of the other
+;//                    listing devices
+;//                 -> Adds an optional command line argument to override the page-
+;//                    length of the code/error-listing
+;//                 -> Rewrites the code listing layout, adding program title, page
+;//                    numbers, and source line numbers to the code-listing. Each
+;//                    listing page will also have appropriate padding on the top
+;//                    and bottom, as well as a page can now both have variable
+;//                    width and height.
+;//                 -> Adds a bug where the source code output is not adjusted for
+;//                    the new layout and will include parts of the listing binary
+;//                    data
+;//                 -> Adds layout codes to configure the listing layout from
+;//                    declarations in the source code input
+;//                 -> Adds an optional argument to the END/EOF instruction, where
+;//                    an expression can be provided to set an address in the final
+;//                    line end record of the hex-file
+;//                 -> Adds support for a chain of input source-code files
+;//                 -> Allows for a symbol to be defined multiple times in
+;//                    interactive mode, as long as it retains the same value for
+;//                    all definitions
+;//                 -> Adds a new error print in case a symbol changed value
+;//                    between two definitions
+;//                 -> Introduces a bug where the changed value error will be
+;//                    reported if there is no space to add a new undefined symbol
+;//                 -> Adds a new error print if non-comment data is flushed from
+;//                    the source-code input
+;//                 -> Adds the option to type left-arrow to clear the current line
+;//                 -> No longer reports errors with associated assembler address
+;//                 -> Prints multiple symbols per line when listing symbol tables
+;//                 -> Symbols are now listed in alphabetical order, unless in
+;//                    interactive mode
+;//
 
 
 ;//////////////////////////////////////////////////////////////////////////////
@@ -118,19 +167,32 @@ TRUE        EQU     -1          ; Boolean True
 ; ASCII control cHaracters
 ;
 NULL        EQU     000H        ; Null character
+ERLIN       EQU     004H        ; Erase current line
+CURL        EQU     008H        ; Cursor left
 HTAB        EQU     009H        ; Horizontal tabulation
 LF          EQU     00AH        ; Line Feed
 ROLUP       EQU     00CH        ; Scroll screen up one row
 CR          EQU     00DH        ; Cartridge Return
 CURR        EQU     018H        ; Cursor right
+CURUP       EQU     01CH        ; Cursor up
 APOSTROPHE  EQU     027H        ; Aphostrophe
 SEMICOLON   EQU     03BH        ; Semicolon
 DEL         EQU     07FH        ; Delete
 
 ;
+; IO ports
+;
+CONSOLE_O   EQU     0E5H        ; TDV-2100 display console output
+
+;
 ; XMON system calls
 ;
 TTI         EQU     00040H      ; Console input
+
+;
+; XMON and TOS system data
+;
+BUFLIM      EQU     0272EH      ; Lowest address of current TOS buffers
 
 ;
 ; TOS system calls
@@ -140,10 +202,17 @@ OUTCHAR     EQU     0FD0CH      ; Output single character
 PUT         EQU     0FD12H      ; Output string of characters, inclusive CR
 PUTSTR      EQU     0FD15H      ; Output string of characters, exclusive CR
 OPEN        EQU     0FD1EH      ; Open block device
+EDWH        EQU     0FD2DH      ; Convert word to 4-character ASCII hexadecimal
+
+;
+; TOS constants
+;
+DEV_BB_PTR  EQU     0FDF2H      ; Reference to byte-bucket (void) device file
 
 ;
 ; TOS standard files
 ;
+CI_FCB      EQU     0FF00H      ; Console input abstract file FCB pointer
 CO_FCB      EQU     0FF02H      ; Console output abstract file FCB pointer
 SI_FCB      EQU     0FF04H      ; Standard input abstract file FCB pointer
 SO_FCB      EQU     0FF06H      ; Standard output abstract file FCB pointer
@@ -157,15 +226,16 @@ AL_FCB      EQU     0FF0EH      ; Auxilliary line-printer output abstract file F
 FM_INPUT    EQU     001H        ; File open for reading flag
 FM_OUTPUT   EQU     002H        ; File open for writing flag
 FM_BINARY   EQU     004H        ; Binary flag
-FM_EOF_NEXT EQU     010H        ; Can detect End of File flag
 FM_ASSIGNED EQU     020H        ; Assigned and opened by command line flag
 FM_NO_CLOSE EQU     040H        ; Don't close file flag
+FM_EOF      EQU     080H        ; End of file flag
 
 ;
 ; TOS Errors
 ;
 ERROR_08    EQU     008H        ; DRIVE NOT READY
 ERROR_18    EQU     018H        ; OUTPUT TO NON-OUTPUT FILE
+ERROR_2B    EQU     02BH        ; BUFFER CHAIN DESTROYED
 
 ;
 ; ASM assembly state
@@ -189,6 +259,8 @@ NO_OPER_ERR EQU     010H        ; Missing operand
 NO_CONS_ERR EQU     011H        ; Missing constant (DB, DW)
 US_EXPR_ERR EQU     012H        ; Undefined symbol in expression
 EOF_ERR     EQU     013H        ; Unexpected end of file (END missing)
+SYMBCHG_ERR EQU     014H        ; Symbol value changed between multiple definitions
+NC_FLSH_ERR EQU     015H        ; Non-comment non-whitespace characters were flushed from the input line
 ILL_SL_ERR  EQU     052H        ; Illegal list device
 ILL_CMD_ERR EQU     054H        ; Illegal assembly command
 DEV_BSY_ERR EQU     056H        ; Disk or cartridge not ready
@@ -210,6 +282,7 @@ SYM_CH_MASK EQU     03FH        ; Symbol character data mask
 SYM_SF_BYTE EQU     000H        ; Symbol byte length flag
 SYM_SF_WORD EQU     040H        ; Symbol word length flag
 SYM_CF_LAST EQU     080H        ; Symbol last character flag
+SYM_ERASED  EQU     0FFH        ; Symbol deleted character
 
 
 ;//////////////////////////////////////////////////////////////////////////////
@@ -222,8 +295,6 @@ SYM_CF_LAST EQU     080H        ; Symbol last character flag
 lines_left_on_page:
         DS          1
 interactive_mode_flag:
-        DS          1
-final_error_report_flag:
         DS          1
 error_counter:
         DS          1
@@ -286,15 +357,51 @@ symbol_buffers_last_byte_ptr:
 undefined_symbols_end_ptr:
         DS          2
 src_output_str_buffer:
-        DS          1+81
+        DS          1+134
 list_output_str_buffer:
-        DS          1+81
+        DS          1+134
+source_code_title_str:
+        DS          1+134
 src_output_str_buffer_cursor:
         DS          2
 unused_outside_main_flag:
         DS          1
 stack_backup:
         DS          2
+current_input_line_nr:
+        DS          2
+next_page_nr_bcd:
+        DS          2
+output_page_length:
+        DS          1
+output_page_width:
+        DS          1
+listing_page_nr_str_ptr:
+        DS          2
+nr_of_symbols_per_listing_line:
+        DS          1
+symb_table_to_list_ptr:
+        DS          2
+symb_table_header_str_ptr:
+        DS          2
+current_nr_of_symb_names_in_line:
+        DS          1
+selected_symbol_name_buffer:
+        DS          5
+selected_symbol_addr:
+        DS          2
+current_symbol_entry_ptr:
+        DS          2
+current_symbol_candidate_ptr:
+        DS          2
+next_seq_symbol_entry_ptr:
+        DS          2
+eject_current_page_flag:
+        DS          1
+symtab_err_hit_once_flag:
+        DS          1
+fixed_page_length_flag:
+        DS          1
 hexfile_str_len:
         DS          1
 hex_file_next_cont_addr:
@@ -307,20 +414,6 @@ current_asm_bin_byte:
         DS          1
 hexfile_str_buffer:
         DS          1+64
-
-dual_err_listing_fcb:
-        DB          6
-        DB          FM_OUTPUT + FM_BINARY + FM_EOF_NEXT
-dual_err_listing_1st_file_ptr:
-        DW          00000H
-dual_err_listing_2nd_file_ptr:
-        DW          00000H
-
-null_output_fcb:
-        DB          2
-        DB          FM_OUTPUT + FM_NO_CLOSE
-        DW          00000H
-        DW          null_output_routine
 
 
 ;//////////////////////////////////////////////////////////////////////////////
@@ -360,6 +453,24 @@ start:
         LXI         H,00000H
         DAD         SP
         SHLD        stack_backup
+        ;
+        ; Verify that program didn't overwirte any TOS file assignment data
+        ;
+        LHLD        BUFLIM
+        LXI         D,program_end - 1
+        MOV         A,H
+        CMP         D
+        JNC         tos_buffers_good
+        JNZ         tos_buffers_bad
+        MOV         A,L
+        CMP         E
+        JNC         tos_buffers_good
+tos_buffers_bad:
+        MVI         A,ERROR_2B
+        STC
+        RET
+
+tos_buffers_good:
 
 
 ;//////////////////////////////////////
@@ -397,111 +508,135 @@ so_checked:
         ;
         CMA
         STA         asm_direct_to_ram_flag
-        ;
-        ; Check if the AL standard file is set
-        ;
-        LHLD        AL_FCB
-        MOV         A,L
-        ORA         H
-        JZ          al_checked
-        MVI         A,TRUE
-al_checked:
-        MOV         E,A
-        ;
-        ; Check if the SL standard file is set
-        ;
-        LHLD        SL_FCB
-        MOV         A,L
-        ORA         H
-        JZ          sl_checked
-        MVI         A,TRUE
-sl_checked:
-        ;
-        ; If so, enable the final error-report on the listing output
-        ;
-        STA         final_error_report_flag
-        MOV         D,A
 
 
 ;//////////////////////////////////////
 
         ;
-        ; Determine standard-files to use for the varous outputs
-        ;
-        JZ          handle_sl_not_set
-        ;
-        ; Use SL for error-listing if AL is not set
-        ;
-        ANA         E
-        JNZ         sl_set_listing_device_ready
-        LHLD        SL_FCB
-        SHLD        AL_FCB
-sl_set_listing_device_ready:
-        ;
-        ; Copy error-listing to CO if SI is not set
-        ;
-        MOV         A,B
-        ORA         A
-        JZ          set_up_copy_err_listing_to_console
-        JMP         err_listing_device_ready
-
-handle_sl_not_set:
-        ;
-        ; Use CO for code-listing if SL is not set
-        ;
-        LHLD        CO_FCB
-        SHLD        SL_FCB
-        ;
-        ; Copy error-listing to CO if AL was set
-        ;
-        ORA         E
-        JNZ         set_up_copy_err_listing_to_console
-        ;
-        ; Use CO for error-listing if neither SL or AL were set
-        ;
-        LHLD        CO_FCB
-        SHLD        AL_FCB
-        JMP         err_listing_device_ready
-
-set_up_copy_err_listing_to_console:
-        ;
-        ; Set up error-listing for dual-device output
-        ;
-        LHLD        AL_FCB
-        SHLD        dual_err_listing_2nd_file_ptr
-        LXI         H,dual_err_listing_fcb
-        SHLD        AL_FCB
-        LHLD        CO_FCB
-        SHLD        dual_err_listing_1st_file_ptr
-err_listing_device_ready:
-        ;
         ; Make sure unused output files can receive data, assigning a null-file
         ;
-        MOV         A,C
-        ORA         A
+        XRA         A
+        ORA         C
         JNZ         output_device_ready
-        LXI         H,null_output_fcb
+        LHLD        DEV_BB_PTR
         SHLD        SO_FCB
 output_device_ready:
         LHLD        AO_FCB
         MOV         A,L
         ORA         H
         JNZ         src_output_device_ready
-        LXI         H,null_output_fcb
+        LHLD        DEV_BB_PTR
         SHLD        AO_FCB
 src_output_device_ready:
         ;
-        ; Use CO for code-listing if neither SO, SL or AL, but SI were set
+        ; Set up error-list device, normally SL, but use CO if SL not assigned
         ;
-        ORA         C
-        ORA         D
-        ORA         E
-        JNZ         listing_device_ready
-        ORA         B
-        JZ          listing_device_ready
-        LHLD        CO_FCB
+        LHLD        SL_FCB
+        SHLD        AL_FCB
+        MOV         A,L
+        ORA         H
+        JNZ         default_err_list_device_ready
+        LHLD        DEV_BB_PTR
         SHLD        SL_FCB
-listing_device_ready:
+        LHLD        CO_FCB
+default_err_list_device_ready:
+        SHLD        AL_FCB
+        ;
+        ; Force error-listing to be CO in interactive mode
+        ;
+        LDA         interactive_mode_flag
+        ORA         A
+        JZ          err_list_device_ready
+        LHLD        CO_FCB
+        SHLD        AL_FCB
+err_list_device_ready:
+        ;
+        ; Enable variable page-length by default unless CI is a buffered device
+        ;
+        XRA         A
+        STA         fixed_page_length_flag
+        LHLD        CI_FCB
+        MOV         A,M
+        CPI         4
+        JNZ         page_length_mode_ready
+        ;
+        ; Get character at the end of the currently pending CI input line
+        ;
+        INX         H
+        INX         H
+        MOV         C,M             ; CI_FCB + FCB_BUFIDX
+        INX         H
+        MOV         B,M
+        INX         H
+        INX         H
+        INX         H
+        MOV         E,M             ; CI_FCB + FCB_BUFPTR
+        INX         H
+        MOV         D,M
+        XCHG
+        DAD         B
+        MOV         A,M
+        ;
+        ; Keep variable page-length default if there's nothing pending on CI
+        ;
+        CPI         LF
+        JZ          page_length_mode_ready
+        XCHG
+        ;
+        ; Peek into pending CI line and parse number as fixed page-length
+        ;
+        LXI         H,0
+parse_next_fixed_page_length_digit:
+        ;
+        ; Check next character in line buffer for line end or numeral
+        ;
+        LDAX        D
+        INX         D
+        CPI         CR
+        JZ          fixed_page_length_parsed
+        CPI         '0'
+        JC          parse_next_fixed_page_length_digit
+        CPI         '9'+1
+        JNC         parse_next_fixed_page_length_digit
+        ;
+        ; Convert from ASCII to binary, and add to existing digits times 10
+        ;
+        SUI         '0'
+        DAD         H
+        MOV         B,H
+        MOV         C,L
+        DAD         H
+        DAD         H
+        DAD         B
+        ADD         L
+        ;
+        ; Cap fixed page-length if the value parsed overflows the variable
+        ;
+        JC          use_max_fixed_page_length
+        MOV         L,A
+        JMP         parse_next_fixed_page_length_digit
+
+use_max_fixed_page_length:
+        MVI         L,72
+fixed_page_length_parsed:
+        ;
+        ; Cap max fixed page-length to between 12 and 72
+        ;
+        MOV         A,L
+        CPI         12
+        JNC         min_fixed_page_length_ready
+        MVI         A,12
+min_fixed_page_length_ready:
+        CPI         72
+        JC          max_fixed_page_length_ready
+        MVI         A,72
+max_fixed_page_length_ready:
+        ;
+        ; Lock page-length to fixed value
+        ;
+        STA         output_page_length
+        STA         fixed_page_length_flag
+page_length_mode_ready:
 
 
 ;//////////////////////////////////////
@@ -539,20 +674,85 @@ reentry_point:
         LHLD        stack_backup
         SPHL
         ;
-        ; Print initial code-listing margin
+        ; Check if code-listing goes to the console or not
         ;
+        LHLD        SL_FCB
+        XCHG
+        LHLD        CO_FCB
+        MOV         A,D
+        CMP         H
+        JNZ         add_first_listing_top_margin
+        MOV         A,E
+        CMP         L
+        JZ          first_listing_top_margin_ready
+        ;
+        ; If not, prepare the start of the first code-listing page
+        ;
+add_first_listing_top_margin:
         MVI         A,ROLUP
         CALL        print_char_to_code_listing
-        MVI         C,3
-listing_first_margin_loop:
+        ;
+        ; Print initial margin
+        ;
+        MVI         C,4
+first_listing_top_margin_loop:
         CALL        print_newline_to_code_listing
         DCR         C
-        JNZ         listing_first_margin_loop
+        JNZ         first_listing_top_margin_loop
+first_listing_top_margin_ready:
         ;
-        ; Reset lines left on page countdown
+        ; Default title to ASM program version title string
         ;
-        MVI         A,65
+        LXI         B,title_str
+        LXI         H,source_code_title_str
+copy_default_title_loop:
+        LDAX        B
+        MOV         M,A
+        INX         B
+        INX         H
+        CPI         CR
+        JNZ         copy_default_title_loop
+        DCX         H
+        ;
+        ; Fill rest of default title string with spaces
+        ;
+        MVI         A,134 - (title_str_line_end - title_str_line_start)
+fill_remaining_default_title_loop:
+        MVI         M,' '
+        INX         H
+        DCR         A
+        JNZ         fill_remaining_default_title_loop
+        ;
+        ; Terminate default title string with CR,LF
+        ;
+        MVI         M,CR
+        INX         H
+        MVI         M,LF
+        ;
+        ; Set default listing page length to 72 lines, if not fixed page-length
+        ;
+        LDA         fixed_page_length_flag
+        ORA         A
+        JNZ         initial_page_length_ready
+        MVI         A,72
+        STA         output_page_length
+initial_page_length_ready:
+        ;
+        ; Remove top and bottom margin to get lines left on the first page
+        ;
+        SUI         8
         STA         lines_left_on_page
+        ;
+        ; Set default page width and reset other variables used in main
+        ;
+        MVI         A,79
+        STA         output_page_width
+        XRA         A
+        STA         unused_outside_main_flag
+        STA         error_counter
+        LXI         H,1
+        SHLD        current_input_line_nr
+        SHLD        next_page_nr_bcd
 
 
 ;//////////////////////////////////////////////////////////////////////////////
@@ -561,11 +761,6 @@ listing_first_margin_loop:
 ;//
 ;//////////////////////////////////////////////////////////////////////////////
 
-        ;
-        ; Clear unused main flag
-        ;
-        XRA         A
-        STA         unused_outside_main_flag
         ;
         ; Print ASM program title to console
         ;
@@ -583,6 +778,12 @@ listing_first_margin_loop:
 break_to_main:
         LHLD        stack_backup
         SPHL
+        ;
+        ; Reset runtime flags
+        ;
+        XRA         A
+        STA         symtab_err_hit_once_flag
+        STA         eject_current_page_flag
 
 
 ;//////////////////////////////////////
@@ -619,7 +820,7 @@ main:
         MVI         M,LS_BDBMP_AD
         LHLD        SL_FCB
         CNZ         print_data_only_listing_line
-        MVI         C,16
+        MVI         C,21
         CALL        move_to_position_if_possible
         ;
         ; Clear variables to be used for parsing of the next line
@@ -658,12 +859,6 @@ main_input_line_done:
         ORA         A
         JNZ         interactive_mode_main
         ;
-        ; Skip printing code-listing stuff if first pass
-        ;
-        LDA         assembler_pass_state
-        ORA         A
-        JZ          first_pass_main
-        ;
         ; Second pass main:
         ; Cut code-listing output string at current cursor
         ;
@@ -680,7 +875,7 @@ main_input_line_done:
         INR         B
 code_listing_str_end_ready:
         ;
-        ; Add CR,LF to code-listing string and print it
+        ; Add CR,LF to code-listing string
         ;
         MVI         A,LF
         STAX        B
@@ -688,28 +883,65 @@ code_listing_str_end_ready:
         MVI         A,CR
         STAX        B
         LHLD        SL_FCB
+        ;
+        ; Determine listing device based on pending error type
+        ;
+        LDA         current_error_nr
+        ORA         A
+        JZ          current_listing_device_ready
+        CPI         SYMBTAB_ERR
+        JNZ         use_error_listing
+        ;
+        ; Repurpose error type for symbol table full in second pass
+        ;
+        LDA         assembler_pass_state
+        ORA         A
+        JZ          use_error_listing
+        MVI         A,US_EXPR_ERR
+        STA         current_error_nr
+use_error_listing:
+        LHLD        AL_FCB
+current_listing_device_ready:
+        ;
+        ; Determine which errors to print, if any
+        ;
+        CPI         PI_S_ERR
+        JZ          add_current_line_to_listing
+        CPI         DBLSYMB_ERR
+        JZ          add_current_line_to_listing
+        ;
+        ; Only add symbol table full error if it hits twice
+        ;
+        CPI         SYMBTAB_ERR
+        JNZ         add_current_line_if_2nd_pass
+        LDA         symtab_err_hit_once_flag
+        ORA         A
+        JNZ         void_current_error
+        MVI         A,SYMBTAB_ERR
+        STA         symtab_err_hit_once_flag
+        JMP         add_current_line_to_listing
+
+void_current_error:
+        XRA         A
+        STA         current_error_nr
+        LHLD        SL_FCB
+        ;
+        ; If second pass, reset error and add line to listing
+        ;
+add_current_line_if_2nd_pass:
+        LDA         assembler_pass_state
+        ORA         A
+        JNZ         add_current_line_to_listing
+        XRA         A
+        STA         current_error_nr
+        JMP         current_line_listing_done
+
+add_current_line_to_listing:
+        ;
+        ; Add current main line to code or error listing
+        ;
         CALL        finalize_listing_line_and_print
-        ;
-        ; Increase code-listing linecount and check for end of page
-        ;
-        LDA         lines_left_on_page
-        DCR         A
-        JNZ         code_listing_line_number_ready
-        ;
-        ; If so, print margin of linebreak on code-listing
-        ;
-        MVI         C,7
-print_code_listing_margin_loop:
-        CALL        print_newline_to_code_listing
-        DCR         C
-        JNZ         print_code_listing_margin_loop
-        ;
-        ; Reset code-listing available linecount
-        ;
-        MVI         A,65
-code_listing_line_number_ready:
-        STA         lines_left_on_page
-first_pass_main:
+current_line_listing_done:
         ;
         ; Clear unused main flag
         ;
@@ -723,7 +955,8 @@ first_pass_main:
         LDA         current_error_nr
         ORA         A
         MOV         C,A
-        CNZ         raise_error
+        JZ          main_loop_cleanup
+        CALL        raise_error
         JMP         main_loop_cleanup
 
 
@@ -803,8 +1036,19 @@ main_loop_cleanup:
         DAD         D
         SHLD        current_address_ptr
         ;
-        ; Continue next iteration of main loop
+        ; Advance line-number counter and continue next iteration of main loop
         ;
+        LXI         H,current_input_line_nr
+        XRA         A
+        MOV         A,M
+        INR         A
+        DAA
+        MOV         M,A
+        JNC         main
+        INX         H
+        ADC         M
+        DAA
+        MOV         M,A
         JMP         main
 
 
@@ -822,6 +1066,12 @@ build_done:
         LXI         B,build_done_str
         CALL        print_string
         CALL        print_newline
+        ;
+        ; If interactive mode, skip most of the final errors-stats reporting
+        ;
+        LDA         interactive_mode_flag
+        ORA         A
+        JNZ         build_errors_report_done
         ;
         ; Check if errors
         ;
@@ -843,16 +1093,44 @@ build_errors_report_ready:
         CALL        print_string
         CALL        print_newline
         ;
-        ; Print final error-report to code-listing if needed
+        ; Check if code-listing goes to somethng else than the console
         ;
-        LDA         final_error_report_flag
-        ORA         A
         LHLD        SL_FCB
+        XCHG
+        LHLD        CO_FCB
+        MOV         A,H
+        CMP         D
+        JNZ         print_build_errors_report
+        MOV         A,L
+        CMP         E
         JZ          build_errors_report_done
+print_build_errors_report:
+        ;
+        ; If so, print final overall error report
+        ;
+        XCHG
         CALL        print_newline
         LXI         B,build_errors_report_str
         CALL        print_string
+        PUSH        D
+        PUSH        H
+        CALL        start_next_listing_line
+        POP         H
+        POP         D
 build_errors_report_done:
+        ;
+        ; Skip symbol tables listing if a code-listing file isn't assigned
+        ;
+        LHLD        DEV_BB_PTR
+        XCHG
+        LHLD        SL_FCB
+        MOV         A,D
+        CMP         H
+        JNZ         print_error_symbol_tables
+        MOV         A,E
+        CMP         L
+        JZ          exit_to_tos
+print_error_symbol_tables:
         ;
         ; Print final symbols reference to code-listing
         ;
@@ -868,11 +1146,13 @@ build_errors_report_done:
 ;//////////////////////////////////////
 
 title_str:
-        DB          29
-        DB          'TANDBERG TDV 2100 ASSEMBLER',CR,LF
+        DB          title_str_line_end - title_str_line_start
+title_str_line_start:
+        DB          'TANDBERG TDV 2100 ASSEMBLER V.1.4.',CR,LF
+title_str_line_end:
 build_errors_report_str:
-        DB          18
-        DB          'NO SYNTAX ERRORS',CR,LF
+        DB          19
+        DB          'NO ERROR MESSAGES',CR,LF
 build_done_str:
         DB          19
         DB          'ASSEMBLY COMPLETE',CR,LF
@@ -1117,6 +1397,8 @@ parse_operation_type:
         JZ          skip_entire_input_line
         CPI         SEMICOLON
         JZ          skip_entire_input_line
+        CPI         '$'
+        JZ          parse_parameter_change
         ;
         ; Assume normal assembly-instruction, so sanity-check if valid
         ;
@@ -1174,6 +1456,239 @@ instrcution_done:
 ;//////////////////////////////////////////////////////////////////////////////
 
         ;
+        ; Handle a parameter change
+        ;
+parse_parameter_change:
+        ;
+        ; Verify parameter type
+        ;
+        CALL        get_input_char
+        CPI         'E'
+        JZ          parse_e_param
+        CPI         'P'
+        JZ          parse_p_param
+
+
+;//////////////////////////////////////
+
+        ;
+        ; Check for the $TITLE parameter
+        ;
+        CPI         'T'
+        JNZ         instruction_first_char_error
+        CALL        get_input_char
+        CPI         'I'
+        JNZ         instruction_first_char_error
+        CALL        get_input_char
+        CPI         'T'
+        JNZ         instruction_first_char_error
+        CALL        get_input_char
+        CPI         'L'
+        JNZ         instruction_first_char_error
+        CALL        get_input_char
+        CPI         'E'
+        JNZ         instruction_first_char_error
+        ;
+        ; Check for first pass
+        ;
+        LDA         assembler_pass_state
+        ORA         A
+        JNZ         param_parsing_done
+        ;
+        ; If so, clear source-code title string
+        ;
+        LXI         H,source_code_title_str + 1
+        MVI         A,132
+clear_src_title_loop:
+        MVI         M,' '
+        INX         H
+        DCR         A
+        JNZ         clear_src_title_loop
+        LXI         H,source_code_title_str + 1
+        ;
+        ; Prune whitespaces before title
+        ;
+get_to_title_loop:
+        CALL        get_input_char
+        CPI         CR
+        RZ
+        CPI         ' '
+        JZ          get_to_title_loop
+        CPI         HTAB
+        JZ          get_to_title_loop
+        ;
+        ; Copy title into source-code title string
+        ;
+copy_title_loop:
+        MOV         M,A
+        INX         H
+        CALL        get_input_char
+        CPI         CR
+        JNZ         copy_title_loop
+        STA         current_char
+        STC
+        RET
+
+
+;//////////////////////////////////////
+
+        ;
+        ; Return from parameter parsing
+        ;
+param_parsing_done:
+        ;
+        ; Skip the rest of the line
+        ;
+param_parsing_flush_loop:
+        CALL        get_input_char
+        CPI         CR
+        JNZ         param_parsing_flush_loop
+        STA         current_char
+        STC
+        RET
+
+
+;//////////////////////////////////////
+
+        ;
+        ; Parse and update page dimension related argument
+        ;
+parse_p_param:
+        ;
+        ; Verify argument to be either pl or pw
+        ;
+        CALL        get_input_char
+        CPI         'L'
+        JZ          set_page_length_param
+        CPI         'W'
+        JNZ         instruction_first_char_error
+        ;
+        ; Set new page width parameter, capped within the range of 50 to 127
+        ;
+        CALL        parse_numerical_arg
+        CPI         50
+        JNC         page_width_min_ready
+        MVI         A,50
+page_width_min_ready:
+        CPI         127
+        JC          page_width_max_ready
+        MVI         A,127
+page_width_max_ready:
+        STA         output_page_width
+        STC
+        RET
+
+set_page_length_param:
+        ;
+        ; Check if custom page length is enabled
+        ;
+        LDA         fixed_page_length_flag
+        ORA         A
+        JNZ         param_parsing_done
+        ;
+        ; Set new page length, minimum 24 lines
+        ;
+        CALL        parse_numerical_arg
+        CPI         24
+        JNC         page_length_ready
+        MVI         A,24
+page_length_ready:
+        STA         output_page_length
+        ;
+        ; Check if first pass
+        ;
+        MOV         H,A
+        LDA         assembler_pass_state
+        ORA         A
+        JNZ         new_pl_lines_left_ready
+        ;
+        ; If so, replace the initial default 72 lines left with new page length
+        ;
+        LDA         lines_left_on_page
+        SUI         72
+        ADD         H
+        STA         lines_left_on_page
+new_pl_lines_left_ready:
+        STC
+        RET
+
+
+;//////////////////////////////////////
+
+        ;
+        ; Mark current listing-page for ejection before next output, in pass-2
+        ;
+parse_e_param:
+        CALL        get_input_char
+        CPI         CR
+        JNZ         instruction_first_char_error
+        STA         current_char
+        LDA         assembler_pass_state
+        STA         eject_current_page_flag
+        STC
+        RET
+
+
+;//////////////////////////////////////////////////////////////////////////////
+
+        ;
+        ; Parse decimal input argument
+        ;
+parse_numerical_arg:
+        ;
+        ; Initialize accumulated value and intermediate-ones variable used
+        ;
+        LXI         H,0
+        LXI         B,0
+parse_next_numerical_digit:
+        ;
+        ; Get and check next character
+        ;
+        PUSH        B
+        CALL        get_input_char
+        POP         B
+        CPI         CR
+        JZ          numerical_arg_ready
+        CPI         '0'
+        JC          parse_next_numerical_digit
+        CPI         '9'+1
+        JNC         parse_next_numerical_digit
+        ;
+        ; Convert character to binary and add to previous value x10
+        ;
+        SUI         '0'
+        MOV         C,A
+        DAD         H
+        MOV         D,H
+        MOV         E,L
+        DAD         H
+        DAD         H
+        DAD         D
+        DAD         B
+        JMP         parse_next_numerical_digit
+
+numerical_arg_ready:
+        ;
+        ; Store current character for later
+        ;
+        STA         current_char
+        ;
+        ; Check if the argument value is 8 or 16 bits
+        ;
+        MOV         A,H
+        ORA         A
+        JZ          numerical_8bit_arg_ready
+        MVI         A,TRUE
+        RET
+
+numerical_8bit_arg_ready:
+        MOV         A,L
+        RET
+
+
+;//////////////////////////////////////////////////////////////////////////////
+
+        ;
         ; Determine operation name, and handle if it is a symbol definition
         ;
 parse_operation_name:
@@ -1190,7 +1705,7 @@ handle_symbol_def:
         ; Move cursor in interactive mode, a symbol def makes no binary data
         ;
         PUSH        PSW
-        MVI         C,24
+        MVI         C,29
         CALL        move_interactive_cursor_to_position
         POP         PSW
         ;
@@ -1199,7 +1714,6 @@ handle_symbol_def:
         LHLD        current_address_ptr
         SHLD        expression_value
         CALL        define_new_symbol
-        RC
         CALL        replace_undef_with_value
         ;
         ; Continue, since a new operation can follow on the same line
@@ -1428,18 +1942,18 @@ tab_output_to_opcode:
         ORA         A
         RZ
         ;
-        ; Check if cursor is not past position 24
+        ; Check if cursor is not past position 29
         ;
         LDA         console_line_cursor_pos
-        CPI         24
+        CPI         29
         JP          tab_output_to_opcode_done
         PUSH        H
         MOV         C,A
         PUSH        B
         ;
-        ; Get remaining characters between cursor and position 24
+        ; Get remaining characters between cursor and position 29
         ;
-        MVI         A,24
+        MVI         A,29
         SUB         C
         ;
         ; Point to output string at cursor position
@@ -1453,25 +1967,25 @@ tab_output_to_opcode:
         DCX         D
         PUSH        D
         ;
-        ; Point to output string at position 24
+        ; Point to output string at position 29
         ;
         MVI         B,000H
-        MVI         C,24
+        MVI         C,29
         DAD         B
         MOV         B,H
         MOV         C,L
         ;
-        ; Move text at cursor position and onwards up to position 24
+        ; Move text at cursor position and onwards up to position 29
         ;
         MOV         L,A
         PUSH        PSW
         CALL        copy_buffer
         POP         PSW
         ;
-        ; Clear from cursor and up until position 24
+        ; Clear from cursor and up until position 29
         ;
         POP         H
-        MVI         A,24
+        MVI         A,29
         POP         B
         SUB         C
 clear_margin_before_opcode_loop:
@@ -1482,9 +1996,9 @@ clear_margin_before_opcode_loop:
         POP         H
 tab_output_to_opcode_done:
         ;
-        ; Move cursor to position 32
+        ; Move cursor to position 37
         ;
-        MVI         C,32
+        MVI         C,37
         JMP         move_to_position_if_possible
 
 
@@ -1893,6 +2407,34 @@ source_file_end:
         CALL        finalize_and_print_hex_string
 terminate_hexfile:
         ;
+        ; Check if there is an argument to the END or EOF pseudo-instruction
+        ;
+        LDA         current_char
+        CPI         CR
+        JZ          hex_file_term_str_ready
+        ;
+        ; If so, get argument as an expression
+        ;
+        MVI         A,1
+        STA         immediate_datatype_len_plus_one
+        CALL        parse_expression
+        ;
+        ; Ignore missing operand error here
+        ;
+        LDA         current_error_nr
+        SUI         NO_OPER_ERR
+        JNZ         end_arg_ready
+        STA         current_error_nr
+end_arg_ready:
+        ;
+        ; Insert argument as address in hex-file block termination string
+        ;
+        LHLD        expression_value
+        XCHG
+        LXI         H,hexfile_termination_str + 4
+        CALL        EDWH
+hex_file_term_str_ready:
+        ;
         ; Print hex-file block termination line
         ;
         LHLD        SO_FCB
@@ -1907,40 +2449,58 @@ terminate_hexfile:
         ; Go from first to second pass
         ;
 end_first_pass:
-        LHLD        SI_FCB
+        ;
+        ; Prepare to reset a chain of input files on SI
+        ;
+        LXI         H,NULL
         PUSH        H
+        LHLD        SI_FCB
+reset_next_chained_file:
         ;
-        ; Reset mode of input file, by clearing appropriate file-mode flags
+        ; Check if the current file is a chained file
         ;
-        INX         H
-        MOV         A,M             ; SI_FCB + FCB_MODE
-        ANI         FM_ASSIGNED
-        MVI         A,FM_BINARY + FM_NO_CLOSE
-        JZ          force_close_input_file
-        MVI         A,FM_INPUT + FM_OUTPUT + FM_BINARY + FM_ASSIGNED + FM_NO_CLOSE
-force_close_input_file:
+        MOV         A,M
+        CPI         6
+        JNZ         reset_block_device_file
+        ;
+        ; Clear End of File bit from the mode in the current chained file
+        ;
+        INX         H               ; FCB + FCB_MODE
+        MVI         A,NOT-(FM_EOF)
         ANA         M
         MOV         M,A
         ;
-        ; Reset buffer-length of input file
+        ; Add the first chained file to still pending files to reset on stack
         ;
         INX         H
+        MOV         E,M             ; FCB + reference to first chained file
         INX         H
-        INX         H
-        MVI         M,128           ; SI_FCB + FCB_BUFLEN
-        INX         H
-        XRA         A
-        MOV         M,A
+        MOV         D,M
+        PUSH        D
         ;
-        ; Reset state of program
+        ; Reset the second chained file recursively
         ;
-        STA         unused_outside_main_flag
-        STA         error_counter
+        INX         H
+        MOV         E,M             ; FCB + reference to second chained file
+        INX         H
+        MOV         D,M
+        XCHG
+        JMP         reset_next_chained_file
+
+reset_block_device_file:
+        ;
+        ; Reset non-chained file and continue with next pending file if any
+        ;
+        CALL        reset_file_state
+        POP         H
+        MOV         A,H
+        ORA         L
+        JNZ         reset_next_chained_file
         ;
         ; Attempt to re-open input file for reading
         ;
-        INR         A
-        POP         H
+        MVI         A,FM_INPUT
+        LHLD        SI_FCB
         CALL        OPEN
         JNC         input_file_reopened
         ;
@@ -1958,6 +2518,48 @@ input_file_reopened:
         STA         assembler_pass_state
         LXI         H,0
         SHLD        current_address_ptr
+        LXI         H,1
+        SHLD        current_input_line_nr
+        ;
+        ; Set title-string to same character length as the page width
+        ;
+        LDA         output_page_width
+        MOV         C,A
+        MVI         B,000H
+        LXI         H,source_code_title_str
+        ADI         2
+        MOV         M,A
+        ;
+        ; Point to 8 characters before the end of source-listing title string
+        ;
+        LXI         H,source_code_title_str - 8
+        DAD         B
+        ;
+        ; Copy 'Page' string there and save pointer to where number goes
+        ;
+        LXI         B,page_str
+        MVI         E,5
+copy_page_str_loop:
+        LDAX        B
+        MOV         M,A
+        INX         H
+        INX         B
+        DCR         E
+        JNZ         copy_page_str_loop
+        SHLD        listing_page_nr_str_ptr
+        ;
+        ; Reserve 4 characters for page number and add newline at end
+        ;
+        LXI         B,4
+        DAD         B
+        MVI         M,CR
+        INX         H
+        MVI         M,LF
+        ;
+        ; Print page header of first page in the code-listing
+        ;
+        LHLD        SL_FCB
+        CALL        print_header_and_advance_page_nr
         JMP         break_to_main
 
 
@@ -1977,6 +2579,38 @@ end_second_pass:
 hexfile_termination_str:
         DB          13
         DB          ':00000001FF',CR,LF
+
+
+;//////////////////////////////////////////////////////////////////////////////
+
+        ;
+        ; Reset mode of input file, by clearing appropriate file-mode flags
+        ;
+reset_file_state:
+        INX         H
+        MOV         A,M
+        ANI         FM_ASSIGNED
+        MVI         A,FM_BINARY + FM_NO_CLOSE
+        JZ          force_close_input_file
+        MVI         A,FM_INPUT + FM_OUTPUT + FM_BINARY + FM_ASSIGNED + FM_NO_CLOSE
+force_close_input_file:
+        ANA         M
+        MOV         M,A             ; FCB + FCB_MODE
+        ;
+        ; Reset buffer-length of input file
+        ;
+        INX         H
+        INX         H
+        INX         H
+        MVI         M,128           ; FCB + FCB_BUFLEN
+        INX         H
+        XRA         A
+        MOV         M,A
+        ;
+        ; Reset state of program
+        ;
+        STA         unused_outside_main_flag
+        RET
 
 
 ;//////////////////////////////////////////////////////////////////////////////
@@ -2194,9 +2828,6 @@ db_data_listing_pos_ready:
         ;
 db_string_listing_pos_ready:
         PUSH        D
-        LDA         listing_bindata_bitmap
-        ORA         D
-        STA         listing_bindata_bitmap
 get_next_string_data_byte:
         ;
         ; Check for end of string data
@@ -2236,11 +2867,14 @@ end_of_string_error:
 
 defined_string_data_ready:
         ;
-        ; Add string data to assembled binary
+        ; Update listing datasize and add string data to assembled binary
         ;
         STA         expression_value
         POP         D
         PUSH        D
+        LDA         listing_bindata_bitmap
+        ORA         D
+        STA         listing_bindata_bitmap
         CALL        try_listing_defined_byte
         LDA         expression_value
         LHLD        current_address_ptr
@@ -2710,7 +3344,7 @@ finalize_and_print_hex_string:
 ;//////////////////////////////////////////////////////////////////////////////
 
         ;
-        ; Clear full 79-character string data-buffer pointed to by HL
+        ; Clear full 132-character string data-buffer pointed to by HL
         ;
 clear_str_buffer:
         PUSH        B
@@ -2718,7 +3352,7 @@ clear_str_buffer:
         ;
         ; Set length of string
         ;
-        MVI         A,79
+        MVI         A,132
         STAX        B
         INX         B
         ;
@@ -2761,8 +3395,7 @@ define_new_symbol:
         MOV         B,H
         MOV         C,L
         CALL        scan_for_name_word_data
-        MVI         A,DBLSYMB_ERR
-        JNC         error_adding_symbol
+        JNC         symb_already_exists
         ;
         ; Verify that there is space for another symbol
         ;
@@ -2803,6 +3436,38 @@ set_def_symb_name_loop:
 ;//////////////////////////////////////
 
         ;
+        ; Handle the same symbol defined multiple times
+        ;
+symb_already_exists:
+        ;
+        ; Raise double-symbol error if first pass
+        ;
+        LDA         assembler_pass_state
+        ORA         A
+        JNZ         check_symb_val_consistency
+        MVI         A,DBLSYMB_ERR
+        JMP         error_adding_symbol
+
+        ;
+        ; Otherwise verify that the symbol value is the same as earlier
+        ;
+check_symb_val_consistency:
+        LHLD        expression_value
+        LDAX        B
+        CMP         L
+        JNZ         symb_val_changed_error
+        INX         B
+        LDAX        B
+        CMP         H
+        RZ
+symb_val_changed_error:
+        MVI         A,SYMBCHG_ERR
+        JMP         error_adding_symbol
+
+
+;//////////////////////////////////////
+
+        ;
         ; Raise error related to adding symbols to tables
         ;
 symb_tables_full_error:
@@ -2836,7 +3501,7 @@ add_undefined_symbol:
         ; Verify that there is space for another symbol
         ;
         CALL        is_more_space_in_symb_tables
-        JC          symb_tables_full_error
+        JC          symb_val_changed_error
         ;
         ; Get negative length of symbols table entry
         ;
@@ -3782,15 +4447,42 @@ check_for_whitespace:
 ;//////////////////////////////////////////////////////////////////////////////
 
         ;
-        ; Skip the remaining input of line
+        ; Skip the remaining input of line, checking for non-comment data
         ;
 flush_input_line:
         LDA         current_char
 flush_input:
+        ;
+        ; Skip past whitespaces, control characters and source-code comments
+        ;
         CPI         CR
-        RZ
+        JZ          flush_input_done
+        CPI         SEMICOLON
+        JZ          flush_input_line_loop
         CALL        get_input_char
-        JMP         flush_input
+        CPI         ' '+1
+        JC          flush_input
+        CPI         SEMICOLON
+        JZ          flush_input_line_loop
+        ;
+        ; If not an error raised already, raise non-comment flushed error
+        ;
+        LDA         current_error_nr
+        ORA         A
+        JNZ         flush_input_line_loop
+        MVI         A,NC_FLSH_ERR
+        STA         current_error_nr
+        ;
+        ; Skip the remaining input of line unconditionally
+        ;
+flush_input_line_loop:
+        CALL        get_input_char
+        CPI         CR
+        JNZ         flush_input_line_loop
+flush_input_done:
+        MVI         A,1
+        STA         list_output_line_cursor_pos
+        RET
 
 
 ;//////////////////////////////////////////////////////////////////////////////
@@ -3811,26 +4503,41 @@ move_interactive_cursor_to_position:
         LDA         list_output_line_cursor_pos
         SUB         C
         JM          move_cursor_right
-        ;
-        ; Otherwise wrap around to start of line...
-        ;
-        RZ
-        PUSH        H
-        LXI         H,retry_tab_from_start
-        PUSH        H
-        MVI         A,CR
-        JMP         conditional_char_to_output_str
+        RET
+
+
+;//////////////////////////////////////////////////////////////////////////////
 
         ;
-        ; ...and retry tab from there
+        ; Tabulate output cursor position
         ;
-retry_tab_from_start:
+tabulate_output_string:
+        PUSH        PSW
+        PUSH        B
         ;
-        ; Setup variables for cursor at start of line
+        ; Identify the next tabulation stop
         ;
-        POP         H
-        XRA         A
-        STA         list_output_line_cursor_pos
+        LDA         list_output_line_cursor_pos
+        MVI         C,29
+        CMP         C
+        JM          next_tab_stop_found
+        MVI         C,37
+        CMP         C
+        JM          next_tab_stop_found
+        MVI         C,45
+        CMP         C
+next_tab_stop_found:
+        ;
+        ; Tabulate if a stop was found
+        ;
+        CM          move_to_position_if_possible
+        POP         B
+        POP         PSW
+        RET
+
+
+;//////////////////////////////////////////////////////////////////////////////
+
 move_to_position_if_possible:
         ;
         ; Calculate number of chars to move cursor rightwards
@@ -3851,43 +4558,37 @@ move_to_position_loop:
         RET
 
 
-;//////////////////////////////////////////////////////////////////////////////
-
-        ;
-        ; Tabulate output cursor position
-        ;
-tabulate_output_string:
-        PUSH        PSW
-        PUSH        B
-        ;
-        ; Identify the next tabulation stop
-        ;
-        LDA         list_output_line_cursor_pos
-        MVI         C,24
-        CMP         C
-        JM          next_tab_stop_found
-        MVI         C,32
-        CMP         C
-        JM          next_tab_stop_found
-        MVI         C,40
-        CMP         C
-next_tab_stop_found:
-        ;
-        ; Tabulate if a stop was found
-        ;
-        CM          move_to_position_if_possible
-        POP         B
-        POP         PSW
-        RET
-
-
 ;//////////////////////////////////////
 
         ;
         ; Get input from console and prepare
         ;
 get_console_input_char:
+        ;
+        ; Get input and check if it's a control character
+        ;
         CALL        TTI
+        CPI         ' '
+        JNC         prepare_input_char
+        ;
+        ; Check for valid control characters
+        ;
+        CPI         CR
+        JZ          prepare_input_char
+        CPI         CURR
+        JZ          prepare_input_char
+        CPI         CURL
+        JNZ         get_console_input_char
+        ;
+        ; If cursor left, erase line and void the unfinished instruction
+        ;
+        MVI         A,ERLIN
+        OUT         CONSOLE_O
+        MVI         A,CURUP
+        OUT         CONSOLE_O
+        LHLD        listing_bindata_addr
+        SHLD        current_address_ptr
+        JMP         break_to_main
 
 
 ;//////////////////////////////////////
@@ -3940,10 +4641,6 @@ add_char_to_output:
         ; Set flag to ensure char is added to output string
         ;
         STC
-conditional_char_to_output_str:
-        ;
-        ; If entry from here, only the console copy will print if no carry flag
-        ;
         PUSH        PSW
         ;
         ; Always print copy to console on output if interactive mode
@@ -4064,7 +4761,10 @@ advance_output_terminal_cursor_alt:
         ; Don't advance cursor if at end of line buffer
         ;
         LDA         list_output_line_cursor_pos
-        CPI         80
+        PUSH        H
+        LXI         H,output_page_width
+        CMP         M
+        POP         H
         JP          advance_output_terminal_cursor_done
         ;
         ; Otherwise advance cursor
@@ -4287,13 +4987,13 @@ print_data_only_listing_line:
         ; Prepare string with max output linelength of console
         ;
         LXI         B,list_output_str_buffer
-        MVI         A,79
+        LDA         output_page_width
         STAX        B
         INX         B
         ;
         ; Clear output string buffer
         ;
-        MVI         E,79
+        MOV         E,A
         MVI         A,' '
 clear_output_str_loop:
         STAX        B
@@ -4309,6 +5009,29 @@ clear_output_str_loop:
         ;
 finalize_listing_line_and_print:
         PUSH        H
+        ;
+        ; Add line-number before data
+        ;
+        LXI         B,list_output_str_buffer + 2
+        LXI         D,current_input_line_nr
+        CALL        word_to_hex
+        ;
+        ; Remove any leading zeroes in the line number
+        ;
+        LXI         B,list_output_str_buffer + 2
+prune_line_nr_leading_zeroes_loop:
+        LDAX        B
+        CPI         '0'
+        JNZ         line_nr_ready
+        MVI         A,' '
+        STAX        B
+        INX         B
+        JMP         prune_line_nr_leading_zeroes_loop
+
+line_nr_ready:
+        ;
+        ; Add dump of listing line binary data
+        ;
         LDA         listing_bindata_bitmap
         RRC
         PUSH        PSW
@@ -4331,16 +5054,150 @@ finalize_listing_line_and_print:
         POP         H
         LXI         B,list_output_str_buffer
         CALL        print_string
-        JMP         print_cr
+        CALL        print_cr
+
+
+;//////////////////////////////////////////////////////////////////////////////
+
+        ;
+        ; Advance to the next line of the provided listing device
+        ;
+start_next_listing_line:
+        ;
+        ; Check that the provided listing device is not the same as the console
+        ;
+        XCHG
+        LHLD        CO_FCB
+        MOV         A,D
+        CMP         H
+        JNZ         new_listing_line_not_console
+        MOV         A,E
+        CMP         L
+        RZ
+new_listing_line_not_console:
+        ;
+        ; Check that the provided listing device is not a void-file
+        ;
+        LXI         H,DEV_BB_PTR
+        MOV         A,D
+        CMP         H
+        JNZ         new_listing_line_device_ready
+        MOV         A,E
+        CMP         L
+        RZ
+new_listing_line_device_ready:
+        ;
+        ; One less line left on the page
+        ;
+        LDA         lines_left_on_page
+        DCR         A
+        STA         lines_left_on_page
+        ;
+        ; Check if a full pagebreak has been called for
+        ;
+        LDA         eject_current_page_flag
+        ORA         A
+        JZ          advance_to_next_listing_line
+        XRA         A
+        STA         eject_current_page_flag
+        CALL        start_new_listing_page
+        JMP         print_header_and_advance_page_nr
+
+advance_to_next_listing_line:
+        ;
+        ; Otherwise check if the current page is full
+        ;
+        LDA         lines_left_on_page
+        ORA         A
+        RNZ
+        ;
+        ; If so, add margin
+        ;
+        MVI         C,8
+next_line_pagebreak_margin_loop:
+        CALL        print_newline_to_code_listing
+        DCR         C
+        JNZ         next_line_pagebreak_margin_loop
+        ;
+        ; Reset lines left on page and add header if second pass
+        ;
+        LDA         output_page_length
+        SUI         8
+        STA         lines_left_on_page
+        LDA         assembler_pass_state
+        ORA         A
+        RZ
 
 
 ;//////////////////////////////////////
 
         ;
+        ; Update page nr in header, print header, and advance page number
+        ;
+print_header_and_advance_page_nr:
+        ;
+        ; Update current page number in header string
+        ;
+        LHLD        listing_page_nr_str_ptr
+        MOV         B,H
+        MOV         C,L
+        LXI         D,next_page_nr_bcd
+        CALL        word_to_hex
+        ;
+        ; Trim leading zeroes of page number in header string
+        ;
+        LHLD        listing_page_nr_str_ptr
+page_nr_leading_zeroes_loop:
+        MOV         A,M
+        CPI         '0'
+        JNZ         page_nr_updated
+        MVI         M,' '
+        INX         H
+        JMP         page_nr_leading_zeroes_loop
+
+page_nr_updated:
+        ;
+        ; Advance the next page number (4-digit BCD encoded)
+        ;
+        LXI         H,next_page_nr_bcd
+        MOV         A,M
+        INR         A
+        DAA
+        MOV         M,A
+        JNC         next_page_nr_ready
+        INX         H
+        ADC         M
+        DAA
+        MOV         M,A
+next_page_nr_ready:
+        ;
+        ; Ensure there's ample space left on the page for the header
+        ;
+        LDA         lines_left_on_page
+        SUI         2
+        CPI         5
+        JNC         space_for_header_on_page
+        CALL        start_new_listing_page
+        LDA         output_page_length
+        SUI         10
+space_for_header_on_page:
+        STA         lines_left_on_page
+        ;
+        ; Print header
+        ;
+        LHLD        SL_FCB
+        LXI         B,source_code_title_str
+        CALL        print_string
+        JMP         print_newline_to_code_listing
+
+
+;//////////////////////////////////////////////////////////////////////////////
+
+        ;
         ; Add address to listing string
         ;
 report_listing_bindata_addr:
-        LXI         B,list_output_str_buffer + 2
+        LXI         B,list_output_str_buffer + 7
         LXI         D,listing_bindata_addr
         JMP         word_to_hex
 
@@ -4351,7 +5208,7 @@ report_listing_bindata_addr:
         ; Add listing bindata byte 1 to listing string
         ;
 report_listing_bindata_byte_1:
-        LXI         B,list_output_str_buffer + 7
+        LXI         B,list_output_str_buffer + 12
         LXI         D,listing_line_bindata
         JMP         byte_to_hex
 
@@ -4362,7 +5219,7 @@ report_listing_bindata_byte_1:
         ; Add listing bindata byte 2 to listing string
         ;
 report_listing_bindata_byte_2:
-        LXI         B,list_output_str_buffer + 9
+        LXI         B,list_output_str_buffer + 14
         LXI         D,listing_line_bindata + 1
         JMP         byte_to_hex
 
@@ -4373,7 +5230,7 @@ report_listing_bindata_byte_2:
         ; Add listing bindata byte 3 to listing string
         ;
 report_listing_bindata_byte_3:
-        LXI         B,list_output_str_buffer + 11
+        LXI         B,list_output_str_buffer + 16
         LXI         D,listing_line_bindata + 2
         JMP         byte_to_hex
 
@@ -4384,7 +5241,7 @@ report_listing_bindata_byte_3:
         ; Add listing bindata byte 4 to listing string
         ;
 report_listing_bindata_byte_4:
-        LXI         B,list_output_str_buffer + 13
+        LXI         B,list_output_str_buffer + 18
         LXI         D,listing_line_bindata + 3
         JMP         byte_to_hex
 
@@ -4453,12 +5310,6 @@ raise_error:
         LXI         D,current_error_nr
         CALL        byte_to_hex
         ;
-        ; Record assembler address at which error happened
-        ;
-        LXI         B,error_str+14
-        LXI         D,current_address_ptr
-        CALL        word_to_hex
-        ;
         ; Print ASM error to error-listing device
         ;
         LHLD        AL_FCB
@@ -4487,6 +5338,7 @@ raise_error:
         CALL        print_newline
         LXI         B,tos_error_str
         CALL        print_string
+        CALL        start_next_listing_line
         LDA         current_tos_error_nr
 error_done:
         ;
@@ -4501,14 +5353,18 @@ error_done:
         ;
         ORA         A
         JNZ         exit_to_tos
-        RET
+        ;
+        ; Otherwise continue code-listing as normal
+        ;
+        LHLD        SL_FCB
+        JMP         start_next_listing_line
 
 
 ;//////////////////////////////////////
 
 error_str:
-        DB          19
-        DB          'ERROR 00  LC=0000',CR,LF
+        DB          10
+        DB          'ERROR 00',CR,LF
 tos_error_str:
         DB          17
         DB          'TOS ERROR NO 00',CR,LF
@@ -4572,6 +5428,25 @@ exit_to_tos:
         CALL        print_newline
         LHLD        stack_backup
         SPHL
+        ;
+        ; Unassign the error listing file if it was set to SL at program start
+        ;
+        LHLD        AL_FCB
+        XCHG
+        LHLD        SL_FCB
+        MOV         A,D
+        CMP         H
+        JNZ         clear_to_exit
+        MOV         A,E
+        CMP         L
+        JNZ         clear_to_exit
+        LXI         H,NULL
+        SHLD        AL_FCB
+clear_to_exit:
+        ;
+        ; Exit program
+        ;
+        ORA         A
         RET
 
 check_other_commands:
@@ -4667,16 +5542,6 @@ kill_symbol_sequence:
         ;
         MVI         M,000H
         SHLD        defined_symbols_end_ptr
-        RET
-
-
-;//////////////////////////////////////////////////////////////////////////////
-
-        ;
-        ; Dummy output-routine for null-file
-        ;
-null_output_routine:
-        ANA         A
         RET
 
 
@@ -4791,6 +5656,12 @@ list_undefined_symbols:
         LXI         B,undefined_symbols_str
         JMP         list_symbols
 
+        ;
+        ; Return without any printout if table is empty
+        ;
+end_of_symbol_table_check:
+        POP         H
+        RET
 
 ;//////////////////////////////////////
 
@@ -4813,127 +5684,457 @@ list_defined_symbols:
         ;
 list_symbols:
         ;
-        ; Print list header
+        ; Set up arguments for listing of table
         ;
-        XCHG
+        SHLD        symb_table_to_list_ptr
+        MOV         H,B
+        MOV         L,C
+        SHLD        symb_table_header_str_ptr
+        ;
+        ; Determine how many symbol names can fit per listing line
+        ;
+        LDA         output_page_width
+        MVI         B,0
+        ADI         2
+get_symb_per_line_loop:
+        SUI         13
+        JM          nr_symb_per_line_ready
+        INR         B
+        JMP         get_symb_per_line_loop
+
+nr_symb_per_line_ready:
+        MOV         A,B
+        STA         nr_of_symbols_per_listing_line
+        ;
+        ; Add page-break if not in interactive mode
+        ;
+        LDA         interactive_mode_flag
+        ORA         A
+        JNZ         ready_to_list_symb_table
+        CALL        start_new_listing_page
+        CALL        print_header_and_advance_page_nr
+ready_to_list_symb_table:
+        ;
+        ; Add table header to listing printout
+        ;
+        LHLD        symb_table_header_str_ptr
+        MOV         B,H
+        MOV         C,L
         POP         H
         PUSH        H
-        CALL        print_newline
         CALL        print_string
+        PUSH        D
+        CALL        start_next_listing_line
+        POP         D
         ;
-        ; Prepare output string buffer
+        ; Initialize symbol listing state
         ;
-        LXI         B,list_output_str_buffer
-        MVI         A,14
-        STAX        B
-        CALL        clear_output_buffer_start
+        LXI         H,NULL
+        SHLD        next_seq_symbol_entry_ptr
+list_next_symb_line:
+        CALL        flush_listing_output_line
+        LXI         B,list_output_str_buffer + 1
+list_next_symb_name:
         ;
-        ; Print newline
+        ; Select the next symbol from the symbols table that is being listed
         ;
-        POP         H
-        PUSH        H
-        CALL        print_newline
+        LHLD        symb_table_to_list_ptr
+        CALL        prepare_next_symb_name
+        JC          last_symbol_prepared
         ;
-        ; Add CR,LF to end of string buffer
+        ; Prepare to insert symbol name into listing string
         ;
-        MVI         A,CR
-        STAX        B
-        INX         B
-        MVI         A,LF
-        STAX        B
-        ;
-        ; List next symbol in table
-        ;
-list_next_symbol:
-        LXI         B,list_output_str_buffer + 2
-        ;
-        ; Check if at end of table
-        ;
-        LDAX        D
-        ANI         SYM_CH_MASK + SYM_CF_LAST
-end_of_symbol_table_check:
-        POP         H
-        RZ
-        PUSH        H
-        ;
-        ; List symbol
-        ;
+        MVI         D,5
+        LXI         H,selected_symbol_name_buffer
 list_next_symbol_char:
+        MOV         A,M
+        ANI         NOT-(SYM_CF_LAST)
         ;
-        ; Check if last character of symbol name, and convert to ASCII
+        ; Replace NULL with spaces
         ;
-        JM          symbols_listing_do_last_char
+        ORA         A
+        JNZ         symb_listing_whitespace_checked
+        MVI         A,' '
+symb_listing_whitespace_checked:
+        ;
+        ; Convert char in name to ASCII
+        ;
         CPI         ' '
         JNC         symbols_listing_char_ready
         ADI         'A'-1
 symbols_listing_char_ready:
-        ;
-        ; Add symbol name character to the output string and advance pointers
-        ;
         STAX        B
+        ;
+        ; Advance to the next character in symbol name
+        ;
         INX         B
-        INX         D
+        INX         H
+        DCR         D
+        JNZ         list_next_symbol_char
+        INX         B
         ;
-        ; Check if at end of table
+        ; Add symbol address to listing string
         ;
-        LDAX        D
-        ANI         SYM_CH_MASK + SYM_CF_LAST
-        JMP         list_next_symbol_char
+        LDA         selected_symbol_addr + 1
+        MOV         D,A
+        CALL        convert_byte_to_hex
+        LDA         selected_symbol_addr
+        MOV         D,A
+        CALL        convert_byte_to_hex
+        INX         B
+        INX         B
+        ;
+        ; Book-keep nr of names on the listing line and check if line is full
+        ;
+        LDA         current_nr_of_symb_names_in_line
+        INR         A
+        STA         current_nr_of_symb_names_in_line
+        MOV         D,A
+        LDA         nr_of_symbols_per_listing_line
+        CMP         D
+        JNZ         list_next_symb_name
+        ;
+        ; If so, print the current line to listing and advance to the next line
+        ;
+        POP         H
+        PUSH        H
+        LXI         B,list_output_str_buffer
+        CALL        print_string
+        PUSH        D
+        CALL        start_next_listing_line
+        POP         D
+        JMP         list_next_symb_line
 
         ;
-        ; Last character of symbol table
+        ; Force end of line right away if no more symbol names in the table
         ;
-symbols_listing_do_last_char:
-        ;
-        ; Convert to ASCII
-        ;
-        ANI         NOT-(SYM_CF_LAST)
-        CPI         ' '
-        JNC         symbols_listing_last_char_ready
-        ADI         'A'-1
-symbols_listing_last_char_ready:
-        ;
-        ; Add symbol name character to the output string and advance pointers
-        ;
-        STAX        B
-        INX         D
-        LXI         B,list_output_str_buffer + 9
-        ;
-        ; Add symbol address to output string
-        ;
-        PUSH        D
-        CALL        word_to_hex
-        POP         D
-        ;
-        ; Print output string and advcance pointers to next symbol
-        ;
+last_symbol_prepared:
         POP         H
         LXI         B,list_output_str_buffer
         CALL        print_string
-        INX         D
-        INX         D
-        PUSH        H
+        JMP         start_next_listing_line
+
+
+;//////////////////////////////////////////////////////////////////////////////
+
         ;
-        ; Clear output string in preparation for the next symbol table entry
+        ; Get the next symbol name to list, according to assembler mode.
+        ; Interactive mode lists in chronological order, otherwise the symbols
+        ; are listed in alphabetical order (destructively). HL should point to
+        ; the start of the symbol table that is being listed.
         ;
-        CALL        clear_output_buffer_start
-        JMP         list_next_symbol
+prepare_next_symb_name:
+        ;
+        ; Find first non-deleted symbol to be used as next default candidate
+        ;
+scan_for_next_default_symb_loop:
+        ;
+        ; Use sequential symbol pointer if interactive mode and not first entry
+        ;
+        LDA         interactive_mode_flag
+        ORA         A
+        JZ          check_for_symb_table_end
+        XCHG
+        LHLD        next_seq_symbol_entry_ptr
+        MOV         A,H
+        ORA         A
+        JNZ         check_for_symb_table_end
+        XCHG
+check_for_symb_table_end:
+        ;
+        ; Check if at end of symbol table yet, return with Carry flag if so
+        ;
+        MOV         A,M
+        ORA         A
+        JNZ         check_default_next_symb_ptr
+        STC
+        RET
+
+check_default_next_symb_ptr:
+        ;
+        ; Check for and skip past deleted entries
+        ;
+        CPI         SYM_ERASED
+        JNZ         propose_symbol_for_listing
+        INX         H
+        JMP         scan_for_next_default_symb_loop
 
 
 ;//////////////////////////////////////
 
         ;
-        ; Clear output string for one symbols-table name listing
+        ; Propose the next to be listed symbol candidate
         ;
-clear_output_buffer_start:
-        LXI         B,list_output_str_buffer + 1
-        MVI         A,' '
-        MVI         L,12
-clear_output_buffer_start_loop:
-        STAX        B
-        INX         B
-        DCR         L
-        JNZ         clear_output_buffer_start_loop
+propose_symbol_for_listing:
+        SHLD        current_symbol_entry_ptr
+        ;
+        ; Select symbol for next listing candidate, and update iterator pointer
+        ;
+        CALL        select_symb_name_for_listing
+        SHLD        next_seq_symbol_entry_ptr
+        ;
+        ; Don't scan for next alphabetic-order symbol if interactive mode
+        ;
+        LDA         interactive_mode_flag
+        ORA         A
+        RNZ
+
+
+;//////////////////////////////////////
+
+        ;
+        ; Scan for next symbol to list, in accordance of alphabetical order
+        ;
+check_next_symbol:
+        ;
+        ; Set up pointers
+        ;
+        SHLD        current_symbol_candidate_ptr
+        XCHG
+        LXI         H,selected_symbol_name_buffer
+compare_symb_name_loop:
+        ;
+        ; Check for at end of table
+        ;
+        LDAX        D
+        ORA         A
+        JZ          use_proposed_symbol
+        ;
+        ; Skip erased symbols when scanning
+        ;
+        CPI         SYM_ERASED
+        JNZ         compare_candidate_symb_name
+        INX         D
+        XCHG
+        JMP         check_next_symbol
+
+compare_candidate_symb_name:
+        ;
+        ; Check if current name is before proposed name in the alphabet
+        ;
+        PUSH        PSW
+        ANI         NOT-(SYM_CF_LAST)
+        CMP         M
+        JZ          compare_symb_next_char
+        JNC         skip_symbol
+        POP         PSW
+        JMP         change_proposed_symbol
+
+compare_symb_next_char:
+        POP         PSW
+        ;
+        ; Prioritize last instance if several occurences of the same symbol
+        ;
+        ANI         SYM_CF_LAST
+        JNZ         change_proposed_symbol
+        ;
+        ; Check the next character of current scanned name
+        ;
+        INX         D
+        INX         H
+        JMP         compare_symb_name_loop
+
+
+;//////////////////////////////////////
+
+        ;
+        ; Replace proposed symbol to be listed
+        ;
+change_proposed_symbol:
+        LHLD        current_symbol_candidate_ptr
+        JMP         propose_symbol_for_listing
+
+
+;//////////////////////////////////////
+
+        ;
+        ; Skip past the current symbol
+        ;
+skip_symbol:
+        POP         PSW
+        ;
+        ; Skip past the current symbol name
+        ;
+skip_symbol_loop:
+        ANI         SYM_CF_LAST
+        JNZ         skip_symbol_done
+        INX         D
+        LDAX        D
+        JMP         skip_symbol_loop
+
+skip_symbol_done:
+        XCHG
+        INX         H
+        ;
+        ; Skip past symbol address data
+        ;
+        INX         H
+        INX         H
+        JMP         check_next_symbol
+
+
+;//////////////////////////////////////
+
+        ;
+        ; Use selected symbol and remove it from table
+        ;
+use_proposed_symbol:
+        ;
+        ; Remove current symbol from table
+        ;
+        LHLD        current_symbol_entry_ptr
+erase_symbol_loop:
+        MOV         A,M
+        MVI         M,SYM_ERASED
+        INX         H
+        ANI         SYM_CF_LAST
+        JZ          erase_symbol_loop
+        MVI         M,SYM_ERASED
+        INX         H
+        MVI         M,SYM_ERASED
+        ORA         A
+        RET
+
+
+;//////////////////////////////////////////////////////////////////////////////
+
+        ;
+        ; Copy symbol name from entry at HL to selected symbol buffer
+        ;
+select_symb_name_for_listing:
+        ;
+        ; Clear selected symbol buffer
+        ;
+        LXI         D,selected_symbol_name_buffer
+        MVI         A,5
+        XCHG
+clear_selected_symb_name_loop:
+        MVI         M,NULL
+        INX         H
+        DCR         A
+        JNZ         clear_selected_symb_name_loop
+        XCHG
+        ;
+        ; Copy name to selected buffer, stripping end-of-name bit
+        ;
+        LXI         D,selected_symbol_name_buffer
+select_symb_name_loop:
+        MOV         A,M
+        PUSH        PSW
+        ANI         NOT-(SYM_CF_LAST)
+        STAX        D
+        INX         H
+        INX         D
+        POP         PSW
+        ANI         SYM_CF_LAST
+        JZ          select_symb_name_loop
+        ;
+        ; Get address of selected symbol
+        ;
+        LXI         D,selected_symbol_addr
+        MOV         A,M
+        STAX        D
+        INX         H
+        INX         D
+        MOV         A,M
+        STAX        D
+        INX         H
+        RET
+
+
+;//////////////////////////////////////////////////////////////////////////////
+
+        ;
+        ; Feed out the current code-listing page and stat a new one
+        ;
+start_new_listing_page:
+        ;
+        ; Determine that the code-listing does not go to the console
+        ;
+        PUSH        D
+        LHLD        CO_FCB
+        XCHG
+        LHLD        SL_FCB
+        MOV         A,D
+        CMP         H
+        JNZ         feed_out_current_listing_page
+        MOV         A,E
+        CMP         L
+        JNZ         feed_out_current_listing_page
+        POP         D
+        RET
+
+        ;
+        ; Eject the current page
+        ;
+feed_out_current_listing_page:
+        POP         D
+feed_out_listing_page_loop:
+        LDA         lines_left_on_page
+        ORA         A
+        JZ          add_margin_of_new_listing_page
+        DCR         A
+        STA         lines_left_on_page
+        LHLD        SL_FCB
+        CALL        print_newline_to_code_listing
+        JMP         feed_out_listing_page_loop
+
+        ;
+        ; Add margins to new page
+        ;
+add_margin_of_new_listing_page:
+        MVI         C,8
+add_listing_page_margins_loop:
+        POP         H
+        PUSH        H
+        CALL        print_newline_to_code_listing
+        DCR         C
+        JNZ         add_listing_page_margins_loop
+        ;
+        ; Subtract margins from pagelength to get lines left on page
+        ;
+        LDA         output_page_length
+        SUI         8
+        STA         lines_left_on_page
+        RET
+
+
+;//////////////////////////////////////////////////////////////////////////////
+
+        ;
+        ; Flushes the code-listing string buffer
+        ;
+flush_listing_output_line:
+        ;
+        ; Set line length of string to page width plus CR,LF
+        ;
+        PUSH        H
+        LXI         H,list_output_str_buffer
+        LDA         output_page_width
+        ADI         2
+        MOV         M,A
+        SUI         2
+        ;
+        ; Blank line
+        ;
+flush_listing_output_loop:
+        INX         H
+        MVI         M,' '
+        DCR         A
+        JNZ         flush_listing_output_loop
+        ;
+        ; Add CR,LF to the end of the line
+        ;
+        INX         H
+        MVI         M,CR
+        INX         H
+        MVI         M,LF
+        ;
+        ; Clear the per-line symbol names listed counter
+        ;
+        XRA         A
+        STA         current_nr_of_symb_names_in_line
+        POP         H
         RET
 
 
@@ -4945,3 +6146,14 @@ undefined_symbols_str:
 symbols_str:
         DB          15
         DB          'SYMBOL TABLE:',CR,LF
+
+
+;//////////////////////////////////////////////////////////////////////////////
+;//
+;//     Strings
+;//
+;//////////////////////////////////////////////////////////////////////////////
+
+page_str:
+        DB          ' PAGE',NULL
+program_end:
