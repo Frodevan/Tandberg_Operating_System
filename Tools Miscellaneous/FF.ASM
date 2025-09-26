@@ -1,0 +1,47 @@
+;//////////////////////////////////////////////////////////////////////////////
+;//
+;//     FF - Form Feed
+;//
+;//         Feed 100 newlines to the printer connected to the CPU card printer port
+;//
+;//
+;//         Changelog:
+;//
+;//             1.3: Entry at 0xC000
+;//
+;//                 -> First version I have
+;//
+
+
+;//////////////////////////////////////////////////////////////////////////////
+;//
+;//     Defines
+;//
+;//////////////////////////////////////////////////////////////////////////////
+
+;
+; ASCII control characters
+;
+LF          EQU     00AH        ; Line Feed
+
+;
+; XMON system calls
+;
+PRNT        EQU     00052H      ; Printer port output
+
+
+;//////////////////////////////////////////////////////////////////////////////
+;//
+;//     Main program
+;//
+;//////////////////////////////////////////////////////////////////////////////
+
+        ORG         0C000H
+start:
+        MVI         B,100
+print_linefeed_loop:
+        MVI         A,LF
+        CALL        PRNT
+        DCR         B
+        JNZ         print_linefeed_loop
+        RET
