@@ -54,6 +54,21 @@
 ;//                    instead of reserved if not used, due to the wrong TOS API
 ;//                    call being made
 ;//
+;//             1.5: Entry at 0xC000
+;//
+;//                 -> Accepts lower-case drive type
+;//                 -> Flushes excess input characters from the extra parameters
+;//                 -> Explicitly load mapfile from disk sectors instead of the
+;//                    LOCDIR API-call in XMON
+;//                 -> Uses local algorithm for finding and changing the bit in the
+;//                    mapfile, rather than calls to the TOS API. This change fixes
+;//                    the freed-vs-reserved bug from v1.3.
+;//                 -> Replaces the XMON-based print-string routine from v1.3 with
+;//                    a TOS-based print-single-character routine. This introduces
+;//                    a bug where the most recent input-character is printed
+;//                    instead of the status-message for "Illegal input parameter".
+;//                 -> Ignores leading spaces before numbers
+;//
 
 
 ;//////////////////////////////////////////////////////////////////////////////
@@ -66,26 +81,34 @@
 ; ASCII control characters
 ;
 NULL        EQU     000H        ; Null character
-ETX         EQU     003H        ; End of text
 LF          EQU     00AH        ; Line Feed
 CR          EQU     00DH        ; Cartridge Return
 
 ;
 ; XMON system calls
 ;
-TTO         EQU     00043H      ; Console output
+DSRDW       EQU     00073H      ; Read from disk with wait
+DSWRW       EQU     00076H      ; Write to disk with wait
+
+;
+; XMON and TOS system data
+;
+BUF2        EQU     02600H      ; Sector data of last filesystem operation
+BUF1        EQU     02680H      ; Additional sector data for filesysyem operation
+MAP1        EQU     02739H      ; Track and sector of first half of mapfile
+MAP2        EQU     0273BH      ; Track and sector of last half of mapfile
 
 ;
 ; TOS system calls
 ;
 INCHAR      EQU     0FD09H      ; Input single character
-LOCDIR      EQU     0FD85H      ; Look up filetable entry of filename on disk
-RELBLK      EQU     0FDD6H      ; Release a single block on current Intel disk
+OUTCHAR     EQU     0FD0CH      ; Output single character
 
 ;
 ; TOS standard files
 ;
 CI_FCB      EQU     0FF00H      ; Console input abstract file FCB pointer
+CO_FCB      EQU     0FF02H      ; Console output abstract file FCB pointer
 SI_FCB      EQU     0FF04H      ; Standard input abstract file FCB pointer
 
 
@@ -103,6 +126,7 @@ start:
         LHLD        CI_FCB
         CALL        INCHAR
         RC
+        STA         input_char
         CPI         CR
         JZ          use_default_drive
         ;
@@ -112,16 +136,20 @@ start:
         JNZ         improper_unit
         CALL        INCHAR
         RC
+        CALL        to_uppercase
+        STA         input_char
         CPI         'F'
         JNZ         invalid_drive_type
         CALL        INCHAR
         RC
+        STA         input_char
         SUI         '0'
         CPI         4
         JNC         invalid_drive_nr
         STA         drive_nr
         CALL        INCHAR
         RC
+        STA         input_char
         CPI         ':'
         JNZ         improper_unit
         ;
@@ -152,11 +180,21 @@ drive_nr_set:
         SHLD        SI_FCB
 input_file_set:
         ;
-        ; Prime system for changes to mapfile on the requested disk
+        ; Read mapfile from the requested disk
         ;
-        LXI         H,mapfile_name
+        LHLD        MAP1
+        MOV         B,H
+        MOV         C,L
+        LXI         H,BUF2
         LDA         drive_nr
-        CALL        LOCDIR
+        CALL        DSRDW
+        RC
+        LHLD        MAP2
+        MOV         B,H
+        MOV         C,L
+        LXI         H,BUF1
+        LDA         drive_nr
+        CALL        DSRDW
         RC
 
 
@@ -194,7 +232,7 @@ parse_single_instruction:
         CPI         ','
         JNZ         invalid_parameters
 valid_instruction:
-        PUSH        H
+        PUSH        PSW
         CALL        ascii_to_bin
         ORA         A
         JZ          invalid_sector
@@ -202,10 +240,77 @@ valid_instruction:
         JNC         invalid_sector
         MOV         C,A
         ;
-        ; Reserve block in mapfile
+        ; Reserve block in mapfile pt1: Multiply track nr with 26
         ;
-        CALL        RELBLK
-        RC
+        MVI         H,000H
+        MOV         L,B
+        DAD         H
+        PUSH        H
+        DAD         H
+        DAD         H
+        PUSH        H
+        DAD         H
+        POP         D
+        DAD         D
+        POP         D
+        DAD         D
+        ;
+        ; Reserve block in mapfile pt2: Add sector nr - 1 to get map bit index
+        ;
+        LXI         D,000H
+        MOV         E,C
+        DAD         D
+        DCX         H
+        ;
+        ; Reserve block in mapfile pt3: Modulus index by 8 to get bit nr
+        ;
+        MOV         A,L
+        ANI         007H
+        MOV         C,A
+        ;
+        ; Reserve block in mapfile pt4: Divide index by 8 to get byte nr
+        ;
+        MOV         A,H
+        RLC
+        RLC
+        RLC
+        RLC
+        RLC
+        ANI         0E0H
+        MOV         B,A
+        MOV         A,L
+        RRC
+        RRC
+        RRC
+        ANI         01FH
+        ORA         B
+        MOV         L,A
+        MOV         A,H
+        RRC
+        RRC
+        RRC
+        ANI         01FH
+        MOV         H,A
+        ;
+        ; Reserve block in mapfile pt5: Set up pointer and bit mask
+        ;
+        LXI         D,BUF2
+        DAD         D
+        INR         C
+        MVI         A,080H
+shift_bitmask_loop:
+        DCR         C
+        JZ          bitmask_ready
+        RRC
+        ANI         07FH
+        JMP         shift_bitmask_loop
+
+bitmask_ready:
+        ;
+        ; Reserve block in mapfile pt6: Mark block as reserved
+        ;
+        ORA         M
+        MOV         M,A
         ;
         ; Check if we are at end of line of instructions
         ;
@@ -218,59 +323,100 @@ instruction_line_end:
         ;
         LDA         line_end_flag
         ORA         A
-        RNZ
+        JNZ         update_mapfile_data
         DCR         A
         STA         line_end_flag
         JMP         parse_single_instruction
 
+update_mapfile_data:
+        ;
+        ; Write updated mapfile back to the requested disk
+        ;
+        LHLD        MAP1
+        MOV         B,H
+        MOV         C,L
+        LXI         H,BUF2
+        LDA         drive_nr
+        CALL        DSWRW
+        RC
+        LHLD        MAP2
+        MOV         B,H
+        MOV         C,L
+        LXI         H,BUF1
+        LDA         drive_nr
+        CALL        DSWRW
+        RC
+        ;
+        ; Set return code to no error
+        ;
+        MVI         B,000H
+quit_program:
+        ;
+        ; Flush remaining arguments at end of program
+        ;
+        LDA         input_char
+flush_next_final_input_char:
+        CPI         CR
+        JZ          final_flush_complete
+        LHLD        CI_FCB
+        CALL        INCHAR
+        RC
+        JMP         flush_next_final_input_char
+
+final_flush_complete:
+        ;
+        ; Exit program, and raise error if any
+        ;
+        MOV         A,B
+        ORA         A
+        RZ
+        STC
+        RET
 
 ;//////////////////////////////////////
 
 invalid_parameters:
-        LXI         H,invalid_parameters_str
+        LXI         D,invalid_parameters_str
         CALL        print_str
-        XRA         A
-        RET
+        MVI         B,000H
+        JNC         quit_program
+        MOV         B,A
+        JMP         quit_program
 
 
 ;//////////////////////////////////////
 
 invalid_drive_nr:
-        MVI         A,013H
-        STC
-        RET
+        MVI         B,013H
+        JMP         quit_program
 
 
 ;//////////////////////////////////////
 
 improper_unit:
-        MVI         A,011H
-        STC
-        RET
+        MVI         B,011H
+        JMP         quit_program
 
 
 ;//////////////////////////////////////
 
 invalid_drive_type:
-        MVI         A,01DH
-        STC
-        RET
+        MVI         B,01DH
+        JMP         quit_program
 
 
 ;//////////////////////////////////////
 
 invalid_track:
-        MVI         A,035H
-        STC
-        RET
+        MVI         B,035H
+        JMP         quit_program
 
 
 ;//////////////////////////////////////
 
 invalid_sector:
-        MVI         A,036H
-        STC
-        RET
+        MVI         B,036H
+        JMP         quit_program
 
 
 ;//////////////////////////////////////////////////////////////////////////////
@@ -288,6 +434,8 @@ get_ascii_decimal:
 get_next_decimal_digit:
         CALL        INCHAR
         RC
+        CPI         ' '
+        JZ          get_next_decimal_digit
         ;
         ; Check digit lower boundary
         ;
@@ -358,15 +506,28 @@ decimal_division_done:
 ;//////////////////////////////////////////////////////////////////////////////
 
         ;
-        ; Print string pointed to by HL
+        ; Convert ASCII character in A to uppercase
+        ;
+to_uppercase:
+        CPI         'a'
+        RM
+        CPI         'z'+1
+        RP
+        ANI         0DFH
+        RET
+
+
+;//////////////////////////////////////////////////////////////////////////////
+
+        ;
+        ; Print string pointed to by DE
         ;
 print_str:
-        MOV         A,M
-        CPI         ETX
-        RZ
-        CALL        TTO
-        INX         H
-        JMP         print_str
+        PUSH        H
+        LHLD        CO_FCB
+        CALL        OUTCHAR
+        POP         H
+        RET
 
 
 ;//////////////////////////////////////////////////////////////////////////////
@@ -375,6 +536,8 @@ print_str:
 ;//
 ;//////////////////////////////////////////////////////////////////////////////
 
+input_char:
+        DS          1
 drive_nr:
         DS          1
 line_end_flag:
@@ -385,4 +548,4 @@ mapfile_name:
         DB          'MAP'
 
 invalid_parameters_str:
-        DB          ' ILLEGAL INPUT PARAMETER',CR,LF,ETX
+        DB          ' ILLEGAL INPUT PARAMETER',CR

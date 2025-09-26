@@ -24,6 +24,10 @@
 ;//
 ;//                 -> First version I have
 ;//
+;//             1.5: Entry at 0xC000
+;//
+;//                 -> Adds support for lowercase input
+;//
 
 
 ;//////////////////////////////////////////////////////////////////////////////
@@ -64,6 +68,12 @@ start:
         RC
         CPI         'S'
         JZ          valid_system_flag
+        CPI         's'
+        JNZ         clear_system_flag
+        SUI         'a' - 'A'
+        JMP         valid_system_flag
+
+clear_system_flag:
         ;
         ; Default to clear system flag
         ;

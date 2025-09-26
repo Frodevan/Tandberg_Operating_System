@@ -99,6 +99,11 @@
 ;//                 -> Has a bug where software-autoscroll can trigger when not
 ;//                    supposed to
 ;//
+;//             1.5a: Entry at 0xC000
+;//
+;//                 -> Accepts lowercase drive-type and input on prompts
+;//                 -> Fixes software-autoscroll bug from v1.3
+;//
 
 
 ;//////////////////////////////////////////////////////////////////////////////
@@ -131,6 +136,7 @@ DSWAW       EQU     0007FH      ; Translate ASCII to EBCDIC and write to disk wi
 ;
 ; XMON and TOS system data
 ;
+ROLLSW      EQU     0271FH      ; Cursor line number if no hardware autoscroll
 ASCI        EQU     0277EH      ; EBCDIC to ASCII translation table reference
 
 ;
@@ -175,6 +181,7 @@ start:
         INX         H
         INX         D
         LDAX        D
+        CALL        to_uppercase
         CPI         'I'
         JZ          is_ibm_drive
         CPI         'A'
@@ -250,6 +257,15 @@ valid_ibm_disk:
         ;
 get_fresh_file_parameters:
         ;
+        ; Reset TOS autoscroll if hardware autoscroll is disabled
+        ;
+        LDA         ROLLSW
+        ORA         A
+        JZ          autoscroll_prepared
+        MVI         A,'A'
+        STA         ROLLSW
+autoscroll_prepared:
+        ;
         ; Reset buffers related to IBM file-parameter prompts
         ;
         MVI         A,CR
@@ -294,6 +310,7 @@ parse_prompt_new_replace:
         ;
         ; Verify user choice
         ;
+        CALL        to_uppercase
         STA         new_replace_choice
         CPI         CR
         JZ          choice_new_replace_complete
@@ -434,6 +451,7 @@ parse_prompt_use_defaults:
         ;
         ; Verify user choice
         ;
+        CALL        to_uppercase
         CPI         CR
         JZ          all_file_parameters_set
         CPI         'Y'
@@ -456,6 +474,7 @@ parse_prompt_bypass:
         ;
         ; Verify user choice
         ;
+        CALL        to_uppercase
         CPI         CR
         JZ          choice_bypass_valid
         CPI         ' '
@@ -488,6 +507,7 @@ parse_prompt_protect:
         ;
         ; Verify user choice
         ;
+        CALL        to_uppercase
         CPI         CR
         JZ          choice_protect_valid
         CPI         ' '
@@ -529,6 +549,7 @@ parse_prompt_verify:
         ;
         ; Verify user choice
         ;
+        CALL        to_uppercase
         CPI         CR
         JZ          choice_verify_valid
         CPI         'V'
@@ -627,7 +648,9 @@ allocate_current_file:
         ; Change file signature from deleted to active
         ;
         LXI         H,input_line_and_data_buffer
-        MVI         M,'H'
+        LXI         D,active_file_label_id
+        MVI         B,4
+        CALL        copy_memory
         ;
         ; Set new filename
         ;
@@ -1094,6 +1117,20 @@ is_numeric_ascii:
 ;//////////////////////////////////////////////////////////////////////////////
 
         ;
+        ; Convert ASCII character to uppercase
+        ;
+to_uppercase:
+        CPI         'a'
+        RM
+        CPI         'z'+1
+        RP
+        ANI         0DFH
+        RET
+
+
+;//////////////////////////////////////////////////////////////////////////////
+
+        ;
         ; Convert ASCII number in A to BCD digit and append to BCD number in HL
         ;
 ascii_to_bcd_digit:
@@ -1123,8 +1160,6 @@ verify_next_filename_char:
         JZ          pad_out_filename_buffer
         CPI         '0'
         JC          invalid_filename_char
-        CPI         'Z'+1
-        JNC         invalid_filename_char
         CPI         '9'+1
         JC          valid_filename_char
         CPI         'A'
