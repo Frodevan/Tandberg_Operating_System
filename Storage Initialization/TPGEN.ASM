@@ -2,6 +2,13 @@
 ;//
 ;//     TPGEN - Copy all files from floppy to tape
 ;//
+;//         Extra parameters:
+;//
+;//             [$Y]
+;//
+;//                 Y       Immediately start the transfer
+;//
+;//
 ;//         Copy every single file from floppy disk :F0: to tape :M0:, using TOS
 ;//         system-calls to do the binary transfers. If a file already exsists on
 ;//         a tape cartridge, the copying of that file is skipped.
@@ -16,6 +23,10 @@
 ;//                 -> First version I have
 ;//                 -> Has a bug where aliases will be copied as normal files
 ;//
+;//             1.3: Entry at 0xC000
+;//
+;//                 -> Adds welcome prompt and reports on copied files
+;//
 
 
 ;//////////////////////////////////////////////////////////////////////////////
@@ -28,11 +39,14 @@
 ; ASCII control characters
 ;
 NULL        EQU     000H        ; Null character
+CR          EQU     00DH        ; Cartridge Return
 
 ;
 ; TOS system calls
 ;
 INCHAR      EQU     0FD09H      ; Input single character
+OUTCHAR     EQU     0FD0CH      ; Output single character
+PUT         EQU     0FD12H      ; Output string of characters, inclusive CR
 GETBIN      EQU     0FD18H      ; Input a given number of raw bytes
 OPEN        EQU     0FD1EH      ; Open block device
 READ        EQU     0FD21H      ; Read from block device
@@ -46,6 +60,17 @@ TABTC_PTR   EQU     0FDE6H      ; Pointer to Tandberg tape cartridge device driv
 TABIN_PTR   EQU     0FDEAH      ; Pointer to Intel floppy disk device driver
 
 ;
+; TOS standard files
+;
+CI_FCB      EQU     0FF00H      ; Console input abstract file FCB pointer
+CO_FCB      EQU     0FF02H      ; Console output abstract file FCB pointer
+
+;
+; TOS Errors
+;
+ERROR_3C    EQU     03CH        ; OUTPUT FILE ALREADY ON CARTR.
+
+;
 ; TOS file attributes
 ;
 ATTR_F      EQU     080H        ; Format file
@@ -53,6 +78,7 @@ ATTR_F      EQU     080H        ; Format file
 ;
 ; TOS File Control Block, block device variables
 ;
+FCB_MODE    EQU     001H        ; File mode
 FCB_BUFIDX  EQU     002H        ; Block/buffered-device data buffer index
 FCB_BUFLEN  EQU     004H        ; Length of block/buffered-device data buffer
 FCB_READ    EQU     008H        ; Device-driver Read API call
@@ -172,6 +198,13 @@ out_file_overrun_word:
 flush_outlet:
         DS          16
 
+welcome_prompt_str:
+        DB          'DATASET COPY FROM DISKETTE 0 TO CARTRIDGE 0 - TYPE Y TO START',CR
+not_copied_str:
+        DB          ' NOT'
+copied_ok_str:
+        DB          ' COPIED',CR
+
 
 ;//////////////////////////////////////////////////////////////////////////////
 ;//
@@ -180,6 +213,22 @@ flush_outlet:
 ;//////////////////////////////////////////////////////////////////////////////
 
 beginning:
+        ;
+        ; Print welcome prompt and check response
+        ;
+        LXI         D,welcome_prompt_str
+        LHLD        CO_FCB
+        CALL        PUT
+        RC
+        LHLD        CI_FCB
+        CALL        INCHAR
+        RC
+        CPI         'Y'
+        JZ          start_copying
+        ANA         A
+        RET
+
+start_copying:
         ;
         ; Assign Intel Floppy device driver to input files
         ;
@@ -271,6 +320,38 @@ copy_file:
         CALL        OPEN
         RC
         ;
+        ; Print filename of input file
+        ;
+        LXI         D,input_file_fcb + FCB_FNAME
+        LHLD        CO_FCB
+        MVI         B,6
+print_next_filename_char:
+        LDAX        D
+        ANA         A
+        JNZ         filename_char_ready
+        MVI         A,' '
+filename_char_ready:
+        CALL        OUTCHAR
+        RC
+        INX         D
+        DCR         B
+        JNZ         print_next_filename_char
+        MVI         A,'.'
+        CALL        OUTCHAR
+        RC
+        MVI         B,3
+print_next_file_ext_char:
+        LDAX        D
+        ANA         A
+        JNZ         file_ext_char_ready
+        MVI         A,' '
+file_ext_char_ready:
+        CALL        OUTCHAR
+        RC
+        INX         D
+        DCR         B
+        JNZ         print_next_file_ext_char
+        ;
         ; Copy filename from input file FCB to output file FCB
         ;
         LXI         D,input_file_fcb + FCB_FNAME
@@ -289,8 +370,18 @@ copy_filename_loop:
         LXI         H,output_file_fcb
         MVI         A,FM_OUTPUT
         CALL        OPEN
+        JNC         write_output_data
+        CPI         ERROR_3C
+        JZ          not_copied
+        STC
+        RET
+
+not_copied:
+        LXI         D,not_copied_str
+        LHLD        CO_FCB
+        CALL        PUT
         RC
-        JMP         write_output_data
+        JMP         file_done
 
 read_input_data:
         ;
@@ -334,15 +425,22 @@ read_error:
 
 end_of_file:
         ;
-        ; Copy went ok, close input file
+        ; Copy went ok, print status, close output file to update file-system
         ;
-        LXI         H,input_file_fcb
+        LXI         D,copied_ok_str
+        LHLD        CO_FCB
+        CALL        PUT
+        RC
+        LXI         H,output_file_fcb
         CALL        CLOSE
         RC
+file_done:
         ;
-        ; Close output file to update file-system
+        ; Close input file, reset output file in case it was not closed
         ;
-        LXI         H,output_file_fcb
+        LXI         H,output_file_fcb + FCB_MODE
+        MVI         M,FM_BINARY
+        LXI         H,input_file_fcb
         CALL        CLOSE
         RC
         JMP         check_next_file

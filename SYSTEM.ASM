@@ -49,6 +49,11 @@
 ;//                 -> First version I have
 ;//                 -> Experimental IBM floppy disk support
 ;//
+;//             v1.3: Entry at 0xE000
+;//
+;//                 -> Pre-release version for v1.4
+;//                 -> Minor bugfixes
+;//
 
 
 ;//////////////////////////////////////////////////////////////////////////////
@@ -2263,6 +2268,12 @@ read_type_4_erase_char:
 ;//                    the linking block buffer will be interpreted as an unused
 ;//                    data-block address to be released
 ;//
+;//             v1.3:
+;//
+;//                 -> Fixes the BC register bug from v1.2
+;//                 -> Now always resets the file data buffer on WRITE, even if the
+;//                    disk is full and the write fails
+;//
 
 
 ;//////////////////////////////////////////////////////////////////////////////
@@ -3335,9 +3346,6 @@ intel_write_has_data_block:
         MOV         C,M
         INX         H
         MOV         B,M
-        MOV         A,B
-        ORA         C
-        JZ          intel_write_disk_full
         ;
         ; Reset data buffer index
         ;
@@ -3357,6 +3365,9 @@ intel_write_has_data_block:
         INX         H
         MOV         D,M
         XCHG
+        MOV         A,B
+        ORA         C
+        JZ          intel_write_disk_full
         LDA         UNIT
         CALL        DSWRW
         JC          device_driver_operation_exception
@@ -3696,7 +3707,7 @@ intel_ready_disk:
         CALL        X_LOCDIR
         RC
         MOV         A,M
-        CPI         000H
+        ANA         A
         JZ          intel_mapfile_found
         ;
         ; If not, throw an exception
@@ -3711,6 +3722,7 @@ intel_mapfile_found:
         ;
         LXI         D,00EH
         DAD         D
+        PUSH        B
         MOV         C,M
         INX         H
         MOV         B,M
@@ -3720,6 +3732,7 @@ intel_mapfile_found:
         LXI         H,BUF2
         LDA         UNIT
         CALL        DSRDW
+        POP         B
         RC
         ;
         ; Update cached mapfile data block addresses
@@ -5400,6 +5413,11 @@ tape_read_no_end_when_expected:
 ;//
 ;//                 -> First version I have
 ;//
+;//             v1.3:
+;//
+;//                 -> Now treats Cartridge Return as a whitespace when parsing the
+;//                    name of one of the standard abstract files
+;//
 
 
 ;//////////////////////////////////////////////////////////////////////////////
@@ -6577,6 +6595,8 @@ get_tos_abstract_file_nr:
 std_file_skip_whitespace_loop:
         CALL        INCHAR
         RC
+        CPI         CR
+        JZ          std_file_skip_whitespace_loop
         CPI         ' '
         JZ          std_file_skip_whitespace_loop
         CPI         '$'
@@ -6878,7 +6898,7 @@ alloc_check_buffer_list_item:
         ;
         ; Otherwise verify item status and go on to check next item in list
         ;
-        CPI         BUFLST_ACTV
+        ANA         A
         JZ          alloc_check_next_buffer_list_item
         CPI         BUFLST_INAC
         JZ          alloc_check_next_buffer_list_item
@@ -6992,7 +7012,7 @@ T_BUFDEALLOC:
         ;
         DCX         H
         MOV         A,M
-        CPI         BUFLST_ACTV
+        ANA         A
         JZ          release_in_chain_buffer
         CPI         BUFLST_HEAD
         JZ          release_chain_head_buffer
@@ -7029,7 +7049,7 @@ release_alloc_check_buffer_list_item:
         ; Check if the current entry is a regular active entry
         ;
         MOV         A,M
-        CPI         BUFLST_ACTV
+        ANA         A
         JNZ         release_check_entry
         ;
         ; If so, save a pointer to it for later
@@ -7332,7 +7352,7 @@ error_str:
 newline_str:
         DB          CR
 title_str:
-        DB          'TOS21 VER. 1.2',CR
+        DB          'TOS21 VER. 1.3',CR
 
 error_number:
         DB          000H
@@ -7592,6 +7612,10 @@ error_print_str_loop:
 ;//
 ;//                 -> First version I have
 ;//
+;//             v1.3:
+;//
+;//                 -> Corrects ASCII to EBCDIC table index 50H
+;//
 
 
 ;//////////////////////////////////////////////////////////////////////////////
@@ -7611,7 +7635,7 @@ ascii_to_ebcdic_table:
         DB          0F8H, 0F9H, 07AH, 05EH, 048H, 07EH, 06EH, 06FH
         DB          07CH, 0C1H, 0C2H, 0C3H, 0C4H, 0C5H, 0C6H, 0C7H
         DB          0C8H, 0C9H, 0D1H, 0D2H, 0D3H, 0D4H, 0D5H, 0D6H
-        DB          0D3H, 0D8H, 0D9H, 0E2H, 0E3H, 0E4H, 0E5H, 0E6H
+        DB          0D7H, 0D8H, 0D9H, 0E2H, 0E3H, 0E4H, 0E5H, 0E6H
         DB          0E7H, 0E8H, 0E9H, 0EAH, 0EBH, 0ECH, 05FH, 06DH
         DB          04AH, 081H, 082H, 083H, 084H, 085H, 086H, 087H
         DB          088H, 089H, 091H, 092H, 093H, 094H, 095H, 096H

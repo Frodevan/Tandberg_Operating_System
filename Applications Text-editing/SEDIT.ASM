@@ -1,6 +1,6 @@
 ;//////////////////////////////////////////////////////////////////////////////
 ;//
-;//     EDIT - Line text-editor
+;//     SEDIT - Line text-editor
 ;//
 ;//         A simple line-editor that iterates through lines in SI, and lets the
 ;//         user copy or modify these to SO. The lines are iterated in sequence,
@@ -88,6 +88,10 @@
 ;//             1.2: Entry at 0xC000
 ;//
 ;//                 -> First version I have
+;//
+;//             1.3: Entry at 0xC000
+;//
+;//                 -> Namechange due to the introduction of the buffered editor
 ;//
 
 

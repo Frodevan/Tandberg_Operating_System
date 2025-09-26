@@ -20,6 +20,10 @@
 ;//
 ;//                 -> First version I have
 ;//
+;//             1.3: Entry at 0xC000
+;//
+;//                 -> Adds a prompt to ask if more copies are needed at the end
+;//
 
 
 ;//////////////////////////////////////////////////////////////////////////////
@@ -64,6 +68,7 @@ start:
         LXI         D,welcome_prompt_str
         CALL        PUT
         RC
+parse_prompt_input:
         ;
         ; Expecy a Y to continue, otherwise exit program
         ;
@@ -214,7 +219,8 @@ verify_next_byte:
         LXI         D,good_copy_str
         LHLD        CO_FCB
         CALL        PUT
-        RET
+        RC
+        JMP         more_copies_prompt
 
 verification_failed:
 		;
@@ -224,6 +230,21 @@ verification_failed:
         LXI         D,bad_copy_str
         LHLD        CO_FCB
         CALL        PUT
+        RC
+		;
+		; Prompt user if more copies are to be made
+		;
+more_copies_prompt:
+        LXI         D,more_copies_ptompt_str
+        LHLD        CO_FCB
+        CALL        PUT
+        RC
+        LHLD        CI_FCB
+        CALL        INCHAR
+        RC
+        CPI         CR
+        JZ          parse_prompt_input
+        ANA         A
         RET
 
 
@@ -237,6 +258,8 @@ bad_copy_str:
 		DB			'NOT '
 good_copy_str:
 		DB			'EQUAL',CR
+more_copies_ptompt_str:
+		DB			'MORE? - TYPE Y TO START NEXT',CR
 
 original_track_buffer:
 		DS			26*128
