@@ -21,7 +21,7 @@
 ;//
 ;//         Changelog:
 ;//
-;//             1.3: Entry at 0x2095
+;//             1.3: Entry at 0x2095, 0x2000
 ;//
 ;//                 -> First version I have
 ;//
@@ -63,11 +63,12 @@ CI_FCB      EQU     0FF00H      ; Console input abstract file FCB pointer
 
 ;//////////////////////////////////////////////////////////////////////////////
 ;//
-;//     Legacy program entry
+;//     Program entry
 ;//
 ;//////////////////////////////////////////////////////////////////////////////
 
         ORG         02000H
+start:
         JMP         beginning
 
 
@@ -103,7 +104,6 @@ data_buffer:
 ;//
 ;//////////////////////////////////////////////////////////////////////////////
 
-start:
 beginning:
         ;
         ; Get filename of target MYCROP file from command line arguments

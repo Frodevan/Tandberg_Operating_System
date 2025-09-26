@@ -22,6 +22,11 @@
 ;//
 ;//                 -> First version I have
 ;//
+;//             1.5: Entry at 0xC000
+;//
+;//                 -> Accepts uppercase letters at the prompt
+;//                 -> Will never raise tape-mark-detected at the end of dump
+;//
 
 
 ;//////////////////////////////////////////////////////////////////////////////
@@ -114,6 +119,7 @@ main_program:
         LXI         H,welcome_prompt_str
         CALL        print_str
         CALL        TTI
+        CALL        to_uppercase
         CPI         'Y'
         JZ          start_disk_dump
         ANA         A
@@ -215,9 +221,30 @@ dump_next_sector_last_half_track:
         SUB         A
         MOV         B,A
         CALL        CBTMW
+        JNC         tape_mark_written
+        CPI         048H
+        JZ          tape_mark_written
+        STC
+        RET
+
+tape_mark_written:
         RC
         SUB         A
         CALL        CUN
+        RET
+
+
+;//////////////////////////////////////////////////////////////////////////////
+
+        ;
+        ; Convert character in A to uppercase
+        ;
+to_uppercase:
+        CPI         'a'
+        RM
+        CPI         'z'+1
+        RP
+        ANI         0DFH
         RET
 
 
