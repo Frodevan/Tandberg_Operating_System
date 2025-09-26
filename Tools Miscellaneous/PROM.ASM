@@ -11,6 +11,15 @@
 ;//         containing the letter B, as long as an E comes within 7 characters
 ;//         afterwards.
 ;//
+;//         NOTE: This program will map out all unused ram in the machine not used
+;//               by XMON, TOS and the PROM program itself. when loading a file, it
+;//               is importaint that every binary data-block in the file (using
+;//               Intel Absolute Binary format) fits fully within this free memory.
+;//               If this is not the case, an error will be printed and the load
+;//               will stop midway through. To fix this, should it happen, an
+;//               offset can be added to the file's load addresses as an argument
+;//               to the load command.
+;//
 ;//         NOTE: This program is hardcoded to expec the Rx buffer at address
 ;//               0x25E0. This is not the case for XMON/F, and as such the input
 ;//               serial buffer will not be flushed properly before expecting new
@@ -19,13 +28,13 @@
 ;//
 ;//         Commands:
 ;//
+;//             C <start>,<end>                     Clear block of memory
 ;//             E                                   Quit to XMON debugger
-;//             L[:<Tn>:]<name>[,<offset>]          Load memory image from file
-;//             P<start>,<end>                      Send data block as BNPF
+;//             L [:<Tn>:]<name>[,<offset>]         Load memory image from file
+;//             P <start>,<end>                     Send data block as BNPF
 ;//             Q                                   Quit to TOS
-;//             T,<start>                           Receive BNPF data block
-;//             W[:<Tn>:]<name>,<start>,<length>    Write block of memory to file
-;//             Z<start>,<end>                      Clear block of memory
+;//             T <start>                           Receive BNPF data block
+;//             W [:<Tn>:]<name>,<start>,<length>   Write block of memory to file
 ;//
 ;//                 start           Address to first byte of datablock
 ;//                 end             Address to last (inclusive) byte of datablock
@@ -41,8 +50,14 @@
 ;//                     0-3
 ;//
 ;//
+;//         NOTE: Leading spaces after the command-letter will be ignored.
+;//
 ;//         NOTE: Any hexadecimal number may end with a 'H', but this is not a
 ;//               strict requirements
+;//
+;//         NOTE: The T command does not check for free memory, and will very much
+;//               be able to overwrite anything in RAM if the start addres does not
+;//               ensure enough space
 ;//
 ;//         NOTE: The W command does not check for a length of zero. If a length of
 ;//               zero is used, the entire 64KB memory map will be written to file,
@@ -64,6 +79,15 @@
 ;//                    and saving files always will result in an invalid file error
 ;//                 -> Has a bug where the argument after a filename will not be
 ;//                    recognized
+;//
+;//             1.5: Entry at 0xC000
+;//
+;//                 -> Fixes entry address bug from v1.3
+;//                 -> Fixes file-designator bug from v1.3
+;//                 -> Fixes the argument after filename bug from v1.3
+;//                 -> Renames the Z command to C
+;//                 -> Introduces sanitycheck to prevent overwriting anything when
+;//                    loading data from file
 ;//
 
 
@@ -91,6 +115,7 @@ XMIO        EQU     000CAH      ; Main UART output
 ; XMON and TOS system data
 ;
 RCVBUF      EQU     025E0H      ; Main UART input buffer
+BUFLIM      EQU     0272EH      ; Lowest address of current TOS buffers
 
 ;
 ; TOS system calls
@@ -158,6 +183,10 @@ end_address:
         DS          2
 file_loaded_addr_offset:
         DS          2
+load_chunk_start_addr:
+        DS          2
+load_chunk_length:
+        DS          2
 user_input_buffer:
         DS          81
 
@@ -207,11 +236,17 @@ output_file_fcb:
 command_prompt_str:
         DB          ':',CR
 command_error_str:
-        DB          'COMMAND ERROR',CR
+        DB          ' COMMAND ERROR',CR
 program_prompt_str:
-        DB          'PRESS PROGRAM KEY',CR
+        DB          ' SET UP FOR LOAD I/O EXECUTE',CR
+press_cr_str:
+        DB          ' PRESS CR',CR
 eof_error_str:
-        DB          'UNEXPECTED END-OF-FILE',CR
+        DB          ' UNEXPECTED END-OF-FILE',CR
+start_transfer_str:
+        DB          ' SET UP FOR PROGRAM I/O EXECUTE',CR
+load_out_of_range_str:
+        DB          ' LOAD AREA OUT OF RANGE',CR
 
 
 ;//////////////////////////////////////////////////////////////////////////////
@@ -251,6 +286,37 @@ tx_wait_loop:
         ; Restore return-pointer to top of stack
         ;
         XTHL
+        RET
+
+
+;//////////////////////////////////////////////////////////////////////////////
+
+        ;
+        ; Store negative value of HL into DE
+        ;
+negate_word:
+        MOV         A,L
+        CMA
+        MOV         E,A
+        MOV         A,H
+        CMA
+        MOV         D,A
+        INX         D
+        RET
+
+
+;//////////////////////////////////////////////////////////////////////////////
+
+        ;
+        ; Get word pointed to by BC into HL
+        ;
+fetch_next_word:
+        LDAX        B
+        MOV         L,A
+        INX         B
+        LDAX        B
+        MOV         H,A
+        INX         B
         RET
 
 
@@ -313,7 +379,7 @@ clear_input_filename_loop:
         ; Verify valid drive type
         ;
         LXI         D,input_file_fcb + FCB_DRVNR
-        MOV         A,M
+        CALL        get_next_char
         CPI         ':'
         JNZ         drive_set
         INX         H
@@ -336,6 +402,7 @@ clear_input_filename_loop:
         ;
         ; Verify correctly formatted drive designator string
         ;
+        MOV         A,M
         INX         H
         CPI         ':'
         JNZ         invalid_input_file
@@ -394,6 +461,7 @@ get_next_file_ext_char:
         DCR         C
         JNZ         get_next_file_ext_char
         MOV         A,M
+        INX         H
 file_extension_done:
         ;
         ; Check proper deliminator or line end after filename
@@ -409,6 +477,19 @@ valid_filename_end:
 invalid_input_file:
         STC
         RET
+
+
+;//////////////////////////////////////////////////////////////////////////////
+
+get_next_char:
+        MOV         A,M
+        CPI         ' '
+        JZ          skip_space_or_comma
+        CPI         ','
+        RNZ
+skip_space_or_comma:
+        INX         H
+        JMP         get_next_char
 
 
 ;//////////////////////////////////////////////////////////////////////////////
@@ -541,6 +622,90 @@ beginning:
         SHLD        input_file_fcb + FCB_WRITE
         SHLD        output_file_fcb + FCB_READ
         ;
+        ; Test memory at 4000H
+        ;
+        LXI         H,04000H
+        MOV         E,M
+        XRA         A
+        MOV         M,A
+        CMP         M
+        MOV         M,E
+        JZ          ram_at_4000
+        ;
+        ; Test memory at 8000H
+        ;
+        DAD         H
+        MOV         E,M
+        MOV         M,A
+        CMP         M
+        MOV         M,E
+        JZ          ram_at_8000
+        ;
+        ; Assume user memory starts at C000H, so only use RAM after program
+        ;
+        LXI         H,unused_program_memory
+        SHLD        memory_window_2_start
+        LHLD        BUFLIM
+        SHLD        memory_window_2_end
+        JMP         next_command_prompt
+
+ram_at_8000:
+        ;
+        ; No RAM at 4000H, add RAM window starting at 8000H
+        ;
+        SHLD        memory_window_2_start
+        JMP         ram_at_8fff
+
+ram_at_4000:
+        ;
+        ; Add RAM window starting at 4000H
+        ;
+        SHLD        memory_window_2_start
+        ;
+        ; Test memory at 8000H as well
+        ;
+        DAD         H
+        MOV         E,M
+        MOV         M,A
+        CMP         M
+        MOV         M,E
+        JNZ         set_end_of_ram_window
+ram_at_8fff:
+        ;
+        ; Set end of available RAM at just before C000H
+        ;
+        MVI         H,0C0H
+set_end_of_ram_window:
+        DCX         H
+        SHLD        memory_window_2_end
+        ;
+        ; Add RAM after program as a third RAM window
+        ;
+        LXI         H,unused_program_memory
+        SHLD        memory_window_3_start
+        LHLD        BUFLIM
+        SHLD        memory_window_3_end
+        JMP         next_command_prompt
+
+
+;//////////////////////////////////////////////////////////////////////////////
+
+memory_window_list:
+        DW          02000H,024FFH
+memory_window_2_start:
+        DW          00000H
+memory_window_2_end:
+        DW          00000H
+memory_window_3_start:
+        DW          00000H
+memory_window_3_end:
+        DW          00000H
+        DW          00000H
+
+
+;//////////////////////////////////////////////////////////////////////////////
+
+        ;
         ; Prompt user for next command
         ;
 next_command_prompt:
@@ -575,13 +740,11 @@ skip_leading_spaces:
         JZ          cmd_load_file
         CPI         'P'
         JZ          cmd_program
-        CPI         'C'
-        JZ          RESET
         CPI         'T'
         JZ          cmd_receive_bnpf
         CPI         'W'
         JZ          cmd_write_to_file
-        CPI         'Z'
+        CPI         'C'
         JZ          cmd_clear_memory
         ;
         ; Command not found, run prompt again
@@ -683,10 +846,68 @@ load_next_chunk:
         JC          load_error
         MOV         B,A
         ;
-        ; Add origo address as load offset
+        ; Add origo address as load offset, then save final address and length
         ;
         LHLD        file_loaded_addr_offset
         DAD         B
+        SHLD        load_chunk_start_addr
+        XCHG
+        SHLD        load_chunk_length
+        XCHG
+        ;
+        ; Negate address since we will compare by using addition as subtraction
+        ;
+        CALL        negate_word
+        LXI         B,memory_window_list
+check_next_memory_window:
+        ;
+        ; Get start of memory window, and check for end of memory window list
+        ;
+        CALL        fetch_next_word
+        MOV         A,L
+        ORA         H
+        JZ          load_out_of_range
+        ;
+        ; Check that chunk start is at or later than current window start
+        ;
+        DAD         D
+        JNC         load_start_check_done
+        MOV         A,L
+        ORA         H
+        JNZ         load_out_of_range
+load_start_check_done:
+        ;
+        ; Get end of memory window
+        ;
+        CALL        fetch_next_word
+        ;
+        ; Check that chunk end is at or before current memory window end
+        ;
+        PUSH        H
+        DAD         D
+        POP         H
+        JNC         check_next_memory_window
+        ;
+        ; Get chunk end address
+        ;
+        PUSH        H
+        LHLD        load_chunk_start_addr
+        XCHG
+        LHLD        load_chunk_length
+        DAD         D
+        ;
+        ; Check that chunk does not wrap around the end of memory address space
+        ;
+        CALL        negate_word
+        POP         H
+        DAD         D
+        JNC         load_out_of_range
+        ;
+        ; Recover chunk address and length for the actual load operation
+        ;
+        LHLD        load_chunk_length
+        XCHG
+        LHLD        load_chunk_start_addr
         MOV         C,L
         MOV         B,H
         ;
@@ -704,6 +925,11 @@ load_next_byte:
         JNZ         load_next_byte
         JMP         load_next_chunk
 
+load_out_of_range:
+        LXI         D,load_out_of_range_str
+        LHLD        CO_FCB
+        CALL        PUT
+        RC
 load_complete:
         ;
         ; Close file when load is done
@@ -715,16 +941,16 @@ load_complete:
 
 load_error:
         ANA         A
-        JZ          unexpected_end_of_file
         STC
-        RET
-
-unexpected_end_of_file:
+        RNZ
+        ;
+        ; Error code is zero: Unexpected end of file
+        ;
         LXI         D,eof_error_str
         LHLD        CO_FCB
         CALL        PUT
         RC
-        JMP         next_command_prompt
+        JMP         load_complete
 
 
 ;//////////////////////////////////////
@@ -733,6 +959,7 @@ cmd_program:
         ;
         ; Get start addess of data to send to programmer, and check deliminator
         ;
+        CALL        get_next_char
         CALL        parse_hex_number
         JC          command_error
         CPI         ','
@@ -755,6 +982,8 @@ cmd_program:
         ;
         LXI         D,program_prompt_str
         LHLD        CO_FCB
+        CALL        PUT
+        LXI         D,press_cr_str
         CALL        PUT
         RC
         LXI         D,user_input_buffer
@@ -836,6 +1065,7 @@ cmd_clear_memory:
         ;
         ; Get start address of memory to clear and check deliminator
         ;
+        CALL        get_next_char
         CALL        parse_hex_number
         JC          command_error
         CPI         ','
@@ -879,14 +1109,20 @@ cmd_receive_bnpf:
         ;
         ; Get address of where to save received data
         ;
-        MOV         A,M
-        CPI         ','
-        JNZ         command_error
-        INX         H
+        CALL        get_next_char
         CALL        parse_hex_number
         JC          command_error
         CPI         CR
         JNZ         command_error
+        ;
+        ; Instruct user to start transfer on programming device
+        ;
+        PUSH        D
+        LXI         D,start_transfer_str
+        LHLD        CO_FCB
+        CALL        PUT
+        POP         D
+        RC
         XCHG
         ;
         ; Wait for start of transmission control character
@@ -1061,9 +1297,28 @@ write_next_byte:
         ORA         E
         JNZ         write_next_byte
         ;
+        ; Data is written, now finish file off with an entrypoint of 0000H
+        ;
+        MVI         C,4
+write_next_entrypoint_byte:
+        SUB         A
+        CALL        OUTCHAR
+        RC
+        DCR         C
+        JNZ         write_next_entrypoint_byte
+        ;
         ; Close output file
         ;
         LXI         H,output_file_fcb
         CALL        CLOSE
         RC
         JMP         next_command_prompt
+
+
+;//////////////////////////////////////////////////////////////////////////////
+;//
+;//     Start of free memory
+;//
+;//////////////////////////////////////////////////////////////////////////////
+
+unused_program_memory:

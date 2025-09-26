@@ -23,6 +23,11 @@
 ;//                 -> First version I have
 ;//                 -> Has a bug where aliases will be copied as normal files
 ;//
+;//             1.5: Entry at 0xC000
+;//
+;//                 -> Accepts lower-case input to the prompt
+;//                 -> Minor optimization in code after a file has been copied
+;//
 
 
 ;//////////////////////////////////////////////////////////////////////////////
@@ -215,6 +220,8 @@ beginning:
         CALL        INCHAR
         RC
         CPI         'Y'
+        JZ          start_copying
+        CPI         'y'
         JZ          start_copying
         ANA         A
         RET
@@ -410,11 +417,8 @@ read_error:
         ; Check for end of file
         ;
         ANA         A
-        JZ          end_of_file
         STC
-        RET
-
-end_of_file:
+        RNZ
         ;
         ; Copy went ok, print status, close output file to update file-system
         ;

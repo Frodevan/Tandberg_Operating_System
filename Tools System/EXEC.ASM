@@ -6,7 +6,10 @@
 ;//         batch-file, run EXEC while assigning CI to the file containing the
 ;//         command-sequence to run through.
 ;//
-;//         EXEC also ASSIGNs, so see ASSIGN for more details.
+;//         EXEC also ASSIGNs, so see ASSIGN for more details. But in addition,
+;//         a flag is also set before handing back control to TOS. This flag is
+;//         recognized by the TOS command line parser, and will ensure that CI is
+;//         not released until an End of File status occurs.
 ;//
 ;//
 ;//         Changelog:
@@ -15,6 +18,10 @@
 ;//
 ;//                 -> First version I have, binary identical to ASSIGN v1.3
 ;//
+;//             1.5: Entry at 0xC000
+;//
+;//                 -> Sets flag used to enable batch-file execution on TOS v1.5+
+;//
 
 
 ;//////////////////////////////////////////////////////////////////////////////
@@ -22,6 +29,16 @@
 ;//     Defines
 ;//
 ;//////////////////////////////////////////////////////////////////////////////
+
+;
+; Flag values
+;
+TRUE        EQU     -1          ; Boolean True
+
+;
+; XMON and TOS system data
+;
+EXSW        EQU     027B2H      ; TOS EXEC batch-file assigned switch
 
 ;
 ; TOS standard files
@@ -63,6 +80,11 @@ start:
         CALL        lock_assigned_fcb_open
         LHLD        AL_FCB
         CALL        lock_assigned_fcb_open
+        ;
+        ; Flag TOS that a batch-file is assigned to CI
+        ;
+        MVI         A,TRUE
+        STA         EXSW
         RET
 
 
