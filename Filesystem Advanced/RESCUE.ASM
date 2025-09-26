@@ -44,6 +44,12 @@
 ;//                 -> Has a bug where the wrong error code is returned if the
 ;//                    command line arguments are invalid
 ;//
+;//             1.5: Entry at 0xC000
+;//
+;//                 -> Supports upper case input
+;//                 -> Checks for end of directory linking block
+;//                 -> Allows for recovery of aliases
+;//
 
 
 ;//////////////////////////////////////////////////////////////////////////////
@@ -90,11 +96,6 @@ ERROR_1D    EQU     01DH        ; COMMAND UNIT NOT :FN: OR :MN:
 ERROR_35    EQU     035H        ; TRACK NUMBER > 76
 ERROR_36    EQU     036H        ; SECTOR NUMBER = 0 OR > 26
 
-;
-; TOS file attributes
-;
-ATTR_A      EQU     008H        ; Alias file
-
 
 ;//////////////////////////////////////////////////////////////////////////////
 ;//
@@ -105,29 +106,39 @@ ATTR_A      EQU     008H        ; Alias file
         ORG         0C000H
 start:
         ;
+        ; Require command line arguments
+        ;
+        CALL        get_next_char
+        RC
+        CPI         CR
+        JZ          wrong_number_of_args
+        ;
         ; Check and parse filename to rescue, with drive designator if provided
         ;
-        LHLD        CI_FCB
-        CALL        INCHAR
-        RC
         CPI         ':'
         JNZ         drive_set
-        CALL        INCHAR
+        CALL        get_next_char
         RC
+        CALL        to_uppercase
         CPI         'F'
         JNZ         invalid_drive_type
-        CALL        INCHAR
+        CALL        get_next_char
         RC
         SUI         '0'
         CPI         4
         JNC         invalid_drive_number
         STA         drive_number
-        CALL        INCHAR
+        CALL        get_next_char
         RC
         CPI         ':'
         JNZ         invalid_args
-        CALL        INCHAR
+        ;
+        ; Require a filename after the drive designator
+        ;
+        CALL        get_next_char
         RC
+        CPI         CR
+        JZ          wrong_number_of_args
 drive_set:
         LXI         D,filename_str
         CALL        FILENAME
@@ -137,42 +148,6 @@ drive_set:
         ;
         CPI         CR
         JNZ         wrong_number_of_args
-        ;
-        ; Set and print drive designator of file to use
-        ;
-        LDA         drive_number
-        ADI         '0'
-        STA         drive_designator_str + 2
-        LXI         D,drive_designator_str
-        LHLD        CO_FCB
-        CALL        PUTSTR
-        ;
-        ; Prepare filename for printing as string, and check for file extension
-        ;
-        MVI         A,CR
-        STA         filename_str + 9
-        LDA         filename_str + 6
-        ORA         A
-        LXI         D,filename_str
-        JZ          filename_print_last_part
-        ;
-        ; Filename has an extension, so print name and ext deliminator first
-        ;
-        MOV         C,A
-        MVI         A,CR
-        STA         filename_str + 6
-        CALL        PUTSTR
-        MVI         A,'.'
-        CALL        OUTCHAR
-        RC
-        MOV         A,C
-        ;
-        ; Then print file extension
-        ;
-        LXI         D,filename_str + 6
-        STAX        D
-filename_print_last_part:
-        CALL        PUTSTR
         ;
         ; Load mapfile linking block
         ;
@@ -185,12 +160,12 @@ filename_print_last_part:
         LHLD        linking_block_buffer + 004H
         SHLD        mapfile_block_1_ref
         LXI         D,mapfile_data_buffer
-        CALL        disk_read_ref_from_reg
+        CALL        read_from_disk
         RC
         LHLD        linking_block_buffer + 006H
         SHLD        mapfile_block_2_ref
         LXI         D,mapfile_data_buffer + 128
-        CALL        disk_read_ref_from_reg
+        CALL        read_from_disk
         RC
         ;
         ; Load directory filetable file linking block
@@ -201,6 +176,11 @@ filename_print_last_part:
         ;
         ; Scan through directory, looking for deleted file to be rescued
         ;
+        LXI         D,004H
+        DAD         D
+        SHLD        dir_linking_block_ptr
+        MVI         A,25
+        STA         dir_block_count
 scan_next_directory_block:
         ;
         ; Check if we are at the end of the directory
@@ -209,26 +189,40 @@ scan_next_directory_block:
         ORA         A
         JZ          directory_scan_done
         ;
-        ; Get next data block of directory using block refs from linking block
+        ; Get next data block reference from directory linking block
         ;
+        LHLD        dir_linking_block_ptr
+        MOV         C,M
+        INX         H
+        MOV         B,M
+        INX         H
+        SHLD        dir_linking_block_ptr
         DCR         A
         STA         dir_block_count
-        LHLD        dir_linking_block_ptr
-        LXI         D,dir_data_buffer
-        CALL        disk_read_ref_from_ptr
+        ;
+        ; Check if data block reference is set
+        ;
+        MOV         A,C
+        ORA         B
+        JZ          directory_scan_done
+        ;
+        ; Read data block from disk
+        ;
+        LDA         drive_number
+        LXI         H,dir_data_buffer
+        CALL        DSRDW
         RC
         SHLD        dir_entry_data_ptr
-        XCHG
-        SHLD        dir_linking_block_ptr
         ;
         ; Prepare to check all file entries in directory block
         ;
         XRA         A
+        STA         dir_entry_counter
+        LDA         dir_entry_counter
 check_file_entry:
         ;
         ; Check for end of directory block
         ;
-        STA         dir_entry_counter
         CPI         8
         JZ          scan_next_directory_block
         ;
@@ -257,11 +251,6 @@ compare_next_filename_char:
         INX         D
         DCR         B
         JNZ         compare_next_filename_char
-        ;
-        ; Check attribute, don't rescue aliases
-        ;
-        MVI         A,ATTR_A
-        ANA         M
 file_check_verdict_found:
         ;
         ; Recover variables from previously and act on file-check verdict
@@ -285,6 +274,7 @@ check_next_file_entry:
         DAD         D
         SHLD        dir_entry_data_ptr
         INR         A
+        STA         dir_entry_counter
         JMP         check_file_entry
 
 
@@ -301,16 +291,19 @@ directory_scan_done:
         ;
         ; Read directory data-block with file to rescue
         ;
-        LXI         D,dir_data_buffer
-        CALL        disk_read_ref_from_reg
+        MOV         B,H
+        MOV         C,L
+        LXI         H,dir_data_buffer
+        LDA         drive_number
+        CALL        DSRDW
         RC
         ;
         ; Determine pointer to entry of file to rescue
         ;
         LDA         file_entry_nr_in_dir_block
         ORA         A
-        LXI         D,010H
         JZ          file_entry_ptr_ready
+        LXI         D,010H
 point_to_next_entry:
         DAD         D
         DCR         A
@@ -339,8 +332,9 @@ reserve_linking_block:
         ;
         ; Read current linking block from disk
         ;
-        LXI         D,file_linking_block_buffer
-        CALL        disk_read_ref_prepared
+        LDA         drive_number
+        LXI         H,file_linking_block_buffer
+        CALL        DSRDW
         RC
         ;
         ; Save ref to next linking block in chain, and current block pointer
@@ -360,6 +354,12 @@ reserve_linking_block:
         MVI         A,62
         STA         file_data_block_counter
 reserve_next_data_block:
+        ;
+        ; Check for end of linking block
+        ;
+        LDA         file_data_block_counter
+        ORA         A
+        JZ          reserve_next_linking_block
         ;
         ; Get next data-block reference from linking block
         ;
@@ -383,12 +383,8 @@ reserve_next_data_block:
         CALL        mark_block_in_mapfile
         RC
         JNZ         file_rescue_failed
-        ;
-        ; Check for end of linking block
-        ;
-        LDA         file_data_block_counter
-        ORA         A
-        JNZ         reserve_next_data_block
+        JMP         reserve_next_data_block
+
 reserve_next_linking_block:
         ;
         ; Advance to next linking block in chain
@@ -407,18 +403,18 @@ reserve_next_linking_block:
         ;
         LHLD        file_entry_dir_block_ref
         LXI         D,dir_data_buffer
-        CALL        disk_write_ref_from_reg
+        CALL        write_to_disk
         RC
         ;
         ; Save updated mapfile data back to disk
         ;
         LHLD        mapfile_block_1_ref
         LXI         D,mapfile_data_buffer
-        CALL        disk_write_ref_from_reg
+        CALL        write_to_disk
         RC
         LHLD        mapfile_block_2_ref
         LXI         D,mapfile_data_buffer + 128
-        CALL        disk_write_ref_from_reg
+        CALL        write_to_disk
         RC
         JMP         file_rescue_success
 
@@ -434,25 +430,11 @@ get_file_linking_block:
         RC
         LXI         D,00EH
         DAD         D
-        LXI         D,linking_block_buffer
-
-
-;//////////////////////////////////////
-
-        ;
-        ; Read block with reference at HL from floppy to buffer at DE
-        ;
-disk_read_ref_from_ptr:
         MOV         C,M
         INX         H
         MOV         B,M
-        INX         H
-        ;
-        ; Read block BC from floppy to buffer at DE
-        ;
-disk_read_ref_prepared:
-        CALL        get_drive_nr
-disk_read_call:
+        LDA         drive_number
+        LXI         H,linking_block_buffer
         CALL        DSRDW
         RET
 
@@ -462,9 +444,13 @@ disk_read_call:
         ;
         ; Read block HL from floppy to buffer at DE
         ;
-disk_read_ref_from_reg:
-        CALL        prepare_disk_ref_from_reg
-        JMP         disk_read_call
+read_from_disk:
+        MOV         B,H
+        MOV         C,L
+        XCHG
+        LDA         drive_number
+        CALL        DSRDW
+        RET
 
 
 ;//////////////////////////////////////
@@ -472,23 +458,12 @@ disk_read_ref_from_reg:
         ;
         ; Write buffer at DE to block HL on floppy
         ;
-disk_write_ref_from_reg:
-        CALL        prepare_disk_ref_from_reg
-        CALL        DSWRW
-        RET
-
-
-;//////////////////////////////////////
-
-        ;
-        ; Translate register-use between local subroutines and XMON floppy API
-        ;
-prepare_disk_ref_from_reg:
+write_to_disk:
         MOV         B,H
         MOV         C,L
-get_drive_nr:
         XCHG
         LDA         drive_number
+        CALL        DSWRW
         RET
 
 
@@ -605,6 +580,75 @@ bitmask_ready:
 
 ;//////////////////////////////////////////////////////////////////////////////
 
+        ;
+        ; Returns the next character from console input in A
+        ;
+get_next_char:
+        PUSH        H
+        LHLD        CI_FCB
+        CALL        INCHAR
+        POP         H
+        RET
+
+
+;//////////////////////////////////////////////////////////////////////////////
+
+        ;
+        ; Prints character in A to console output
+        ;
+print_char:
+        PUSH        H
+        LHLD        CO_FCB
+        CALL        OUTCHAR
+        POP         H
+        RET
+
+
+;//////////////////////////////////////////////////////////////////////////////
+
+        ;
+        ; Check if character in A is an uppercase letter
+        ;
+is_uppercase_letter:
+        CPI         'A'
+        RC
+        CPI         'Z'+1
+        CMC
+        RET
+
+
+;//////////////////////////////////////////////////////////////////////////////
+
+        ;
+        ; Clears B bytes starting at HL
+        ;
+clear_memory:
+        PUSH        H
+clear_next_byte:
+        MVI         M,000H
+        INX         H
+        DCR         B
+        JNZ         clear_next_byte
+        POP         H
+        RET
+
+
+;//////////////////////////////////////////////////////////////////////////////
+
+        ;
+        ; Convert ASCII character in A to uppercase
+        ;
+to_uppercase:
+        CPI         'a'
+        RM
+        CPI         'z'+1
+        RP
+        ANI         0DFH
+        RET
+
+
+;//////////////////////////////////////////////////////////////////////////////
+
 invalid_drive_number:
         MVI         B,ERROR_13
         JMP         quit_with_error
@@ -639,11 +683,10 @@ quit_with_error:
         ;
         ; Flush remaining command line arguments
         ;
-        LHLD        CI_FCB
 flush_next_char:
         CPI         CR
         JZ          flush_done
-        CALL        INCHAR
+        CALL        get_next_char
         RC
         JMP         flush_next_char
 
@@ -656,6 +699,7 @@ flush_done:
 ;//////////////////////////////////////////////////////////////////////////////
 
 no_file_to_rescue:
+        CALL        print_filename
         LXI         D,not_found_str
         JMP         print_and_quit
 
@@ -663,6 +707,7 @@ no_file_to_rescue:
 ;//////////////////////////////////////
 
 file_rescue_failed:
+        CALL        print_filename
         LXI         D,lost_str
         JMP         print_and_quit
 
@@ -670,6 +715,7 @@ file_rescue_failed:
 ;//////////////////////////////////////
 
 file_rescue_success:
+        CALL        print_filename
         LXI         D,reclaimed_str
 
 
@@ -678,6 +724,54 @@ file_rescue_success:
 print_and_quit:
         LHLD        CO_FCB
         CALL        PUT
+        RET
+
+
+;//////////////////////////////////////////////////////////////////////////////
+
+        ;
+        ; Print the name of file to be rescued, with its drive designator
+        ;
+print_filename:
+        ;
+        ; Set and print drive designator of file to use
+        ;
+        LDA         drive_number
+        ADI         '0'
+        STA         drive_designator_str + 2
+        LHLD        CO_FCB
+        LXI         D,drive_designator_str
+        CALL        PUTSTR
+        ;
+        ; Prepare filename for printing as string, and check for file extension
+        ;
+        MVI         A,CR
+        STA         filename_str + 9
+        LXI         H,filename_str + 6
+        XRA         A
+        ORA         M
+        LXI         D,filename_str
+        JZ          filename_print_last_part
+        ;
+        ; Filename has an extension, so print name and ext deliminator first
+        ;
+        MOV         C,M
+        MVI         M,CR
+        PUSH        H
+        LHLD        CO_FCB
+        CALL        PUTSTR
+        POP         H
+        MVI         A,'.'
+        CALL        print_char
+        RC
+        MOV         M,C
+        ;
+        ; Then print file extension
+        ;
+        XCHG
+filename_print_last_part:
+        LHLD        CO_FCB
+        CALL        PUTSTR
         RET
 
 
@@ -695,7 +789,6 @@ lost_str:
         DB          '  LOST',CR
 reclaimed_str:
         DB          '  RECLAIMED',CR
-        DB          '  ALREADY EXISTS',CR
 
 drive_number:
         DB          0
@@ -704,9 +797,9 @@ mapfile_block_1_ref:
 mapfile_block_2_ref:
         DS          2
 dir_linking_block_ptr:
-        DW          linking_block_buffer + 004H
+        DS          2
 dir_block_count:
-        DB          25
+        DS          1
 dir_entry_data_ptr:
         DS          2
 dir_entry_counter:
@@ -721,6 +814,8 @@ file_entry_dir_block_ref:
         DW          00000H
 file_entry_nr_in_dir_block:
         DS          1
+
+        DS          2
 
 dir_filename:
         DB          'ISIS',NULL,NULL

@@ -144,6 +144,12 @@
 ;//                 -> Symbols are now listed in alphabetical order, unless in
 ;//                    interactive mode
 ;//
+;//             v1.5: Entry at 0xC203
+;//
+;//                 -> Flushes the remainder of a combined expression containing an
+;//                    illegal undefined symbol
+;//                 -> Fixes the source-code output bug from v1.4
+;//
 
 
 ;//////////////////////////////////////////////////////////////////////////////
@@ -1148,7 +1154,7 @@ print_error_symbol_tables:
 title_str:
         DB          title_str_line_end - title_str_line_start
 title_str_line_start:
-        DB          'TANDBERG TDV 2100 ASSEMBLER V.1.4.',CR,LF
+        DB          'TANDBERG TDV 2100 ASSEMBLER V.1.5.',CR,LF
 title_str_line_end:
 build_errors_report_str:
         DB          19
@@ -2956,11 +2962,11 @@ more_defined_data:
         ;
         LDA         interactive_mode_flag
         ORA         A
-        LDA         current_error_nr
-        JZ          def_data_check_soft_err
+        JZ          advance_current_addr
         ;
         ; Check if an error was set for escalation if interactive mode
         ;
+        LDA         current_error_nr
         ORA         A
         MOV         C,A
         MVI         B,FALSE
@@ -2977,12 +2983,6 @@ advance_current_addr:
         ORA         A
         RET
 
-def_data_check_soft_err:
-        ;
-        ; Cut data short on error, rather than raising a hard error
-        ;
-        ORA         A
-        JZ          advance_current_addr
 end_of_defined_data:
         ;
         ; Mark end of data in data-definition sequence
@@ -3975,10 +3975,22 @@ expr_undef_symb_size_ready:
         LHLD        expression_value
         MOV         A,H
         ORA         L
-        JNZ         undef_symbol_error
+        JNZ         undef_symbol_flush_expr
         LDA         current_char
         CALL        is_instr_separator
         JZ          expression_part_done
+undef_symbol_flush_expr:
+        ;
+        ; Flush the remainder of the expression after illegal undefined symbol
+        ;
+undef_symbol_flush_expr_loop:
+        LDA         current_char
+        CALL        is_instr_separator
+        JZ          undef_symbol_error
+        CALL        get_input_char
+        STA         current_char
+        JMP         undef_symbol_flush_expr_loop
+
         ;
         ; If part of a longer expression, raise undefined expression error
         ;
@@ -4723,7 +4735,7 @@ copy_src_from_code_listing:
         ;
         ; Set up pointers and set active-code flag
         ;
-        LXI         D,list_output_str_buffer + 1 + 15
+        LXI         D,list_output_str_buffer + 1 + 20
         LXI         H,src_output_str_buffer
         LXI         B,TRUE
 copy_next_src_char:

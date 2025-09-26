@@ -20,6 +20,10 @@
 ;//
 ;//                 -> First version I have
 ;//
+;//             1.5: Entry at 0xC000
+;//
+;//                 -> Will accept lowercase input at the prompt
+;//
 
 
 ;//////////////////////////////////////////////////////////////////////////////
@@ -173,6 +177,7 @@ beginning:
         LXI         H,welcome_prompt_str
         CALL        print_str
         CALL        TTI
+        CALL        to_uppercase
         CPI         'Y'
         JZ          user_affirmative
         CALL        TTO
@@ -343,6 +348,20 @@ check_for_end_of_track:
         CALL        CUN
         LXI         H,copy_ok_str
         CALL        print_str
+        RET
+
+
+;//////////////////////////////////////////////////////////////////////////////
+
+        ;
+        ; Convert ASCII char in A to uppercase
+        ;
+to_uppercase:
+        CPI         'a'
+        RM
+        CPI         'z'+1
+        RP
+        ANI         0DFH
         RET
 
 
