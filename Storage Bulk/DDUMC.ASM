@@ -22,6 +22,11 @@
 ;//
 ;//                 -> First version I have
 ;//
+;//             1.5: Entry at 0xC000
+;//
+;//                 -> Accepts uppercase letters at the prompt
+;//                 -> Will never raise tape-mark-detected at the end of dump
+;//
 
 
 ;//////////////////////////////////////////////////////////////////////////////
@@ -47,6 +52,11 @@ CCAL        EQU     00091H      ; Reset tape cartridge
 CUN         EQU     000A6H      ; Rewind and unload tape cartridge
 CBWRW       EQU     000B2H      ; Write data to tape cartridge with wait
 CBTMW       EQU     000B8H      ; Write tape mark to tape cartridge with wait
+
+;
+; TOS Errors
+;
+ERROR_48    EQU     048H        ; TAPE MARK DETECTED
 
 
 ;//////////////////////////////////////////////////////////////////////////////
@@ -114,6 +124,7 @@ main_program:
         LXI         H,welcome_prompt_str
         CALL        print_str
         CALL        TTI
+        CALL        to_uppercase
         CPI         'Y'
         JZ          start_disk_dump
         ANA         A
@@ -215,9 +226,30 @@ dump_next_sector_last_half_track:
         SUB         A
         MOV         B,A
         CALL        CBTMW
+        JNC         tape_mark_written
+        CPI         ERROR_48
+        JZ          tape_mark_written
+        STC
+        RET
+
+tape_mark_written:
         RC
         SUB         A
         CALL        CUN
+        RET
+
+
+;//////////////////////////////////////////////////////////////////////////////
+
+        ;
+        ; Convert character in A to uppercase
+        ;
+to_uppercase:
+        CPI         'a'
+        RM
+        CPI         'z'+1
+        RP
+        ANI         0DFH
         RET
 
 

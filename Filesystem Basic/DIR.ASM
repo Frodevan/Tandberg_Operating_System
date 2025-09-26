@@ -24,8 +24,8 @@
 ;//         The columns in the prinout will depend on the drive type used.
 ;//
 ;//         When using CO as default output, the file-listing is printed in pages.
-;//         To go to the next page, press any key on the keyboard except E. In the
-;//         case E is pressed, the directory listing will end immediately. It
+;//         To go to the next page, press any key on the keyboard except Q. In the
+;//         case Q is pressed, the directory listing will end immediately. It
 ;//         should be noted that if SO=:CO: is assigned, the listing will on the
 ;//         contrary not have any pagebreaks.
 ;//
@@ -54,6 +54,23 @@
 ;//                 -> Has a bug where the file size of an empty intel-file will
 ;//                    print as attribute-character 083H and the number 88480
 ;//                 -> Has a bug where an empty file will claim to use 65439 blocks
+;//
+;//             1.5a: Entry at 0xC000
+;//
+;//                 -> Flushes excess console input before ending
+;//                 -> Small optimalizations, like when checking drive number
+;//                 -> Pads out layout with additional cartridge returns
+;//                 -> Prints track number on tape summary
+;//                 -> Waits until first IBM file found before printing header
+;//                 -> Asserts valid IBM file-entry tags
+;//                 -> Key to prematurely end listing changed from E to Q
+;//                 -> Fixes the file-extension bug from v1.3 for intel files and
+;//                    tape labels
+;//                 -> Fixes the alias bug from v1.3
+;//                 -> Fixes the tape-attribute print position from v1.3
+;//                 -> Fixes the two tape-track summary print issues from v1.3
+;//                 -> Fixes tape-track 2-4 summary bug from v1.3
+;//                 -> Fixes file-size bug of empty intel-files
 ;//
 
 
@@ -155,10 +172,11 @@ FM_BINARY   EQU     004H        ; Binary flag
 
 ;//////////////////////////////////////////////////////////////////////////////
 ;//
-;//     Legacy program entry
+;//     Program entry
 ;//
 ;//////////////////////////////////////////////////////////////////////////////
 
+start:
         ORG         0C000H
         JMP         beginning
 
@@ -184,13 +202,15 @@ illegal_tape_fmt_str:
 tape_dir_header_str:
         DB          'NAME  .EXT    TRK   FILE   BLKS LENGTH ATTR',CR
 tracks_usage_str:
-        DB          'TRACK USAGE: ',CR
+        DB          'TRACK USAGE:  TRK   BLKS  FILES',CR
 ibm_dir_header_str:
         DB          ' SECTOR   FILENAME  REC   BOE    EOE   P  CRDATE  EXDATE   EOD',CR
 map_status_str:
         DB          'MAP STATUS',CR
 blocks_used_str:
         DB          '/2002 BLOCKS USED',CR
+invalid_disk_format_str:
+        DB          'UNRECOGNIZED DISKETTE FORMAT',CR
 
 intel_mapfile_name:
         DB          'ISIS',NULL,NULL
@@ -198,9 +218,13 @@ intel_mapfile_name:
 
 ibm_file_signature:
         DB          'HDR1'
+ibm_deleted_signature:
+        DB          'DDR1'
 
 sp_backup:
         DS          2
+input_char:
+        DS          1
 
 ibm_file_parameter_indexes:
         DB          01CH
@@ -219,6 +243,8 @@ lines_left_on_page_counter:
 use_console_flag:
         DB          FALSE
 option_i_flag:
+        DB          FALSE
+first_ibm_file_found_flag:
         DB          FALSE
 
 SO_FCB_backup:
@@ -257,7 +283,7 @@ intel_file_entry_buffer:
 tape_cart_usage_block_data_ptr:
         DS          2
 
-tape_track_countdown:
+tape_track_nr_char:
         DS          1
 
 
@@ -281,7 +307,6 @@ to_uppercase:
 
 ;//////////////////////////////////////////////////////////////////////////////
 
-start:
 beginning:
         ;
         ; Save stack pointer for easy breaking out of program from subroutines
@@ -472,6 +497,17 @@ intel_file_ext_deliminer_ready:
         CALL        PUTBIN
         JC          exit_program
         ;
+        ; Skip blocks and file-size print if alias file
+        ;
+        LDA         intel_file_entry_buffer + 00AH
+        ANI         ATTR_A
+        JZ          intel_file_include_size
+        MVI         B,18
+        CALL        print_spaces
+        JMP         intel_file_size_done
+
+intel_file_include_size:
+        ;
         ; Count and print blocks used by file
         ;
         LHLD        total_block_count
@@ -509,6 +545,7 @@ linking_blocks_counted:
         CALL        print_big_number
         MVI         A,' '
         CALL        print_char
+intel_file_size_done:
         ;
         ; Print file attributes
         ;
@@ -610,6 +647,29 @@ exit_program:
         SPHL
         LHLD        SO_FCB_backup
         SHLD        SO_FCB
+        ;
+        ; Flush remaining console input, saving any raised error-code
+        ;
+        PUSH        PSW
+        LDA         input_char
+flush_next_char:
+        CPI         CR
+        JZ          quit
+        LHLD        CI_FCB
+        CALL        INCHAR
+        JNC         flush_next_char
+        ;
+        ; Dispose any previous error if flushing itself resulted in error
+        ;
+        INX         SP
+        INX         SP
+        RET
+
+quit:
+        ;
+        ; Flushing complete, recover error-code if any
+        ;
+        POP         PSW
         RET
 
 
@@ -830,7 +890,14 @@ copy_next_tape_labelname_char:
         INX         H
         DCR         B
         JNZ         copy_next_tape_labelname_char
+        ;
+        ; Skip deliminer if no extension
+        ;
+        XRA         A
+        ORA         M
+        JZ          copy_label_ext
         MVI         A,'.'
+copy_label_ext:
         STAX        D
         INX         D
 copy_next_tape_label_ext_char:
@@ -866,7 +933,7 @@ list_next_tape_file:
         ;
         LDA         input_data_buffer
         ANA         A
-        JZ          list_tape_file
+        JZ          check_tape_file
         CPI         0FFH
         JZ          list_next_tape_file
         CPI         07FH
@@ -874,6 +941,17 @@ list_next_tape_file:
         LXI         D,illegal_tape_fmt_str
         CALL        print_str
         JMP         exit_program
+
+check_tape_file:
+        ;
+        ; Check invisible attribute, if not I switch
+        ;
+        LDA         option_i_flag
+        ORA         A
+        JNZ         list_tape_file
+        LDA         input_data_buffer + 012H
+        ANI         ATTR_I
+        JNZ         list_next_tape_file
 
 
 ;//////////////////////////////////////
@@ -918,6 +996,17 @@ tape_file_ext_deliminer_ready:
         CALL        PUTBIN
         JC          exit_program
         ;
+        ; Skip blocks and file-size print if alias file
+        ;
+        LDA         input_data_buffer + 012H
+        ANI         ATTR_A
+        JZ          tape_file_include_size
+        MVI         B,29
+        CALL        print_spaces
+        JMP         tape_file_size_done
+
+tape_file_include_size:
+        ;
         ; Print file track number
         ;
         LDA         input_data_buffer + 00AH
@@ -944,6 +1033,9 @@ tape_file_ext_deliminer_ready:
         LHLD        input_data_buffer + 00EH
         CALL        calculate_file_size
         CALL        print_big_number
+        MVI         A,' '
+        CALL        print_char
+tape_file_size_done:
         ;
         ; Print file attributes
         ;
@@ -961,32 +1053,35 @@ tape_end_of_directory:
         LDA         directory_file_fcb + FCB_DRVNR
         CALL        CCAL
         RC
+        CALL        print_newline
         LXI         D,tracks_usage_str
         CALL        print_str
+        CALL        print_newline
         ;
         ; Print track status map from directory end block
         ;
         LXI         H,input_data_buffer + 001H
         SHLD        tape_cart_usage_block_data_ptr
-        MVI         A,3
-        STA         tape_track_countdown
+        MVI         A,'1'
+        STA         tape_track_nr_char
         ;
         ; Print status map for one track
         ;
 tape_list_next_track_summary:
+        MVI         B,15
+        CALL        print_spaces
         ;
         ; Print an asterisk if track is not empty
         ;
         LHLD        tape_cart_usage_block_data_ptr
         MOV         A,M
         ANA         A
-        JZ          tape_track_status_empty
-        MVI         A,'*'
-        JMP         tape_track_status_char_ready
-
-tape_track_status_empty:
         MVI         A,' '
+        JZ          tape_track_status_char_ready
+        MVI         A,'*'
 tape_track_status_char_ready:
+        CALL        print_char
+        LDA         tape_track_nr_char
         CALL        print_char
         ;
         ; Print number of blocks on track
@@ -1000,25 +1095,27 @@ tape_track_status_char_ready:
         SHLD        tape_cart_usage_block_data_ptr
         XCHG
         CALL        print_word
-        MVI         A,'/'
-        CALL        print_char
         ;
         ; Print number of files on track
         ;
         LHLD        tape_cart_usage_block_data_ptr
         MOV         A,M
         INX         H
+        INX         H
         SHLD        tape_cart_usage_block_data_ptr
         MOV         L,A
         MVI         H,000H
         CALL        print_word
+        CALL        print_newline
         ;
         ; Advance to print status of next track
         ;
-        LXI         H,tape_track_countdown
-        DCR         M
-        JNZ         tape_list_next_track_summary
-        JMP         file_listing_end
+        LDA         tape_track_nr_char
+        CPI         '3'
+        JZ          file_listing_end
+        INR         A
+        STA         tape_track_nr_char
+        JMP         tape_list_next_track_summary
 
 
 ;//////////////////////////////////////////////////////////////////////////////
@@ -1035,12 +1132,11 @@ ibm_disk_type_set:
         ;
         SHLD        ibm_read_call
         ;
-        ; Get drive number and print header
+        ; Get drive number
         ;
         CALL        parse_drive_number
-        CALL        print_newline
-        LXI         D,ibm_dir_header_str
-        CALL        print_str
+        XRA         A
+        STA         first_ibm_file_found_flag
         ;
         ; List all active IBM file entries, starting at sector 8
         ;
@@ -1069,9 +1165,24 @@ list_ibm_file:
         ;
         ; Check if file is active
         ;
+        LXI         D,ibm_deleted_signature
+        CALL        compare_ibm_signature
+        JZ          list_next_ibm_file
         LXI         D,ibm_file_signature
         CALL        compare_ibm_signature
-        JNZ         list_next_ibm_file
+        JNZ         unrecognized_floppy_format
+        ;
+        ; Print header and set flag if first file to be listed
+        ;
+        LDA         first_ibm_file_found_flag
+        ORA         A
+        JNZ         list_ibm_file_data
+        CALL        print_newline
+        LXI         D,ibm_dir_header_str
+        CALL        print_str
+        MVI         A,TRUE
+        STA         first_ibm_file_found_flag
+list_ibm_file_data:
         ;
         ; Prepare file entry data for printing
         ;
@@ -1163,6 +1274,16 @@ read_ibm_sector:
 
 ;//////////////////////////////////////
 
+unrecognized_floppy_format:
+        LXI         D,newline_str
+        CALL        print_str
+        LXI         D,invalid_disk_format_str
+        CALL        print_str
+        JMP         exit_program
+
+
+;//////////////////////////////////////
+
         ;
         ; Compare 4-character strings pointed to by DE and HL
         ;
@@ -1221,7 +1342,7 @@ print_str:
         CALL        TTO
         CALL        TTI
         CALL        to_uppercase
-        CPI         'E'
+        CPI         'Q'
         JZ          file_listing_end
         XRA         A
         RET
@@ -1276,6 +1397,7 @@ get_next_char:
         PUSH        H
         LHLD        CI_FCB
         CALL        INCHAR
+        STA         input_char
         JMP         print_end
 
 
@@ -1286,14 +1408,13 @@ parse_drive_number:
         ; Get drive number char and check for within bounds
         ;
         CALL        get_next_char
-        CPI         '0'
+        SUI         '0'
         JM          invalid_drive
-        CPI         '4'
+        CPI         4
         JP          invalid_drive
         ;
         ; Store drive nr and check drive designator final character
         ;
-        SUI         '0'
         STA         directory_file_fcb + FCB_DRVNR
         CALL        get_next_char
         CPI         ':'
@@ -1336,9 +1457,16 @@ print_word:
         ;
 calculate_file_size:
         ;
+        ; Check for edge-case where file is completely empty
+        ;
+        MOV         A,L
+        ORA         H
+        JZ          block_count_ready
+        ;
         ; Subtract 1 from HL since we are adding the last block size separately
         ;
         DCX         H
+block_count_ready:
         ;
         ; Multiply full block count with block size of 128
         ;

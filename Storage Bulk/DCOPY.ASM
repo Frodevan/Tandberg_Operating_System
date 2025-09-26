@@ -2,23 +2,49 @@
 ;//
 ;//     DCOPY - Duplicate floppy
 ;//
-;//         Extra parameters:
+;//         Duplicates an entire floppy-disk, track by track. Each track on the
+;//         source disk is attempted to be read up to 20 times in the case of read-
+;//         issues, while each track is only attempted re-written twice should
+;//         there be write issues.
 ;//
-;//             [$Y]
+;//         If the S option is used, the user will be prompted to swap disk every
+;//         once in a while. This prompt will take any keypress to continue.
 ;//
-;//                 Y       Copy from drive 0 to drive 1
+;//         NOTE: Will not support sectors written using the deleted address marks.
+;//
+;//         NOTE: This program derives the size of user-memory on its own, and the
+;//               code used expects a gap between start of user-memory and XMON-
+;//               memory. This is true for machines with 48k RAM or less, but not
+;//               for systems with the full 54k of user RAM. Running the wrong
+;//               version of this program on a 54k machine will cause the computer
+;//               to crash, since the whole XMON working-RAM block (where the
+;//               program itself resides) will be overwritten with floppy-data.
 ;//
 ;//
-;//         Duplicates an entire floppy-disk, track by track.
+;//         User choice prompt input:
 ;//
-;//         NOTE: Does not support sectors written using the deleted address marks.
+;//             <option>
+;//
+;//                 option      User option
+;//
+;//                 Options:
+;//                     N       Abort copy
+;//                     S       Copy using drive 0 only
+;//                     Y       Copy from drive 0 to drive 1
 ;//
 ;//
 ;//         Changelog:
 ;//
-;//             1.3: Entry at 0xC000
+;//             1.3: Entry at 0x2000
 ;//
 ;//                 -> First version I have
+;//
+;//             1.5a: Entry at 0x2000
+;//
+;//                 -> Fully rewritten to rely only on XMON API
+;//                 -> Accepts lowercase input on the user choice prompt
+;//                 -> Adds the S option to the user choice prompt
+;//                 -> Will attempt to re-write track if verification fails
 ;//
 
 
@@ -31,22 +57,29 @@
 ;
 ; ASCII control characters
 ;
+NULL        EQU     000H        ; Null character
+ERLIN       EQU     004H        ; Erase current line
+BEL         EQU     007H        ; Bell short beep
+LF          EQU     00AH        ; Line Feed
+ROLUP       EQU     00CH        ; Roll text upwards one line
 CR          EQU     00DH        ; Cartridge Return
+CURUP       EQU     01CH        ; Move cursor up one line
 
 ;
-; TOS system calls
+; XMON system calls
 ;
-INCHAR      EQU     0FD09H      ; Input single character
-PUT         EQU     0FD12H      ; Output string of characters, inclusive CR
-DCALW       EQU     0FD70H      ; Reset disk drive with wait
-DSRDW       EQU     0FD73H      ; Read from disk with wait
-DSWRW       EQU     0FD76H      ; Write to disk with wait
+TTI         EQU     00040H      ; Console input
+TTO         EQU     00043H      ; Console output
+INDISP      EQU     0006AH      ; Get character at console cursor
+DCALW       EQU     00070H      ; Reset disk drive with wait
+DSRDW       EQU     00073H      ; Read from disk with wait
+DSWRW       EQU     00076H      ; Write to disk with wait
 
 ;
-; TOS standard files
+; XMON and TOS system data
 ;
-CI_FCB      EQU     0FF00H      ; Console input abstract file FCB pointer
-CO_FCB      EQU     0FF02H      ; Console output abstract file FCB pointer
+BUFLIM      EQU     0272EH      ; Lowest address of current TOS buffers
+KEYBUF      EQU     02780H      ; Console input buffer
 
 
 ;//////////////////////////////////////////////////////////////////////////////
@@ -55,192 +88,471 @@ CO_FCB      EQU     0FF02H      ; Console output abstract file FCB pointer
 ;//
 ;//////////////////////////////////////////////////////////////////////////////
 
-        ORG         0C000H
+        ORG         02000H
 start:
+        ;
+        ; Backup stack pointer, for breaking out of program
+        ;
+        LXI         H,0
+        DAD         SP
+        SHLD        saved_stack_ptr
         ;
         ; Print welcome prompt string
         ;
-        LHLD        CO_FCB
-        LXI         D,welcome_prompt_str
-        CALL        PUT
-        RC
+        LXI         H,welcome_prompt_str
+        CALL        print_str
+        ;
+        ; Get highest possible start address of a track data buffer
+        ;
+        LHLD        BUFLIM
+        LXI         D,-26*128
+        DAD         D
+        MOV         A,H
+        INR         A
+        STA         buffer_end_check_instr+1
+        ;
+        ; Scan for start of user-RAM to get start address of first track buffer
+        ;
+        LXI         H,0C000H
+ram_test_loop:
+        DCR         H
+        MOV         A,M
+        INR         M
+        CMP         M
+        JNZ         ram_test_loop
+        INR         H
+        SHLD        track_buffer_list
+        ;
+        ; Prepare to set up a list of pointers to individual track data buffers
+        ;
+        LXI         D,26*128
+        LXI         B,track_buffer_list+2
+        XRA         A
+        STA         track_buffer_count
+add_next_track_data_buffer:
+        ;
+        ; Check if there's space for another track data buffer
+        ;
+        DAD         D
+        MOV         A,H
+buffer_end_check_instr:
+        CPI         000H
+        JNC         parse_prompt_input
+        ;
+        ; Add new data buffer to list
+        ;
+        LDA         track_buffer_count
+        INR         A
+        STA         track_buffer_count
+        MOV         A,L
+        STAX        B
+        INX         B
+        MOV         A,H
+        STAX        B
+        INX         B
+        JMP         add_next_track_data_buffer
+
 parse_prompt_input:
         ;
-        ; Expecy a Y to continue, otherwise exit program
+        ; Get prompt input and convert to uppercase
         ;
-        LHLD        CI_FCB
-        CALL        INCHAR
-        RC
+        CALL        TTI
+        CPI         'a'-1
+        JC          char_is_uppercase
+        SUI         'a'-'A'
+char_is_uppercase:
+        ;
+        ; Check prompt input selection
+        ;
         CPI         'Y'
-        RNZ
+        JZ          prepare_to_copy
+        CPI         'N'
+        JZ          quit_program
+        CPI         'S'
+        JNZ         parse_prompt_input
+prepare_to_copy:
         ;
-        ; Reset disk drives and get ready to start from track zero
+        ; Echo and save prompt selection, and prepare to start copy
         ;
-        SUB         A
+        CALL        TTO
+        STA         prompt_choice
+        CALL        print_clean_new_line
+        ;
+        ; Reset source disk drive
+        ;
+reset_source_drive:
+        XRA         A
         CALL        DCALW
-        RC
+        JNC         source_drive_ready
+        LXI         H,drive_not_ready_str
+        CALL        print_str
+        CALL        TTI
+        JMP         reset_source_drive
+
+source_drive_ready:
+        ;
+        ; Reset destination disk drive, unless single-drive operation
+        ;
+        LDA         prompt_choice
+        CPI         'S'
+        JZ          target_drive_ready
+reset_target_drive:
         MVI         A,1
         CALL        DCALW
-        RC
-        MVI         B,0
-		;
-		; Copy an entire track from floppy drive 0 to drive 1
-		;
-copy_next_track:
-        ;
-        ; Reset pointers and prepare to read from sector one
-        ;
-        LXI         H,original_track_buffer
-        MVI         C,1
-read_next_sector:
-        SUB         A
-        CALL        DSRDW
-        RC
-        LXI         D,128
-        DAD         D
-        MOV         A,C
-        ADI         1
-        MOV         C,A
-        CPI         27
-        JM          read_next_sector
-        ;
-        ; Reset pointers and prepare to write from sector one
-        ;
-        LXI         H,original_track_buffer
-        MVI         C,1
-write_next_sector:
-        MVI         A,1
-        CALL        DSWRW
-        RC
-        LXI         D,128
-        DAD         D
-        MOV         A,C
-        ADI         1
-        MOV         C,A
-        CPI         27
-        JM          write_next_sector
-		;
-		; Prepare to copy next track
-		;
-        INR         B
-        MOV         A,B
-        CPI         77
-        JNZ         copy_next_track
-        JMP         verify_copy
+        JNC         target_drive_ready
+        LXI         H,drive_not_ready_str
+        CALL        print_str
+        CALL        TTI
+        JMP         reset_target_drive
 
 
 ;//////////////////////////////////////
 
-welcome_prompt_str:
-        DB			'COPY FROM 0 TO 1 - TYPE Y TO START',CR
-
-
-;//////////////////////////////////////////////////////////////////////////////
-
-verify_copy:
+target_drive_ready:
         ;
-        ; Reset disk drives and get ready to verify from track zero
+        ; Initialize variables to copy a new disk
         ;
-        SUB         A
-        CALL        DCALW
-        RC
+        XRA         A
+        STA         current_drive_nr
+        STA         tracks_copied_count
+copy_next_chunk:
+        ;
+        ; Reset buffers in preparation for new copying chunk of tracks
+        ;
         MVI         A,1
+        STA         current_track_buffer_nr
+        LDA         tracks_copied_count
+        STA         current_track_nr
+prepare_track_read:
+        ;
+        ; Look up track buffer pointer in list of tracks
+        ;
+        LDA         current_track_buffer_nr
+        ADD         A
+        MOV         C,A
+        MVI         B,000H
+        LXI         H,track_buffer_list
+        DAD         B
+        MOV         E,M
+        INX         H
+        MOV         D,M
+        XCHG
+        SHLD        current_track_buffer_ptr
+        ;
+        ; Try up to 20 times to read a new track
+        ;
+        XRA         A
+        STA         retry_counter
+read_current_track:
+        LDA         current_track_nr
+        MOV         B,A
+        LHLD        current_track_buffer_ptr
+        CALL        read_track
+        JNC         track_read_success
+        LDA         retry_counter
+        INR         A
+        STA         retry_counter
+        CPI         20
+        JC          read_current_track
+        LXI         H,read_error_str
+        JMP         print_str_and_quit
+
+track_read_success:
+        ;
+        ; Advance to next track
+        ;
+        LDA         current_track_nr
+        INR         A
+        STA         current_track_nr
+        CPI         77
+        JNC         read_chunk_done
+        LDA         current_track_buffer_nr
+        INR         A
+        STA         current_track_buffer_nr
+        MOV         B,A
+        LDA         track_buffer_count
+        CMP         B
+        JNC         prepare_track_read
+
+read_chunk_done:
+        ;
+        ; Prompt for disk change if one-drive mode
+        ;
+        LDA         prompt_choice
+        CPI         'Y'
+        JZ          write_next_chunk_dual_drive
+        LXI         H,change_to_copy_str
+        CALL        print_str
+        CALL        print_clean_new_line
+        ;
+        ; Flush keyboard input buffer and wait for new keystroke
+        ;
+        XRA         A
+        STA         KEYBUF
+        CALL        TTI
+        ;
+        ; Clear prompt text
+        ;
+        MVI         A,CURUP
+        CALL        TTO
+        MVI         A,ERLIN
+        CALL        TTO
+        ;
+        ; Reset disk drive after disk change
+        ;
+reset_drive_after_read:
+        XRA         A
         CALL        DCALW
-        RC
-        MVI         B,0
-		;
-		; Verify an entire track of floppy disks in drive 0 and 1
-		;
-verify_next_track:
-		;
-		; Read track from floppy drive 0
-		;
-        LXI         H,original_track_buffer
-        MVI         C,1
-read_next_original_sector:
-        SUB         A
-        CALL        DSRDW
-        RC
-        LXI         D,128
-        DAD         D
-        MOV         A,C
-        ADI         1
-        MOV         C,A
-        CPI         27
-        JM          read_next_original_sector
-		;
-		; Read track from floppy drive 1
-		;
-        LXI         H,copied_track_buffer
-        MVI         C,1
-read_next_copied_sector:
+        JNC         write_next_chunk
+        LXI         H,drive_not_ready_str
+        CALL        print_str
+        CALL        TTI
+        JMP         reset_drive_after_read
+
+
+;//////////////////////////////////////
+
+write_next_chunk_dual_drive:
+        ;
+        ; Make sure to write to second drive if multi-drive operation
+        ;
         MVI         A,1
-        CALL        DSRDW
-        RC
-        LXI         D,128
-        DAD         D
-        MOV         A,C
-        ADI         1
+        STA         current_drive_nr
+write_next_chunk:
+        ;
+        ; Start writing from first track buffer in chunk
+        ;
+        MVI         A,1
+        STA         current_track_buffer_nr
+        LDA         tracks_copied_count
+        STA         current_track_nr
+prepare_track_write:
+        ;
+        ; Look up track buffer pointer in list of tracks
+        ;
+        LDA         current_track_buffer_nr
+        ADD         A
         MOV         C,A
-        CPI         27
-        JM          read_next_copied_sector
-		;
-		; Compare all bytes in the two tracks read
-		;
-        PUSH        B
-        LXI         D,original_track_buffer
-        LXI         H,copied_track_buffer
+        MVI         B,000H
+        LXI         H,track_buffer_list
+        DAD         B
+        MOV         E,M
+        INX         H
+        MOV         D,M
+        XCHG
+        SHLD        current_track_buffer_ptr
+        ;
+        ; Try up to 2 times to write track
+        ;
+        XRA         A
+        STA         retry_counter
+write_current_track:
+        LDA         current_track_nr
+        MOV         B,A
+        LHLD        current_track_buffer_ptr
+        CALL        write_track
+        JNC         verify_current_track
+retry_writing_track:
+        LDA         retry_counter
+        INR         A
+        STA         retry_counter
+        CPI         2
+        JC          write_current_track
+        LXI         H,write_error_str
+        JMP         print_str_and_quit
+
+verify_current_track:
+        ;
+        ; Read back track data to buffer zero for verification
+        ;
+        LHLD        track_buffer_list
+        CALL        read_track
+        JC          retry_writing_track
+        ;
+        ; Compare readback track data with original track buffer
+        ;
+        LHLD        track_buffer_list
+        XCHG
+        LHLD        current_track_buffer_ptr
         LXI         B,26*128
 verify_next_byte:
         LDAX        D
         CMP         M
-        JNZ         verification_failed
-        INX         H
+        JNZ         retry_writing_track
         INX         D
-        DCX         B
-        MOV         A,B
-        ORA         C
+        INX         H
+        DCR         C
         JNZ         verify_next_byte
-        POP         B
-		;
-		; Prepare to verify next track
-		;
-        INR         B
-        MOV         A,B
+        DCR         B
+        JNZ         verify_next_byte
+        ;
+        ; Advance to next track
+        ;
+        LDA         current_track_nr
+        INR         A
+        STA         current_track_nr
         CPI         77
-        JNZ         verify_next_track
-		;
-		; Disk verified correctly
-		;
-        LXI         D,good_copy_str
-        LHLD        CO_FCB
-        CALL        PUT
-        RC
-        JMP         more_copies_prompt
+        JNC         copy_successful
+        LDA         current_track_buffer_nr
+        INR         A
+        STA         current_track_buffer_nr
+        ;
+        ; Check if all track buffers have been written
+        ;
+        MOV         B,A
+        LDA         track_buffer_count
+        CMP         B
+        JNC         prepare_track_write
+        ;
+        ; If so, prompt to change disk if single-disk mode
+        ;
+        LDA         prompt_choice
+        CPI         'Y'
+        JZ          prepare_to_copy_next_chunk
+        LXI         H,change_to_original_str
+        CALL        print_str
+        CALL        print_clean_new_line
+        ;
+        ; Flush keyboard input buffer and wait for new keystroke
+        ;
+        XRA         A
+        STA         KEYBUF
+        CALL        TTI
+        ;
+        ; Clear prompt text
+        ;
+        MVI         A,CURUP
+        CALL        TTO
+        MVI         A,ERLIN
+        CALL        TTO
+        ;
+        ; Reset disk drive after disk change
+        ;
+reset_drive_after_write:
+        XRA         A
+        CALL        DCALW
+        JNC         prepare_to_copy_next_chunk
+        LXI         H,drive_not_ready_str
+        CALL        print_str
+        CALL        TTI
+        JMP         reset_drive_after_write
 
-verification_failed:
-		;
-		; Disk failed verification
-		;
-        POP         B
-        LXI         D,bad_copy_str
-        LHLD        CO_FCB
-        CALL        PUT
+prepare_to_copy_next_chunk:
+        ;
+        ; Reads are always from the primary drive
+        ;
+        XRA         A
+        STA         current_drive_nr
+        ;
+        ; Add recently copied tracks to total count
+        ;
+        LDA         tracks_copied_count
+        MOV         B,A
+        LDA         track_buffer_count
+        ADD         B
+        STA         tracks_copied_count
+        JMP         copy_next_chunk
+
+
+;//////////////////////////////////////
+
+copy_successful:
+        ;
+        ; Print status and take a new user choice
+        ;
+        LXI         H,verification_ok_str
+        CALL        print_str
+        JMP         parse_prompt_input
+
+
+;//////////////////////////////////////
+
+print_str_and_quit:
+        CALL        print_str
+quit_program:
+        ;
+        ; Cleanup and quit program
+        ;
+        CALL        print_clean_new_line
+        XRA         A
+        LHLD        saved_stack_ptr
+        SPHL
+        RET
+
+
+;//////////////////////////////////////////////////////////////////////////////
+;//
+;//     Subroutines
+;//
+;//////////////////////////////////////////////////////////////////////////////
+
+        ;
+        ; Print string pointed to by HL
+        ;
+print_str:
+        MOV         A,M
+        ORA         A
+        RZ
+        CALL        TTO
+        INX         H
+        JMP         print_str
+
+
+;//////////////////////////////////////////////////////////////////////////////
+
+        ;
+        ; Read a whole track into buffer pointed to by HL
+        ;
+read_track:
+        MVI         C,1
+read_next_sector:
+        LDA         current_drive_nr
+        CALL        DSRDW
         RC
-		;
-		; Prompt user if more copies are to be made
-		;
-more_copies_prompt:
-        LXI         D,more_copies_ptompt_str
-        LHLD        CO_FCB
-        CALL        PUT
+        LXI         D,128
+        DAD         D
+        INR         C
+        MOV         A,C
+        CPI         27
+        JC          read_next_sector
+        RET
+
+
+;//////////////////////////////////////////////////////////////////////////////
+
+        ;
+        ; Write a whole track from buffer pointed to by HL
+        ;
+write_track:
+        MVI         C,1
+write_next_sector:
+        LDA         current_drive_nr
+        CALL        DSWRW
         RC
-        LHLD        CI_FCB
-        CALL        INCHAR
-        RC
-        CPI         CR
-        JZ          parse_prompt_input
-        ANA         A
+        LXI         D,128
+        DAD         D
+        INR         C
+        MOV         A,C
+        CPI         27
+        JC          write_next_sector
+        RET
+
+
+;//////////////////////////////////////////////////////////////////////////////
+
+print_clean_new_line:
+        MVI         A,CR
+        CALL        TTO
+        MVI         A,LF
+        CALL        TTO
+        CALL        INDISP
+        ORA         A
+        JZ          line_already_clear
+        MVI         A,ROLUP
+        CALL        TTO
+line_already_clear:
+        MVI         A,CR
+        CALL        TTO
         RET
 
 
@@ -250,14 +562,41 @@ more_copies_prompt:
 ;//
 ;//////////////////////////////////////////////////////////////////////////////
 
-bad_copy_str:
-		DB			'NOT '
-good_copy_str:
-		DB			'EQUAL',CR
-more_copies_ptompt_str:
-		DB			'MORE? - TYPE Y TO START NEXT',CR
+welcome_prompt_str:
+        DB          'Copy from 0 to 1 - Type Y to start : ',NULL
+verification_ok_str:
+        DB          'EQUAL. More ? ',NULL
+change_to_copy_str:
+        DB          'Change to copy diskette',BEL,NULL
+change_to_original_str:
+        DB          'Change to original diskette',BEL,NULL
+drive_not_ready_str:
+        DB          'Drive not ready. ',BEL,NULL
+read_error_str:
+        DB          'Read error',BEL,NULL
+write_error_str:
+        DB          'Write error',BEL,NULL
 
-original_track_buffer:
-		DS			26*128
-copied_track_buffer:
-		DS			26*128
+saved_stack_ptr:
+        DW          00000H
+
+track_buffer_list:
+        DW          00000H
+        DS          13*2
+
+track_buffer_count:
+        DB          000H
+prompt_choice:
+        DB          000H
+current_drive_nr:
+        DB          000H
+tracks_copied_count:
+        DB          000H
+current_track_nr:
+        DB          000H
+current_track_buffer_nr:
+        DB          000H
+current_track_buffer_ptr:
+        DW          00000H
+retry_counter:
+        DB          000H

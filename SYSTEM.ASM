@@ -58,6 +58,19 @@
 ;//                 -> Some new bugs are introduced, for instance the system
 ;//                    crashes after writing a file to tape
 ;//
+;//             v1.5a: Entry at 0xDC00
+;//
+;//                 -> Adds batch-file flag for automatic line-buffered batch-file
+;//                    assignment with echo to console
+;//                 -> Experimental BLOCKLINE file mode for IBM disks added, along
+;//                    with its drive types :Bn: and :Jn:
+;//                 -> New PHYSINT system API call for dynamically generating file
+;//                    control blocks from file-handle strings added
+;//                 -> Fixes some bugs, including the crash from closing a tape
+;//                    output file
+;//                 -> Adds a few new bugs, in particular for certain uses of the
+;//                    new PHYSINT functionality
+;//
 
 
 ;//////////////////////////////////////////////////////////////////////////////
@@ -69,7 +82,6 @@
 ;
 ; Flag values
 ;
-FALSE       EQU     0           ; Boolean False
 TRUE        EQU     1           ; Boolean True
 
 ;
@@ -85,7 +97,6 @@ LF          EQU     00AH        ; Line Feed
 ROLUP       EQU     00CH        ; Scroll screen up one row
 CR          EQU     00DH        ; Cartridge Return
 ERPAG       EQU     019H        ; Clear screen
-CURH        EQU     01DH        ; Cursor home
 DEL         EQU     07FH        ; Delete
 
 ;
@@ -157,7 +168,6 @@ STACK       EQU     025BEH      ; TOS top of stack
 BUF2        EQU     02600H      ; Sector data of last filesystem operation
 BUF1        EQU     02680H      ; Additional sector data for filesysyem operation
 CTLBLK      EQU     02710H      ; Most recent TOS file control block
-FILNAM      EQU     02712H      ; TOS temporary filename string
 CISAVE      EQU     0271BH      ; Pending TOS CI file assignement
 COSAVE      EQU     0271DH      ; Pending TOS CO file assignement
 ROLLSW      EQU     0271FH      ; Cursor line number if no hardware autoscroll
@@ -174,6 +184,7 @@ UNAM        EQU     0273EH      ; TOS temporary filename pointer
 EBCD        EQU     0277CH      ; ASCII to EBCDIC translation table reference
 ASCI        EQU     0277EH      ; EBCDIC to ASCII translation table reference
 TIMEAD      EQU     027B0H      ; Oneshot-timer routine pointer
+EXSW        EQU     027B2H      ; TOS EXEC batch-file assigned switch
 TIMER       EQU     027BDH      ; Oneshot-timer countdown in 20ms intervals
 
 ;
@@ -185,7 +196,6 @@ ERROR_0B    EQU     00BH        ; PROGRAM NAME NOT FOUND
 ERROR_0C    EQU     00CH        ; ILLEGAL DIRECTORY ENTRY
 ERROR_0F    EQU     00FH        ; DISKETTE MAP MISSING
 ERROR_11    EQU     011H        ; IMPROPER UNIT SPECIFICATION
-ERROR_12    EQU     012H        ; CONVERSION TABLE MISSING
 ERROR_15    EQU     015H        ; DE-EDIT NONHEX DIGIT (0-9,A-F)
 ERROR_16    EQU     016H        ; INPUT FROM NON-INPUT FILE
 ERROR_17    EQU     017H        ; READ AFTER END-OF-FILE
@@ -211,6 +221,7 @@ ERROR_2C    EQU     02CH        ; BUFFER HEADER IMPROPER
 ERROR_2D    EQU     02DH        ; IMPROPER FILE DESIGNATOR
 ERROR_2E    EQU     02EH        ; IMPROPER ASSIGNMENT FORMAT
 ERROR_2F    EQU     02FH        ; NO ROOM ON DISKETTE
+ERROR_30    EQU     030H        ; ILLEGAL BUFFER TYPE
 ERROR_31    EQU     031H        ; NON-EXISTENT FILE NAME - INPUT
 ERROR_32    EQU     032H        ; OUTPUT FILE ALREADY ON DISKETTE
 ERROR_33    EQU     033H        ; NO ROOM ON DISKETTE
@@ -222,6 +233,7 @@ ERROR_40    EQU     040H        ; END OF TAPE ERROR
 ERROR_48    EQU     048H        ; TAPE MARK DETECTED
 ERROR_57    EQU     057H        ; CARTRIDGE EXTRA BLOCKS IN FILE
 ERROR_5A    EQU     05AH        ; INCORRECT NAME IN HEADER BLOCK
+ERROR_5C    EQU     05CH        ; END-OF-BLOCK (B AND J FILES)
 
 ;
 ; TOS file attributes
@@ -252,6 +264,7 @@ FM_NONE     EQU     000H        ; No file mode set, typically closed file
 FM_INPUT    EQU     001H        ; File open for reading flag
 FM_OUTPUT   EQU     002H        ; File open for writing flag
 FM_BINARY   EQU     004H        ; Binary flag
+FM_EXEC_CI  EQU     008H        ; Internal file CI used by EXEC flag
 FM_EOF_NEXT EQU     010H        ; Force End of File on next read flag
 FM_ASSIGNED EQU     020H        ; Assigned and opened by command line flag
 FM_NO_CLOSE EQU     040H        ; Don't close file flag
@@ -261,6 +274,7 @@ FM_EOF      EQU     080H        ; End of file flag
 ; FCB media format flags
 ;
 DF_SYSFILE  EQU     004H        ; Write intel disk file with system attributes flag
+DF_BLKLINE  EQU     040H        ; IBM disk blockline mode flag
 DF_EBCDIC   EQU     080H        ; IBM disk EBCDIC character encoding flag
 
 ;
@@ -269,6 +283,16 @@ DF_EBCDIC   EQU     080H        ; IBM disk EBCDIC character encoding flag
 BUFLST_ACTV EQU     000H        ; Active element of chained list of buffers
 BUFLST_HEAD EQU     080H        ; Head element of chained list of buffers
 BUFLST_INAC EQU     0FFH        ; Released element of chained list
+
+;
+; TOS Device driver tables
+;
+TAB_OPEN    EQU     000H        ; Device driver open routines
+TAB_OPEN_I  EQU     000H        ; Device driver open input routine
+TAB_OPEN_O  EQU     003H        ; Device driver open output routine
+TAB_READ_I  EQU     006H        ; Device driver read input routine
+TAB_WRITE_O EQU     009H        ; Device driver write output routine
+TAB_CLOSE   EQU     00CH        ; Device driver close routines
 
 
 ;//////////////////////////////////////////////////////////////////////////////
@@ -294,6 +318,13 @@ BUFLST_INAC EQU     0FFH        ; Released element of chained list
 ;//                 -> Now resets the state of the debug flag after a program ends
 ;//                    with an error
 ;//
+;//             v1.5a:
+;//
+;//                 -> Adds a flag and special handling for batch files, which are
+;//                    now automatically set up with console echo
+;//                 -> Adds a bug where the newly exposed TOSINIT API routine is
+;//                    overwritten by buffers
+;//
 
 
 ;//////////////////////////////////////////////////////////////////////////////
@@ -304,6 +335,16 @@ BUFLST_INAC EQU     0FFH        ; Released element of chained list
 
         ORG         0DC00H
 start:
+        ;
+        ; Init and run main command line prompt program
+        ;
+        CALL        T_TOSINIT
+        JMP         main
+
+
+;//////////////////////////////////////////////////////////////////////////////
+
+T_TOSINIT:
         ;
         ; Reset one-shot timer routine
         ;
@@ -332,8 +373,6 @@ start:
         SUB         A
 scroll_mode_found:
         STA         ROLLSW
-        MVI         A,CURH
-        CALL        TTO
         MVI         A,ERPAG
         CALL        TTO
         ;
@@ -344,9 +383,11 @@ scroll_mode_found:
         LXI         H,ebcdic_to_ascii_table
         SHLD        ASCI
         ;
-        ; Run main command line prompt program
+        ; Clear TOS batch file flag
         ;
-        JMP         T_MON
+        XRA         A
+        STA         EXSW
+        RET
 
 
 ;//////////////////////////////////////////////////////////////////////////////
@@ -412,9 +453,59 @@ cli_close_assigned_file:
 ;//////////////////////////////////////////////////////////////////////////////
 
         ;
-        ; Main command line interface program
+        ; Main command line interface program entry, ready CI for a new session
         ;
 T_MON:
+        ;
+        ; Check if standard console input is a buffered line device
+        ;
+        LHLD        CI_FCB
+        MOV         A,M
+        CPI         4
+        JNZ         cli_force_cleanup
+        ;
+        ; If so, get pointer to next character
+        ;
+        INX         H
+        INX         H
+        MOV         C,M             ; FCB + FCB_BUFIDX
+        INX         H
+        MOV         B,M
+        INX         H
+        INX         H
+        INX         H
+        MOV         E,M             ; FCB + FCB_BUFPTR
+        INX         H
+        MOV         D,M
+        XCHG
+        DAD         B
+        ;
+        ; Check if CI is at the end of a line
+        ;
+        MOV         A,M
+        CPI         CR
+        JZ          cli_force_cleanup
+        CPI         LF
+        JZ          cli_force_cleanup
+        ;
+        ; Check if CI is at the start of a line
+        ;
+        DCX         H
+        MOV         A,M
+        CPI         CR
+        JZ          cli_force_cleanup
+        CPI         LF
+        JZ          cli_force_cleanup
+        ;
+        ; Assume CI is currently in the middle of a line, flush the rest of it
+        ;
+        CALL        flush_ci_input
+        CC          T_ERROR
+        JMP         cli_force_cleanup
+
+
+;//////////////////////////////////////////////////////////////////////////////
+
         ;
         ; Run and parse command line prompt
         ;
@@ -425,6 +516,14 @@ main:
         SUB         A
         STA         DEBUG
         LXI         SP,STACK
+        ;
+        ; Check for if a batch file is running, and skip printing prompt if so
+        ;
+        LHLD        CI_FCB
+        INX         H
+        MOV         A,M             ; FCB + FCB_MODE
+        ANI         FM_EXEC_CI
+        JNZ         parse_command_line_prompt
         ;
         ; Print title string and command line prompt to console
         ;
@@ -453,12 +552,31 @@ parse_command_line_prompt:
         ANI         FM_EOF
         JZ          cli_prompt_invalid_end_of_file
         ;
-        ; If so, close assigned CI and reset to buffered console with echo
+        ; Check if it was a batch file that ended
+        ;
+        MOV         A,M             ; FCB + FCB_MODE
+        ANI         FM_EXEC_CI
+        JZ          cli_restore_console_input
+        ;
+        ; If so, force the flag back off since the fcb structure may get reused
+        ;
+        MOV         A,M             ; FCB + FCB_MODE
+        XRI         FM_EOF
+        MOV         M,A
+        ;
+        ; Set up to close nested input file of batch file
+        ;
+        LHLD        EXEC_FCB
+        SHLD        CI_FCB
+cli_restore_console_input:
+        ;
+        ; Close assigned CI and reset to buffered console with echo
         ;
         LXI         H,CI_FCB
         CALL        cli_close_assigned_file
         LXI         H,DEV_CI_FCB_buffered_echo
         SHLD        CI_FCB
+        CALL        reset_file_buffer
         JMP         cli_prompt_cleanup
 
 
@@ -470,7 +588,6 @@ cli_prompt_error:
         ;
         ; Print error-message before next prompt
         ;
-        STC
         CALL        T_ERROR
         JMP         cli_force_cleanup
 
@@ -484,6 +601,51 @@ cli_prompt_cleanup:
         LDA         DEBUG
         ANA         A
         JNZ         parse_command_line_prompt
+        ;
+        ; Check EXEC batch file flag
+        ;
+        LDA         EXSW
+        ANA         A
+        JZ          cli_force_cleanup
+        ;
+        ; If set, inject assigned CI into a buffered echo file, and use this
+        ;
+        LHLD        CI_FCB
+        SHLD        EXEC_FCB
+        LXI         H,DEV_EXEC_FCB_buffered_echo
+        SHLD        CI_FCB
+        CALL        reset_file_buffer
+        ;
+        ; Clear EXEC flag now that the batch file is set up
+        ;
+        XRA         A
+        STA         EXSW
+        JMP         parse_command_line_prompt
+
+
+;//////////////////////////////////////////////////////////////////////////////
+
+DEV_EXEC_FCB_buffered_echo:
+        DB          4
+        DB          FM_INPUT + FM_EXEC_CI + FM_NO_CLOSE
+        DW          0
+        DW          128
+        DW          DEV_CI_buffer
+        DW          DEV_EXEC_FCB_echo
+
+
+;//////////////////////////////////////
+
+DEV_EXEC_FCB_echo:
+        DB          3
+        DB          FM_INPUT + FM_NO_CLOSE
+EXEC_FCB:
+        DW          00000H
+        DW          DEV_CO_FCB
+
+
+;//////////////////////////////////////////////////////////////////////////////
+
 cli_force_cleanup:
         ;
         ; Otherwise clean up abstract-file assignements and run next cli prompt
@@ -501,6 +663,40 @@ cli_force_cleanup:
         LXI         H,AL_FCB
         CALL        cli_close_assigned_file
         JMP         main
+
+
+;//////////////////////////////////////////////////////////////////////////////
+
+        ;
+        ; Empty buffer of buffered file, without triggering a read
+        ;
+reset_file_buffer:
+        ;
+        ; Reset index of file buffer
+        ;
+        INX         H
+        INX         H
+        MVI         M,000H          ; FCB + FCB_BUFIDX
+        INX         H
+        MVI         M,000H
+        INX         H
+        ;
+        ; Get pointer to line buffer
+        ;
+        INX         H
+        INX         H
+        MOV         E,M             ; FCB + FCB_BUFPTR
+        INX         H
+        MOV         D,M
+        ;
+        ; Store end-of-line markers at the very start of the buffer
+        ;
+        MVI         A,LF
+        STAX        D
+        INX         D
+        MVI         A,LF
+        STAX        D
+        RET
 
 
 ;//////////////////////////////////////////////////////////////////////////////
@@ -624,7 +820,7 @@ error_str:
 newline_str:
         DB          CR
 title_str:
-        DB          'TOS21 VER. 1.4',CR
+        DB          'TOS21 VER. 1.5',CR
 
 
 ;//////////////////////////////////////////////////////////////////////////////
@@ -959,6 +1155,17 @@ fcb_device_type_error:
 ;//
 ;//                 -> First version I have
 ;//
+;//             v1.5a:
+;//
+;//                 -> Adds handling of blockline flag, where an extra end-of-line
+;//                    cartridge-return character is injected after the end of
+;//                    every block. This enables block-devices to be used as
+;//                    nested input files in buffered line files. Simlarly, if
+;//                    binary mode is used an exception is generated on block end
+;//                    instead of the extra character.
+;//                 -> The NULL character is now also ignored when reading from
+;//                    block devices in character mode
+;//
 
 
 ;//////////////////////////////////////////////////////////////////////////////
@@ -1176,7 +1383,15 @@ inchar_buffered_files_retry:
 inchar_type_5:
         ;
         ; INCHAR from block device file (fixed size buffer)
-        ; Check for end of buffer
+        ; Check for end-of-block in blockline mode marker
+        ;
+        DCX         H
+        MOV         A,M             ; FCB + FCB_BUFIDX (msb)
+        CPI         0FFH
+        JZ          inchar_type_4_or_5_buffer_empty
+        INX         H
+        ;
+        ; If not, check for end of buffer
         ;
         MOV         A,M             ; FCB + FCB_BUFLEN (lsb)
         INX         H
@@ -1185,7 +1400,42 @@ inchar_type_5:
         JNZ         inchar_type_5_data_in_buffer
         MOV         A,M             ; FCB + FCB_BUFLEN (msb)
         CMP         D
+        JNZ         inchar_type_5_data_in_buffer
+        ;
+        ; If so, check if blockline mode is set
+        ;
+        POP         H
+        PUSH        H
+        PUSH        D
+        LXI         D,01BH
+        DAD         D
+        POP         D
+        MOV         A,M             ; FCB + FCB_DRVFMT
+        ANI         DF_BLKLINE
         JZ          inchar_type_4_or_5_buffer_empty
+        ;
+        ; If so, set end-of-block marker for blockline mode
+        ;
+        POP         H
+        PUSH        H
+        INX         H
+        MOV         A,M             ; FCB + FCB_MODE
+        INX         H
+        INX         H
+        MVI         M,0FFH          ; FCB + FCB_BUFIDX (msb)
+        ;
+        ; Check if binary mode is active, raise end-of-block exception instead
+        ;
+        ANI         FM_BINARY
+        MVI         A,ERROR_5C
+        STC
+        JNZ         inchar_return
+        ;
+        ; Otherwise inject end of line at the end of block
+        ;
+        MVI         A,CR
+        JMP         inchar_type_4_or_5_return
+
 inchar_type_5_data_in_buffer:
         ;
         ; Get pointer to buffer start
@@ -1206,26 +1456,34 @@ inchar_type_5_data_in_buffer:
         ;
         DCX         H
         MOV         A,M
+        ANA         A
+        JZ          inchar_type_5_end_of_line
         CPI         LF
         JNZ         inchar_type_4_or_5_return
         ;
         ; If end of string encountered, check for binary mode
         ;
+inchar_type_5_end_of_line:
         POP         H
         PUSH        H
+        PUSH        PSW
         INX         H
         MOV         A,M             ; FCB + FCB_MODE
         DCX         H
         ANI         FM_BINARY
         ;
-        ; If binary mode is not active, ignore linefeed character
+        ; If binary mode is not active, ignore end of line character
         ;
-        JZ          inchar_buffered_files_retry
+        JZ          inchar_type_5_retry
         ;
-        ; Else if binary mode is active, treat linefeed as a normal character
+        ; Else if binary mode is active, treat EoL marker as a normal character
         ;
-        MVI         A,LF
+        POP         PSW
         JMP         inchar_type_4_or_5_return
+
+inchar_type_5_retry:
+        POP         PSW
+        JMP         inchar_buffered_files_retry
 
 
 ;//////////////////////////////////////////////////////////////////////////////
@@ -1332,6 +1590,11 @@ getbin_exception:
 ;//             v1.4:
 ;//
 ;//                 -> Fixes the WRITE-failure return stack bug from v1.3
+;//
+;//             v1.5a:
+;//
+;//                 -> Adds handling of the BLOCKLINE flag, where the current block
+;//                    is completed and written to disk immediately on newline
 ;//
 
 
@@ -1452,8 +1715,56 @@ outchar_type_3:
 outchar_type_5:
         ;
         ; OUTCHAR to block device file (fixed size buffer)
+        ; Check if blockline mode is active
+        ;
+        PUSH        H
+        LXI         B,01BH
+        DAD         B
+        MOV         A,M             ; FCB + FCB_DRVFMT
+        ANI         DF_BLKLINE
+        JZ          outchar_normal_type_5
+        ;
+        ; If so, check for end of line
+        ;
+        POP         H
+        POP         PSW
+        PUSH        PSW
+        PUSH        H
+        CPI         CR
+        JNZ         outchar_normal_type_5
+        ;
+        ; If so, write the current block as-is
+        ;
+        POP         H
+        PUSH        H
+        INX         H
+        INX         H
+        INX         H
+        INX         H
+        MOV         E,M             ; FCB + FCB_BUFLEN
+        INX         H
+        MOV         D,M
+        DCX         H
+        DCX         H
+        MOV         M,D             ; FCB + FCB_BUFIDX
+        DCX         H
+        MOV         M,E
+        POP         H
+        CALL        WRITE
+        JNC         outchar_blockline_type_5_end
+        INX         SP
+        INX         SP
+        JMP         outchar_return
+
+outchar_blockline_type_5_end:
+        POP         PSW
+        JMP         outchar_type_5_end
+
+outchar_normal_type_5:
+        ;
         ; Get data index and buffer length
         ;
+        POP         H
         PUSH        H
         INX         H
         INX         H
@@ -2631,6 +2942,10 @@ read_type_4_erase_char:
 ;//                 -> Adds write-protect attribute for output files to be written
 ;//                    as system files
 ;//
+;//             v1.5a:
+;//
+;//                 -> Fixes Intel close on empty linking-block bug from v1.3
+;//
 
 
 ;//////////////////////////////////////////////////////////////////////////////
@@ -2856,10 +3171,8 @@ intel_release_next_block:
         ;
         ; Advance to next block in buffer
         ;
-        LHLD        linking_block_ptr
-        LDA         linking_block_remaining_blocks
-        DCR         A
-        STA         linking_block_remaining_blocks
+        LXI         H,linking_block_remaining_blocks
+        DCR         M
         JNZ         intel_release_next_block
 intel_release_blocks_done:
         ;
@@ -3814,6 +4127,44 @@ intel_close_output:
         XCHG
         SHLD        intel_output_file_dir_entry_block_addr
         ;
+        ; Check if linking block is empty
+        ;
+        LHLD        current_fcb_plus_01EH
+        INX         H
+        MOV         A,M             ; FCB + FCB_LNKIDX
+        CPI         005H
+        JNC         intel_write_final_block
+        ;
+        ; If so, check if this is the first linking block
+        ;
+        INX         H
+        MOV         E,M             ; FCB + FCB_LNKPTR
+        INX         H
+        MOV         D,M
+        XCHG
+        MOV         A,M
+        INX         H
+        ORA         M
+        JNZ         intel_write_final_block
+        ;
+        ; If so, check if file is completely empty
+        ;
+        LHLD        CTLBLK
+        INX         H
+        INX         H
+        MOV         A,M             ; FCB + FCB_BUFIDX
+        INX         H
+        ORA         M
+        JNZ         intel_write_final_block
+        ;
+        ; If so, force block length to zero here as the write will be skipped
+        ;
+        INX         H
+        MVI         M,000H          ; FCB + FCB_BUFLEN
+        INX         H
+        MVI         M,000H
+intel_write_final_block:
+        ;
         ; Set block length to index before writing the last block
         ;
         LHLD        CTLBLK
@@ -4191,6 +4542,16 @@ T_STIMER:
 ;//                 -> Introduces a bug where the binary file mode flag is used in
 ;//                    place of the detect EOF file mode flag
 ;//
+;//             v1.5a:
+;//
+;//                 -> Clears block data-buffer entirely after WRITE and OPEN
+;//                 -> Checks for IBM end-of-file on OPEN, in case of empty file,
+;//                    but this implementation does not assume data in the file
+;//                    index record can be invalid
+;//                 -> Fixes the ASCII/EBCDIC flag bug from v1.3
+;//                 -> Fixes the EOE/EOD sector off-by-one bug from v1.3
+;//                 -> Fixes the EOF flag bug from v1.4
+;//
 
 
 ;//////////////////////////////////////////////////////////////////////////////
@@ -4392,8 +4753,11 @@ write_ibm_disk_record:
         ;
         PUSH        H
         LHLD        CTLBLK
-        INX         H
-        MOV         A,M             ; FCB + FCB_MODE
+        PUSH        D
+        LXI         D,FCB_DRVFMT
+        DAD         D
+        POP         D
+        MOV         A,M             ; FCB + FCB_DRVFMT
         POP         H
         ;
         ; Check for EBCDIC disk flag and use appropriate disk write call
@@ -4402,10 +4766,46 @@ write_ibm_disk_record:
         LDA         UNIT
         JNZ         write_ibm_ebcdic_sector
         CALL        DSWRW
-        RET
+        JMP         ibm_write_prepare_buffer
 
 write_ibm_ebcdic_sector:
         CALL        DSWAW
+
+
+;//////////////////////////////////////
+
+ibm_write_prepare_buffer:
+        ;
+        ; Save registers
+        ;
+        PUSH        PSW
+        PUSH        H
+        PUSH        D
+        ;
+        ; Point to block buffer
+        ;
+        LXI         D,FCB_BUFPTR
+        LHLD        CTLBLK
+        DAD         D
+        MOV         E,M             ; FCB + FCB_BUFPTR
+        INX         H
+        MOV         D,M
+        XCHG
+        ;
+        ; Clear IBM entire output buffer
+        ;
+        MVI         E,128
+ibm_write_clear_buffer_loop:
+        MVI         M,NULL
+        INX         H
+        DCR         E
+        JNZ         ibm_write_clear_buffer_loop
+        ;
+        ; Recover registers
+        ;
+        POP         D
+        POP         H
+        POP         PSW
         RET
 
 
@@ -4494,6 +4894,42 @@ ibm_file_index_error:
         CPI         ERROR_20
         JZ          check_next_ibm_file_index
         STC
+        RET
+
+
+;//////////////////////////////////////////////////////////////////////////////
+
+ibm_check_for_file_end:
+        ;
+        ; Get block address of next data block
+        ;
+        LHLD        current_fcb_plus_01EH
+        DCX         H
+        DCX         H
+        MOV         C,M             ; FCB + 01CH, sector of next data record
+        INX         H
+        MOV         B,M             ; FCB + 01DH, track of next data record
+        INX         H
+        ;
+        ; Check if at last block address of file
+        ;
+        MOV         A,M             ; FCB + 01EH, sector number of file tail
+        INX         H
+        CMP         C
+        RNZ
+        MOV         A,M             ; FCB + 01FH, track number of file tail
+        CMP         B
+        RNZ
+        ;
+        ; If so, set pending end-of-file flag
+        ;
+        PUSH        H
+        LHLD        CTLBLK
+        INX         H
+        MOV         A,M
+        ORI         FM_EOF_NEXT
+        MOV         M,A
+        POP         H
         RET
 
 
@@ -4621,6 +5057,16 @@ ibm_open_set_file_tail:
         CALL        ascii_decimal_2_digit_to_bin
         JC          ibm_operation_exception
         MOV         M,A             ; FCB + 01EH, sector number of file tail
+        ;
+        ; Use block before tailing block since fcb tailing block is inclusvie
+        ;
+        DCR         M
+        JNZ         ibm_open_file_tail_ready
+        MVI         M,26
+        INX         H
+        DCR         M
+        DCX         H
+ibm_open_file_tail_ready:
         INX         H
         INX         H
         ;
@@ -4638,6 +5084,29 @@ ibm_open_set_file_tail:
         ;
         LDA         ibm_current_file_sector
         MOV         M,A             ; FCB + 022H, sector number of file index
+        ;
+        ; Get pointer to block data buffer
+        ;
+        LHLD        CTLBLK
+        LXI         D,FCB_BUFPTR
+        DAD         D
+        MOV         E,M             ; FCB + FCB_BUFPTR
+        INX         H
+        MOV         D,M
+        ;
+        ; Clear IBM block buffer
+        ;
+        MVI         C,128
+        XRA         A
+ibm_open_clear_buffer_loop:
+        STAX        D
+        INX         D
+        DCR         C
+        JNZ         ibm_open_clear_buffer_loop
+        ;
+        ; Do final checks on opened file
+        ;
+        CALL        ibm_check_for_file_end
         JMP         ibm_operation_ok
 
 
@@ -4647,7 +5116,28 @@ ibm_open_set_file_tail:
         ; Open IBM file for output
         ;
 ibm_open_output:
-        JMP         ibm_open_file
+        CALL        ibm_open_file
+        RC
+        ;
+        ; Increase file tailing block nr, as this is exclusive for output files
+        ;
+        PUSH        H
+        PUSH        D
+        PUSH        PSW
+        LXI         D,01EH
+        DAD         D
+        INR         M               ; FCB + 01EH, sector number of file tail
+        MOV         A,M
+        CPI         27
+        JC          ibm_open_next_block_ready
+        MVI         M,1
+        INX         H
+        INR         M               ; FCB + 01FH, track number of file tail
+ibm_open_next_block_ready:
+        POP         PSW
+        POP         D
+        POP         H
+        RET
 
 
 ;//////////////////////////////////////////////////////////////////////////////
@@ -4656,37 +5146,7 @@ ibm_open_output:
         ; Advance to next data block in IBM 3740 type file
         ;
 ibm_advance_to_next_block:
-        ;
-        ; Get block address of next data block
-        ;
-        LHLD        current_fcb_plus_01EH
-        DCX         H
-        DCX         H
-        MOV         C,M             ; FCB + 01CH, sector of next data record
-        INX         H
-        MOV         B,M             ; FCB + 01DH, track of next data record
-        INX         H
-        ;
-        ; Check for if next data block is at the end of the file
-        ;
-        MOV         A,M             ; FCB + 01EH, sector number of file tail
-        INX         H
-        CMP         C
-        JNZ         ibm_advance_data_block
-        MOV         A,M             ; FCB + 01FH, track number of file tail
-        CMP         B
-        JNZ         ibm_advance_data_block
-        ;
-        ; If so, enable flag in file
-        ;
-        PUSH        H
-        LHLD        CTLBLK
-        INX         H
-        MOV         A,M
-        ORI         FM_BINARY
-        MOV         M,A
-        POP         H
-ibm_advance_data_block:
+        CALL        ibm_check_for_file_end
         ;
         ; Advance to next data-block in file and handle track overrun if needed
         ;
@@ -4770,7 +5230,7 @@ ibm_read_input:
         ;
         ; Check if the current block was the last block of the file
         ;
-        ANI         FM_BINARY
+        ANI         FM_EOF_NEXT
         JZ          ibm_not_end_of_file
 ibm_end_of_file:
         ;
@@ -4822,7 +5282,7 @@ ibm_write_output:
         ;
         ; Check if the current block was the last block of the file
         ;
-        ANI         FM_BINARY
+        ANI         FM_EOF_NEXT
         JNZ         ibm_end_of_file
         ;
         ; If not, write current block and continue to the next block
@@ -4964,6 +5424,11 @@ ibm_data_write_done:
 ;//                 -> Introduces a bug where closure of a tape output file does
 ;//                    not restore the stack, and returns to an addres from a data
 ;//                    register. This will likely cause a crash.
+;//
+;//             v1.5a:
+;//
+;//                 -> Fixes EOF flag bug from v1.4
+;//                 -> Fixes the output file CLOSE bug from v1.4
 ;//
 
 
@@ -5620,6 +6085,13 @@ file_directory_block_tape_mark_exists:
         LDA         UNIT
         CALL        CCAL
         JC          tape_operation_exception
+        ;
+        ; Restore registers
+        ;
+        POP         D
+        POP         B
+        POP         PSW
+        LHLD        CTLBLK
         JMP         device_driver_close_input_file
 
 
@@ -5772,7 +6244,7 @@ tape_read_input:
         LHLD        CTLBLK
         INX         H
         MOV         A,M
-        ANI         FM_BINARY
+        ANI         FM_EOF_NEXT
         JNZ         tape_read_detect_eof
         DCX         H
         ;
@@ -5843,7 +6315,7 @@ tape_read_input:
         LHLD        CTLBLK
         INX         H
         MOV         A,M
-        ORI         FM_BINARY
+        ORI         FM_EOF_NEXT
         MOV         M,A
         DCX         H
         ;
@@ -5925,6 +6397,11 @@ tape_read_no_end_when_expected:
 ;//             v1.3:
 ;//
 ;//                 -> First version I have
+;//
+;//             v1.5a:
+;//
+;//                 -> Returns error 30H instead of 2CH if a buffer entry type is
+;//                    not set correctly when buffer deallocation is run
 ;//
 
 
@@ -6014,10 +6491,10 @@ add_new_buffer:
         ; Subtract buffer size to point to first byte of new data buffer
         ;
         MOV         A,B
-        XRI         0FFH
+        CMA
         MOV         B,A
         MOV         A,C
-        XRI         0FFH
+        CMA
         MOV         C,A
         INX         B
         DAD         B
@@ -6076,7 +6553,10 @@ T_BUFDEALLOC:
         ;
         ; Raise exception if list entry status of buffer was not proper
         ;
+        MVI         A,ERROR_30
+        JMP         bufdealloc_exception
         MVI         A,ERROR_2C
+bufdealloc_exception:
         STC
 bufdealloc_end:
         POP         H
@@ -6164,11 +6644,6 @@ release_check_entry:
 ;//
 ;//                 -> First version I have
 ;//
-;//             v1.4:
-;//
-;//                 -> Quick-references to :LP:, :XM: and :RC: added
-;//                 -> Non-maintained constants removed
-;//
 
 
 ;//////////////////////////////////////////////////////////////////////////////
@@ -6223,7 +6698,8 @@ T_LOAD:
 ;//         to a complex linked file with several layers.
 ;//
 ;//         Files generated by PHYS is explicitly meant for the assigned abstract
-;//         files, and will have this flag set.
+;//         files, and will have this flag set. To generate general files from a
+;//         file-handle string, call PHYSINT instead.
 ;//
 ;//
 ;//         Changelog:
@@ -6237,28 +6713,34 @@ T_LOAD:
 ;//                 -> Adds the :CE: and :RE: files to the list of system devices
 ;//                    available for use
 ;//
+;//             v1.5a:
+;//
+;//                 -> Complete rewrite. Splits into a general part which creates a
+;//                    new file control block from a file-handle string, and a more
+;//                    specific part that prepares and validates the file-handle
+;//                    from the command line arguments
+;//                 -> Adds block-devices type :Bn: and :Jn: for IBM 3740 BLOCKLINE
+;//                    files
+;//                 -> Has a bug that PHYSINT will use the floppy/tape drive type
+;//                    byte in place of device format byte when generating a new
+;//                    block-device file control block
+;//                 -> Has a bug in PHYSINT where IBM files will pad out the ninth
+;//                    unused byte of the fcb filename field with a sequence of 256
+;//                    zeroes, overwriting a lot more memory than what is allocated
+;//                    to the file control block
+;//                 -> Has a bug in PHYSINT where the stack is not recovered before
+;//                    returning from an invalid filename, something that is likely
+;//                    to crash the system should the situation occur
+;//                 -> Has a bug where the filename overrun check for IBM filenames
+;//                    will not check the right character if the filename uses the
+;//                    full available filename length
+;//
 
 
 ;//////////////////////////////////////////////////////////////////////////////
 ;//
 ;//     Data and device file tables
 ;//
-;//////////////////////////////////////////////////////////////////////////////
-
-assignement_drive_nr:
-        DB          0
-phys_fcb_ptr:
-        DW          00000H
-first_linked_fcb_ptr:
-        DW          00000H
-phys_echo_file_flag:
-        DB          FALSE
-assignement_disk_format:
-        DB          000H
-assignement_fcb_file_operations_table:
-        DW          00000H
-
-
 ;//////////////////////////////////////////////////////////////////////////////
 
 system_device_list:
@@ -6285,225 +6767,732 @@ system_device_list:
 
 ;//////////////////////////////////////////////////////////////////////////////
 
-intel_driver_set_list:
+        ;
+        ; Parameter sets for the different supported block-device formats
+        ;
+        ; 000H      Drive designator identifier
+        ; 001H      File control block core size (excluding data buffers)
+        ; 002H      Combined length of all additional data buffers needed
+        ; 004H      Reference to device driver jump-table
+        ; 006H      Drive type (0 floppy, 1 tape)
+        ; 007H      Drive format (1 Intel or tape, 2 IBM 3740)
+        ; 008H      Reference to fcb setup-shim routine for PHYSINT
+        ;
+block_device_params_list:
 
         ;
-        ; Intel input device driver set
+        ; Intel floppy
         ;
-        DW          intel_read_input
-        DW          00000H
-        DW          intel_open_input
-        DW          intel_close_input
+        DB          'F'
+        DB          022H
+        DW          2*128
+        DW          TABIN
+        DB          0
+        DB          1
+        DW          intel_physint_setup
 
         ;
-        ; Intel output device driver set
+        ; IBM 3740 EBCDIC
         ;
-        DW          00000H
-        DW          intel_write_output
-        DW          intel_open_output
-        DW          intel_close_output
-
-
-;//////////////////////////////////////
-
-ibm_driver_set_list:
+        DB          'I'
+        DB          023H
+        DW          128
+        DW          TABIB
+        DB          0
+        DB          2 + DF_EBCDIC
+        DW          ibm_physint_setup
 
         ;
-        ; IBM 3740 input device driver set
+        ; Tape Cartridge
         ;
-        DW          ibm_read_input
-        DW          00000H
-        DW          ibm_open_input
-        DW          ibm_close_input
+        DB          'M'
+        DB          035H
+        DW          128 + 2
+        DW          TABTC
+        DB          1
+        DB          1
+        DW          tape_physint_setup
 
         ;
-        ; IBM 3740 output device driver set
+        ; IBM 3740 ASCII
         ;
-        DW          00000H
-        DW          ibm_write_output
-        DW          ibm_open_output
-        DW          ibm_close_output
-
-
-;//////////////////////////////////////
-
-tape_driver_set_list:
+        DB          'A'
+        DB          023H
+        DW          128
+        DW          TABIB
+        DB          0
+        DB          2
+        DW          ibm_physint_setup
 
         ;
-        ; Tape cartridge input device driver set
+        ; IBM 3740 ASCII Blockline
         ;
-        DW          tape_read_input
-        DW          00000H
-        DW          tape_open_input
-        DW          tape_close_input
+        DB          'B'
+        DB          023H
+        DW          128
+        DW          TABIB
+        DB          0
+        DB          2 + DF_BLKLINE
+        DW          ibm_physint_setup
 
         ;
-        ; Tape cartridge output device driver set
+        ; IBM 3740 EBCDIC Blockline
         ;
-        DW          00000H
-        DW          tape_write_output
-        DW          tape_open_output
-        DW          tape_close_output
+        DB          'J'
+        DB          023H
+        DW          128
+        DW          TABIB
+        DB          0
+        DB          2 + DF_BLKLINE + DF_EBCDIC
+        DW          ibm_physint_setup
+
+        DB          NULL
 
 
 ;//////////////////////////////////////////////////////////////////////////////
 ;//
-;//     File contro block generation routines
+;//     File contro block deallocation routines
 ;//
 ;//////////////////////////////////////////////////////////////////////////////
 
-recursive_linked_file_call:
         ;
-        ; Advance past structure-defining character to parse nested file
+        ; Deallocate file control block at HL
         ;
-        LHLD        CI_FCB
-        CALL        INCHAR
-        RC
+deallocate_assigned_file:
+        ;
+        ; Check that file was assigned on the command line
+        ;
+        INX         H
+        MOV         A,M             ; FCB + FCB_MODE
+        DCX         H
+        ANI         FM_ASSIGNED
+        RZ
+        ;
+        ; If so, check if the file has nested files
+        ;
+        MOV         A,M             ; FCB + FCB_TYPE
+        CPI         3
+        JZ          deallocate_linked_files
+        CPI         6
+        JZ          deallocate_linked_files
+deallocate_root_file:
+        CALL        BUFDEALLOC
+        RET
 
 
 ;//////////////////////////////////////
 
+deallocate_linked_files:
         ;
-        ; Parse file assignement string to generate a file control block.
-        ; This can be a file containing nested files, in a tree-like structure.
+        ; Get reference to first linked file
+        ;
+        PUSH        H
+        INX         H
+        INX         H
+        MOV         E,M             ; FCB + 002H, first nested file reference
+        INX         H
+        MOV         D,M
+        ;
+        ; Check if it is set, and deallocate it if so
+        ;
+        XCHG
+        MOV         A,H
+        ORA         L
+        CNZ         deallocate_assigned_file
+        POP         H
+        ;
+        ; Get reference to second linked file
+        ;
+        PUSH        H
+        INX         H
+        INX         H
+        INX         H
+        INX         H
+        MOV         E,M             ; FCB + 004H, second nested file reference
+        INX         H
+        MOV         D,M
+        ;
+        ; Check if it is set, and deallocate it if so
+        ;
+        XCHG
+        MOV         A,H
+        ORA         L
+        CNZ         deallocate_assigned_file
+        POP         H
+        JMP         deallocate_root_file
+
+
+;//////////////////////////////////////////////////////////////////////////////
+;//
+;//     Assignment file contro block generation routines
+;//
+;//////////////////////////////////////////////////////////////////////////////
+
+phys_file_nesting_layer_nr:
+        DS          1
+phys_file_handle_str:
+        DS          80
+phys_current_char:
+        DS          1
+phys_fcb_ptr:
+        DS          2
+
+
+;//////////////////////////////////////////////////////////////////////////////
+
+        ;
+        ; Parse file assignement string to generate a file-handle for PHYSINT,
+        ; which in turn generates the file. The file-handle is sanity-checked
+        ; as it is put together, and can be a file containing nested files,
+        ; in a tree-like structure.
         ;
 phys_generate_fcb_from_handle:
         ;
-        ; Set default file type to Intel block device file
+        ; Initialize local variables
         ;
-        PUSH        PSW
-        MVI         A,1
-        STA         assignement_disk_format
-        POP         PSW
-        LXI         H,intel_driver_set_list
-        SHLD        assignement_fcb_file_operations_table
-        ;
-        ; Check if a device is specified, if not assume linked structure syntax
-        ;
-        LHLD        CI_FCB
-        CPI         ':'
-        JNZ         phys_parse_node_structure
-        ;
-        ; In case of device, get and check first character of device name
-        ;
-        CALL        INCHAR
-        RC
-        LHLD        CI_FCB
-        CALL        check_alphanumeric
-        JC          phys_parse_nonblock_device
-        CALL        to_uppercase
-        CPI         'I'
-        JZ          phys_ibm_ebcdic_block_dev
-        CPI         'A'
-        JZ          phys_ibm_ascii_block_dev
-        CPI         'M'
-        JZ          phys_tape_block_dev
-        CPI         'F'
-        JNZ         phys_parse_nonblock_device
-        ;
-        ; Set up for explicitly specified Intel type block device file
-        ;
-        CALL        parse_device_nr
-        RC
-        STA         assignement_drive_nr
-        CALL        INCHAR
-        RC
-        JMP         phys_intel_block_dev
-
-phys_parse_node_structure:
-        ;
-        ; In case of not device, check for linked file structural definitions
-        ;
-        CPI         '('
-        JZ          phys_linked_file
-        CPI         '/'
-        JZ          phys_copy_assigned_file
-        CPI         ','
-        JZ          phys_return_none
-        CPI         CR
-        JZ          phys_return_none
-        ;
-        ; Otherwise, set up for default Intel type block device file
-        ;
-        PUSH        PSW
-        SUB         A
-        STA         assignement_drive_nr
-        POP         PSW
-
-
-;//////////////////////////////////////
-
-phys_intel_block_dev:
-        ;
-        ; Get filename of file to generate control block for
-        ;
-        LXI         D,FILNAM
-        CALL        FILENAME
-        RC
-        ;
-        ; Allocate space for new file control block
-        ;
-        PUSH        PSW
-        LXI         H,022H + 2*128
-        CALL        BUFALLOC
-        JC          phys_memory_error
+        LXI         H,00000H
         SHLD        phys_fcb_ptr
+        LXI         H,phys_file_nesting_layer_nr
+        MVI         M,000H
+        LXI         D,phys_file_handle_str
         ;
-        ; Save pointers to data buffer and linking block buffer on stack
+        ; Parse out a file-handle from cli arguments string and generate file
         ;
-        LXI         D,022H
-        DAD         D
-        PUSH        H
-        LXI         D,128
-        DAD         D
-set_up_file_common_fields:
-        PUSH        H
+phys_parse_char:
         ;
-        ; Set file type
+        ; Check next character for special meaning at the command line
         ;
-        LHLD        phys_fcb_ptr
-        MVI         M,5             ; FCB + FCB_TYPE
-        INX         H
-        PUSH        H
+        CPI         ','
+        JZ          phys_append_file
+        CPI         CR
+        JZ          phys_fcb_ready
+        CPI         ' '
+        JC          phys_invalid_drive_error
+        CPI         '$'
+        JZ          phys_fcb_ready
+        CPI         '&'
+        JZ          phys_flush_ci_input
+phys_add_filehandle_char:
         ;
-        ; Based on which TOS file is assigned, check if file is in- or output
+        ; Add character to file handle if it does not have special meaning
         ;
-        LDA         phys_echo_file_flag
+        STAX        D
+        INX         D
+        CPI         '('
+        JZ          phys_increase_linked_depth
+        CPI         ')'
+        JZ          phys_decrease_linked_depth
+phys_parse_next_char:
+        ;
+        ; Get next character from command line arguments
+        ;
+        LHLD        CI_FCB
+        CALL        INCHAR
+        RC
+        JMP         phys_parse_char
+
+phys_increase_linked_depth:
+        ;
+        ; Increase current nested layer of the file handle
+        ;
+        LXI         H,phys_file_nesting_layer_nr
+        INR         M
+        JMP         phys_parse_next_char
+
+phys_decrease_linked_depth:
+        ;
+        ; Decrease current nested layer of the file handle
+        ;
+        LXI         H,phys_file_nesting_layer_nr
+        MOV         A,M
+        DCR         M
+        ;
+        ; Check for underrun, all closing brackets must have an opening bracket
+        ;
         ANA         A
-        JNZ         fcb_for_output_file
+        JNZ         phys_parse_next_char
+phys_invalid_drive_error:
+        MVI         A,ERROR_2D
+        STC
+        RET
+
+phys_flush_ci_input:
+        ;
+        ; Flush the remaining line from console input
+        ;
+phys_flush_next_char:
+        LHLD        CI_FCB
+        CALL        INCHAR
+        RC
+        CPI         CR
+        JNZ         phys_flush_next_char
+        ;
+        ; Get next character from command line arguments
+        ;
+        CALL        INCHAR
+        RC
+        JMP         phys_parse_char
+
+phys_append_file:
+        ;
+        ; Verify we are inside a linked file before specifying nested files
+        ;
+        LXI         H,phys_file_nesting_layer_nr
+        MOV         A,M
+        ANA         A
+        MVI         A,','
+        JZ          phys_fcb_ready
+        JMP         phys_add_filehandle_char
+
+phys_fcb_ready:
+        STA         phys_current_char
+        ;
+        ; Verify that all linked files in file handle have been proper closures
+        ;
+        LXI         H,phys_file_nesting_layer_nr
+        MOV         A,M
+        ANA         A
+        JNZ         phys_invalid_drive_error
+        ;
+        ; Terminate file handle string with a cartridge return
+        ;
+        MVI         A,CR
+        STAX        D
+        LXI         H,phys_file_handle_str
+        ;
+        ; Get open mode of file, depending on the current abstract file number
+        ;
         LDA         current_tos_abstract_file_nr
+        CPI         1
+        JZ          fcb_for_input_file
         CPI         3
         JZ          fcb_for_input_file
         CPI         6
         JZ          fcb_for_input_file
-        CPI         1
-        JZ          fcb_for_input_file
-fcb_for_output_file:
-        ;
-        ; Set up for output file control block
-        ;
-        MVI         A,FM_ASSIGNED + FM_OUTPUT
-        LHLD        assignement_fcb_file_operations_table
-        LXI         B,4*002H
-        DAD         B
-        JMP         set_disk_fcb_fields
+        MVI         A,1
+        JMP         phys_file_mode_ready
 
 fcb_for_input_file:
+        SUB         A
+phys_file_mode_ready:
         ;
-        ; Set up for input file control block
+        ; Generate file from prepared file handle, using PHYSINT
         ;
-        MVI         A,FM_ASSIGNED + FM_INPUT
-        LHLD        assignement_fcb_file_operations_table
-set_disk_fcb_fields:
+        CALL        T_PHYSINT
+        RC
+        SHLD        phys_fcb_ptr
         ;
-        ; Save pointer to relevant device driver structure
+        ; Verify that the whole file handle was parsed to generate the file
         ;
-        MOV         B,H
-        MOV         C,L
+        LDA         physint_current_char
+        CPI         CR
+        JNZ         phys_incomplete_file_handle
+        LDA         phys_current_char
+        ANA         A
+        RET
+
+phys_incomplete_file_handle:
         ;
-        ; Set fields of file control block
+        ; If only parts of handle was used to make the file, abort making it
+        ;
+        CALL        deallocate_assigned_file
+        JMP         phys_invalid_drive_error
+
+
+;//////////////////////////////////////////////////////////////////////////////
+;//
+;//     General purpose file contro block generation routines
+;//
+;//////////////////////////////////////////////////////////////////////////////
+
+physint_file_handle_ptr:
+        DS          2
+physint_file_open_mode:
+        DS          1
+physint_drive_number:
+        DS          1
+physint_current_char:
+        DS          1
+block_device_params_list_ptr:
+        DS          2
+physint_device_format:
+        DS          1
+physint_recursion_counter:
+        DS          1
+
+
+;//////////////////////////////////////////////////////////////////////////////
+
+        ;
+        ; Convert ASCII character in A to uppercase
+        ;
+physint_to_uppercase:
+        CPI         'a'
+        RC
+        CPI         'z'+1
+        RNC
+        SUI         'a' - 'A'
+        RET
+
+
+;//////////////////////////////////////////////////////////////////////////////
+
+        ;
+        ; Get next character from file handle string
+        ;
+get_next_filehandle_char:
+        ;
+        ; Get next character from file handle, after any potential whitespace
+        ;
+        PUSH        H
+        LHLD        physint_file_handle_ptr
+file_handle_skip_whitespace_loop:
+        MOV         A,M
+        INX         H
+        CPI         ' '
+        JZ          file_handle_skip_whitespace_loop
+        SHLD        physint_file_handle_ptr
+        STA         physint_current_char
+        POP         H
+        RET
+
+
+;//////////////////////////////////////////////////////////////////////////////
+
+        ;
+        ; Generate a file control block from a file handle string at HL
+        ;
+T_PHYSINT:
+        ;
+        ; Set up pointers and reset nested file depth
+        ;
+        SHLD        physint_file_handle_ptr
+        PUSH        PSW
+        SUB         A
+        STA         physint_recursion_counter
+        POP         PSW
+recursive_linked_file_call:
+        ;
+        ; Increase nested file depth and swap to requested file open mode
+        ;
+        MOV         B,A
+        LDA         physint_recursion_counter
+        INR         A
+        STA         physint_recursion_counter
+        LDA         physint_file_open_mode
+        PUSH        PSW
+        MOV         A,B
+        STA         physint_file_open_mode
+        ;
+        ; Get the first character of file handle, check for linked file
+        ;
+        CALL        get_next_filehandle_char
+        CPI         '('
+        JNZ         physint_non_linked_file
+        ;
+        ; If so, generate the first nested file
+        ;
+        LDA         physint_file_open_mode
+        CALL        recursive_linked_file_call
+        JC          physint_exception
+        XCHG
+        ;
+        ; Validate linked file deliminator
+        ;
+        LDA         physint_current_char
+        CPI         '/'
+        JZ          physint_valid_linked_file
+        CPI         ','
+        JZ          physint_valid_linked_file
+        ;
+        ; Invalid linked file deliminator, cancel file generation
+        ;
+        XCHG
+physint_exception_after_alloc:
+        ;
+        ; Error parsing file handle, release the buffers claimed this far
+        ;
+        CALL        deallocate_assigned_file
+physint_exception:
+        POP         PSW
+        STA         physint_file_open_mode
+        MVI         A,ERROR_2D
+        STC
+        RET
+
+physint_valid_linked_file:
+        PUSH        D
+        PUSH        PSW
+        ;
+        ; Check linked file deliminator for the file being a normal linked file
+        ;
+        CPI         ','
+        LDA         physint_file_open_mode
+        JZ          second_linked_file_mode_ready
+        ;
+        ; If not, assume echo file: Prepare the second linked file as an output
+        ;
+        MVI         A,1
+second_linked_file_mode_ready:
+        ;
+        ; Generate the second linked file
+        ;
+        CALL        recursive_linked_file_call
+        JNC         physint_linked_files_valid
+physint_linked_file_failed:
+        ;
+        ; On failure here, release the first nested file that still was made
         ;
         POP         H
+        POP         H
+        JMP         physint_exception_after_alloc
+
+physint_linked_files_valid:
+        ;
+        ; Validate linked file closure in the file handle and advance cursor
+        ;
+        PUSH        H
+        LDA         physint_current_char
+        CPI         ')'
+        JNZ         invalid_linked_file_handle
+        CALL        get_next_filehandle_char
+        ;
+        ; Allocate buffer for the linked file
+        ;
+        LXI         H,006H
+        CALL        BUFALLOC
+        JNC         assemble_linked_file_fcb
+invalid_linked_file_handle:
+        ;
+        ; Error making linked file, release both nested files that were made
+        ;
+        POP         H
+        POP         PSW
+        PUSH        PSW
+        CALL        deallocate_assigned_file
+        POP         H
+        JMP         physint_linked_file_failed
+
+assemble_linked_file_fcb:
+        ;
+        ; Set second nested file of linked file control block
+        ;
+        LXI         D,005H
+        DAD         D
+        POP         B
+        MOV         M,B             ; FCB + 005H, second nested file (msb)
+        DCX         H
+        MOV         M,C
+        DCX         H
+        ;
+        ; Set first nested file of linked file control block
+        ;
+        POP         PSW
+        POP         B
+        MOV         M,B             ; FCB + 003H, first nested file (msb)
+        DCX         H
+        MOV         M,C
+        DCX         H
+        ;
+        ; Set file mode
+        ;
+        PUSH        PSW
+        LDA         physint_file_open_mode
+        INR         A
+        ORI         FM_ASSIGNED
+        MOV         M,A             ; FCB + FCB_MODE
+        POP         PSW
+        ;
+        ; Set linked file type depending on deliminator
+        ;
+        DCX         H
+        MVI         B,6
+        CPI         ','
+        JZ          linked_file_fcb_type_ready
+        MVI         B,3
+linked_file_fcb_type_ready:
+        MOV         M,B
+        POP         PSW
+        JMP         physint_fcb_made
+
+
+;//////////////////////////////////////
+
+physint_non_linked_file:
+        ;
+        ; Set default drive number to drive 0
+        ;
+        SUB         A
+        STA         physint_drive_number
+        ;
+        ; Check first character of file handle to determine course of action
+        ;
+        LDA         physint_current_char
+        CPI         '/'
+        JZ          physint_get_referenced_file
+        CPI         ':'
+        JNZ         physint_default_drive_block_device
+        ;
+        ; Device designator or device file specified, get it into BC
+        ;
+        CALL        get_next_filehandle_char
+        CALL        physint_to_uppercase
+        MOV         B,A
+        CALL        get_next_filehandle_char
+        CALL        physint_to_uppercase
+        MOV         C,A
+        ;
+        ; Scan through list of known device files and scan for device
+        ;
+        LXI         H,system_device_list
+check_device_file:
+        ;
+        ; Check for end of known device files list
+        ;
+        MOV         A,M
+        INX         H
+        ANA         A
+        JZ          physint_not_device_file
+        ;
+        ; Compare first character of name
+        ;
+        CMP         B
+        JNZ         check_next_device_file
+        ;
+        ; Compare second character of name
+        ;
+        MOV         A,M
+        CMP         C
+        JZ          device_file_found
+check_next_device_file:
+        ;
+        ; Not match, check against next known file from the list
+        ;
+        LXI         D,003H
+        DAD         D
+        JMP         check_device_file
+
+device_file_found:
+        ;
+        ; Verify closing semicolon at the end of device file in file handle
+        ;
+        CALL        get_next_filehandle_char
+        CPI         ':'
+        JNZ         physint_exception
+        CALL        get_next_filehandle_char
+        ;
+        ; Get and select pointer to device file
+        ;
+        INX         H
+get_file_from_reference:
+        ;
+        ; Get pre-existing file from reference
+        ;
+        MOV         E,M
+        INX         H
+        MOV         D,M
+        XCHG
+        POP         PSW
+        STA         physint_file_open_mode
+        JMP         physint_fcb_made
+
+
+;//////////////////////////////////////
+
+physint_not_device_file:
+        ;
+        ; Scan list of block-device formats for the appropriate parameter set
+        ;
+        LXI         H,block_device_params_list
+physint_get_device_type_specs_loop:
+        ;
+        ; Check for end of the list
+        ;
+        MOV         A,M
+        ANA         A
+        JZ          physint_exception
+        ;
+        ; Check if this is the parameter set for the format specified
+        ;
+        CMP         B
+        JZ          physint_block_device_format_ready
+        ;
+        ; Advance to next item in list of block-device format parameter-sets
+        ;
+        LXI         D,00AH
+        DAD         D
+        JMP         physint_get_device_type_specs_loop
+
+physint_default_drive_block_device:
+        ;
+        ; Select first format of parameter set list as default (Intel floppy)
+        ;
+        LXI         H,block_device_params_list
+        SHLD        block_device_params_list_ptr
+        JMP         physint_block_device
+
+physint_block_device_format_ready:
+        SHLD        block_device_params_list_ptr
+        ;
+        ; Verify closing semicolon at the end of drive designator in handle
+        ;
+        CALL        get_next_filehandle_char
+        CPI         ':'
+        JNZ         physint_exception
+        ;
+        ; Parse and verify drive number
+        ;
+        MOV         A,C
+        CPI         '0'
+        JC          physint_exception
+        CPI         '4'
+        JNC         physint_exception
+        SUI         '0'
+        STA         physint_drive_number
+        CALL        get_next_filehandle_char
+
+
+;//////////////////////////////////////
+
+physint_block_device:
+        ;
+        ; Get size of file control block core structure
+        ;
+        LHLD        block_device_params_list_ptr
+        INX         H
+        MOV         C,M
+        INX         H
+        ;
+        ; Get block length
+        ;
+        MOV         E,M
+        INX         H
+        MOV         D,M
+        INX         H
+        SHLD        block_device_params_list_ptr
+        ;
+        ; Reserve a buffer for core file structure and one block data-buffer
+        ;
+        XCHG
+        MVI         B,000H
+        DAD         B
+        CALL        BUFALLOC
+        JNC         physint_assemble_block_device_fcb
+        INX         SP
+        INX         SP
+        STC
+        RET
+
+physint_assemble_block_device_fcb:
+        ;
+        ; Set fields of block-device file control block
+        ;
+        PUSH        H
+        MVI         M,5             ; FCB + FCB_TYPE
+        INX         H
+        LDA         physint_file_open_mode
+        INR         A
+        ORI         FM_ASSIGNED
         MOV         M,A             ; FCB + FCB_MODE
         INX         H
         MVI         M,000H          ; FCB + FCB_BUFIDX
@@ -6514,469 +7503,481 @@ set_disk_fcb_fields:
         INX         H
         MVI         M,000H
         INX         H
-        POP         D
+        ;
+        ; Add file control block size to start of fcb for start of data buffer
+        ;
+        XCHG
+        POP         H
+        PUSH        H
+        DAD         B
+        XCHG
         MOV         M,E             ; FCB + FCB_BUFPTR
         INX         H
         MOV         M,D
         INX         H
         ;
-        ; Copy relevant device driver structure into file control block
+        ; Get pointer to reference of the appropriate device driver jump table
         ;
-        MVI         D,4*002H
-copy_device_driver_ptrs_loop:
-        LDAX        B
-        MOV         M,A
-        INX         B
+        XCHG
+        LHLD        block_device_params_list_ptr
+        MOV         C,M
         INX         H
-        DCR         D
-        JNZ         copy_device_driver_ptrs_loop
-        ;
-        ; Set block-device type to disk and also set drive nr
-        ;
-        MVI         M,000H          ; FCB + FCB_DEVTYP
+        MOV         B,M
         INX         H
-        LDA         assignement_drive_nr
-        MOV         M,A             ; FCB + FCB_DRVNR
+        SHLD        block_device_params_list_ptr
+        MOV         H,B
+        MOV         L,C
+        ;
+        ; Get reference to the appropriate device driver jump table
+        ;
+        MOV         C,M
         INX         H
+        MOV         B,M
         ;
-        ; Copy filename into file-control block
+        ; Set file control block READ device driver call
         ;
-        LXI         B,FILNAM
-        MVI         D,9
-phys_disk_copy_filename_loop:
-        LDAX        B
-        MOV         M,A
-        INX         B
-        INX         H
-        DCR         D
-        JNZ         phys_disk_copy_filename_loop
-        ;
-        ; Set drive format and pointer to linking block buffer
-        ;
-        LDA         assignement_disk_format
-        MOV         M,A             ; FCB + FCB_DRVFMT
-        LXI         D,FCB_LNKPTR - FCB_DRVFMT
-        DAD         D
-        POP         D
-        MOV         M,E             ; FCB + FCB_LNKPTR
+        LXI         H,TAB_READ_I
+        DAD         B
+        XCHG
+        MOV         M,E             ; FCB + FCB_READ
         INX         H
         MOV         M,D
-        POP         PSW
-        JMP         phys_disk_fcb_ready
+        INX         H
+        XCHG
+        ;
+        ; Set file control block WRITE device driver call
+        ;
+        LXI         H,TAB_WRITE_O
+        DAD         B
+        XCHG
+        MOV         M,E             ; FCB + FCB_WRITE
+        INX         H
+        MOV         M,D
+        INX         H
+        XCHG
+        ;
+        ; Set file control block OPEN device driver call
+        ;
+        LXI         H,TAB_OPEN_O
+        LDA         physint_file_open_mode
+        ANA         A
+        JNZ         physint_open_routine_ready
+        LXI         H,TAB_OPEN_I
+physint_open_routine_ready:
+        DAD         B
+        XCHG
+        MOV         M,E             ; FCB + FCB_OPEN
+        INX         H
+        MOV         M,D
+        INX         H
+        XCHG
+        ;
+        ; Set file control block CLOSE device driver call
+        ;
+        LXI         B,TAB_CLOSE - TAB_OPEN
+        DAD         B
+        XCHG
+        MOV         M,E             ; FCB + FCB_CLOSE
+        INX         H
+        MOV         M,D
+        INX         H
+        XCHG
+        ;
+        ; Set device type
+        ;
+        LHLD        block_device_params_list_ptr
+        MOV         A,M
+        INX         H
+        SHLD        block_device_params_list_ptr
+        STAX        D               ; FCB + FCB_DEVTYP
+        STA         physint_device_format
+        INX         D
+        ;
+        ; Set device number
+        ;
+        LDA         physint_drive_number
+        STAX        D               ; FCB + FCB_DRVNR
+        INX         D               ; FCB + FCB_FNAME
+        ;
+        ; Select filename length depending on device format (Intel/Tape vs IBM)
+        ;
+        LXI         B,00603H
+        LDA         physint_device_format
+        ANI         002H
+        JZ          physint_get_fiename
+        LXI         B,00800H
+physint_get_fiename:
+        ;
+        ; Parse and validate filename
+        ;
+        LDA         physint_current_char
+check_filename_char:
+        ;
+        ; Check for the end of the first part of the filename
+        ;
+        CPI         '.'
+        JZ          physint_main_filename_ready
+        CPI         '/'
+        JZ          physint_non_ext_filename_ready
+        CPI         ','
+        JZ          physint_non_ext_filename_ready
+        CPI         ')'
+        JZ          physint_non_ext_filename_ready
+        CPI         CR
+        JZ          physint_non_ext_filename_ready
+        ;
+        ; Validate filename character
+        ;
+        CPI         '0'
+        JC          physint_invalid_filename
+        CPI         '9'+1
+        JC          physint_valid_filename_char
+        CPI         'A'
+        JC          physint_invalid_filename
+        CPI         'Z'+1
+        JC          physint_valid_filename_char
+        CPI         'a'
+        JC          physint_invalid_filename
+        CPI         'z'+1
+        JC          physint_valid_filename_char
+physint_invalid_filename:
+        JMP         physint_exception_after_alloc
 
+physint_valid_filename_char:
+        ;
+        ; Add main filename character to the file control block filename
+        ;
+        STAX        D
+        ;
+        ; Advance to the next character and check if main filename is full
+        ;
+        INX         D
+        DCR         B
+        JZ          physint_main_filename_full
+        CALL        get_next_filehandle_char
+        JMP         check_filename_char
 
-;//////////////////////////////////////
+physint_main_filename_full:
+        ;
+        ; Check if a filename extension is expected
+        ;
+        LDA         physint_device_format
+        ANI         002H
+        JNZ         physint_no_filename_ext
+        ;
+        ; If so, check if a filename extension is specified in the file handle
+        ;
+        CALL        get_next_filehandle_char
+        CPI         '.'
+        JZ          physint_check_file_extension_char
+physint_no_filename_ext:
+        ;
+        ; Verify proper file handle syntax after filename
+        ;
+        CPI         ','
+        JZ          physint_filename_ready
+        CPI         ')'
+        JZ          physint_filename_ready
+        CPI         '/'
+        JZ          physint_filename_ready
+        CPI         CR
+        JZ          physint_filename_ready
+        JMP         physint_invalid_filename
 
-phys_ibm_ascii_block_dev:
+physint_main_filename_ready:
         ;
-        ; Prepare for IBM ASCII format block device file
+        ; Pad out remaining characters in main part of filename
         ;
-        MVI         A,2
-        JMP         phys_set_ibm_disk_format
+physint_pad_filename_loop:
+        MVI         A,NULL
+        STAX        D
+        INX         D
+        DCR         B
+        JNZ         physint_pad_filename_loop
+        ;
+        ; Parse and validate filename extension
+        ;
+physint_check_file_extension_char:
+        CALL        get_next_filehandle_char
+        ;
+        ; Check for the end of the filename extension
+        ;
+        CPI         ','
+        JZ          physint_filename_ready
+        CPI         '/'
+        JZ          physint_filename_ready
+        CPI         ')'
+        JZ          physint_filename_ready
+        CPI         CR
+        ;
+        ; Validate filename extension character
+        ;
+        JZ          physint_filename_ready
+        CPI         '0'
+        JC          physint_invalid_filename
+        CPI         '9'+1
+        JC          physint_valid_file_ext_char
+        CPI         'A'
+        JC          physint_invalid_filename
+        CPI         'Z'+1
+        JC          physint_valid_file_ext_char
+        CPI         'a'
+        JC          physint_invalid_filename
+        CPI         'z'+1
+        JNC         physint_invalid_filename
+physint_valid_file_ext_char:
+        ;
+        ; Add filename extension character to the file control block filename
+        ;
+        STAX        D
+        ;
+        ; Advance to the next character and check if filename extension is full
+        ;
+        INX         D
+        DCR         C
+        JNZ         physint_check_file_extension_char
+        CALL        get_next_filehandle_char
+        JMP         physint_file_extension_full
 
-phys_ibm_ebcdic_block_dev:
+physint_non_ext_filename_ready:
         ;
-        ; Prepare for IBM EBCDIC format block device file and verify conv table
+        ; Pad out remaining characters in extensionless filename
         ;
-        LHLD        ASCI
-        MOV         A,H
-        ORA         L
-        MVI         A,2 + DF_EBCDIC
-        JNZ         phys_set_ibm_disk_format
+physint_pad_non_ext_filename_loop:
+        MVI         A,NULL
+        STAX        D
+        INX         D
+        DCR         B
+        JNZ         physint_pad_non_ext_filename_loop
+physint_filename_ready:
         ;
-        ; If translation tables are not in place, raise exception
+        ; Pad out remaining characters in file extension
         ;
-        MVI         A,ERROR_12
-        STC
+physint_pad_file_extension_loop:
+        MVI         A,NULL
+        STAX        D
+        INX         D
+        DCR         C
+        JNZ         physint_pad_file_extension_loop
+physint_file_extension_full:
         ;
-        ; But first de-allocate file
+        ; Verify proper file handle syntax after filename
         ;
-        PUSH        PSW
-        LHLD        phys_fcb_ptr
-        CALL        T_BUFDEALLOC
-        POP         PSW
+        LDA         physint_current_char
+        CPI         ','
+        JZ          physint_filename_done
+        CPI         '/'
+        JZ          physint_filename_done
+        CPI         ')'
+        JZ          physint_filename_done
+        CPI         CR
+        JZ          physint_filename_done
+        JMP         physint_invalid_filename
+
+physint_filename_done:
+        ;
+        ; Setup stack for format specific setup shim routine call
+        ;
+        LXI         H,physint_device_setup_return
+        PUSH        H
+        ;
+        ; Set drive format
+        ;
+        LHLD        block_device_params_list_ptr
+        MOV         A,M
+        STAX        D               ; FCB + FCB_DRVFMT
+        INX         D
+        INX         H
+        ;
+        ; Get setup shim routine pointer, push it and call it from stack
+        ;
+        MOV         C,M
+        INX         H
+        MOV         H,M
+        MOV         L,C
+        PUSH        H
+        XCHG
         RET
 
-phys_set_ibm_disk_format:
-        STA         assignement_disk_format
-        LXI         H,ibm_driver_set_list
-        SHLD        assignement_fcb_file_operations_table
-        ;
-        ; Get drive number and skip past : at the end of the drive designator
-        ;
-        CALL        parse_device_nr
-        RC
-        STA         assignement_drive_nr
-        LHLD        CI_FCB
-        CALL        INCHAR
-        RC
-        ;
-        ; Get filename of file to generate control block for
-        ;
-        LXI         D,FILNAM
-        CALL        IBFIL
-        RC
-        ;
-        ; Allocate space for new file control block
-        ;
-        PUSH        PSW
-        LXI         H,023H + 128
-        CALL        BUFALLOC
-        JC          phys_memory_error
-        SHLD        phys_fcb_ptr
-        ;
-        ; Save pointers to data buffer on stack
-        ;
-        LXI         D,023H
-        DAD         D
-        PUSH        H
-        JMP         set_up_file_common_fields
-
-
-;//////////////////////////////////////
-
-phys_memory_error:
-        ;
-        ; Restore stack, flush CI and return
-        ;
+physint_device_setup_return:
         POP         H
-        PUSH        PSW
-        PUSH        H
         POP         PSW
-        CALL        flush_ci_input
-        POP         PSW
-        RET
+        JMP         physint_fcb_made
 
 
 ;//////////////////////////////////////
 
-invalid_drive_error:
-        CALL        flush_ci_input
+physint_get_referenced_file:
+        ;
+        ; Get coarse index for abstract file based on first character of name
+        ;
+        MVI         C,0
+        CALL        get_next_filehandle_char
+        CALL        physint_to_uppercase
+        CPI         'C'
+        JZ          reference_console_file
+        MVI         C,2
+        CPI         'S'
+        JZ          reference_standard_file
+        MVI         C,5
+        CPI         'A'
+        JNZ         physint_exception
+
+reference_standard_file:
+        ;
+        ; Get final index for abstract file based on second character of name
+        ;
+        CALL        get_next_filehandle_char
+        CALL        physint_to_uppercase
+        CPI         'I'
+        JZ          reference_input_file
+        INR         C
+        CPI         'O'
+        JZ          reference_output_file
+        INR         C
+        CPI         'L'
+        JNZ         physint_exception
+
+
+;//////////////////////////////////////
+
+reference_output_file:
+        ;
+        ; Verify that file open mode is indeed output
+        ;
+        LDA         physint_file_open_mode
+        CPI         1
+        JNZ         physint_exception
+get_assignment_reference_ptr:
+        ;
+        ; Get pointer to previously assigned abstract file
+        ;
+        MOV         L,C
+        MVI         H,000H
+        DAD         H
+        LXI         D,DEVTAB
+        DAD         D
+        JMP         get_file_from_reference
+
+reference_input_file:
+        ;
+        ; Verify that file open mode is indeed input
+        ;
+        LDA         physint_file_open_mode
+        ANA         A
+        JNZ         physint_exception
+        JMP         get_assignment_reference_ptr
+
+
+;//////////////////////////////////////
+
+reference_console_file:
+        ;
+        ; Get coarse index for abstract file based on first character of name
+        ;
+        CALL        get_next_filehandle_char
+        CALL        physint_to_uppercase
+        CPI         'I'
+        JZ          reference_input_file
+        INR         C
+        CPI         'O'
+        JZ          reference_output_file
+        JMP         physint_exception
+
+
+;//////////////////////////////////////
+
+physint_fcb_made:
+        ;
+        ; Decrease nested file depth and check if this is the root node file
+        ;
+        PUSH        PSW
+        LDA         physint_recursion_counter
+        DCR         A
+        STA         physint_recursion_counter
+        JNZ         physint_success
+        ;
+        ; If root node, verify that the whole file-handle has been parsed
+        ;
+        LDA         physint_current_char
+        CPI         CR
+        JZ          physint_success
+        ;
+        ; Otherwise release buffers of file and raise an exception
+        ;
+        CALL        deallocate_assigned_file
+        POP         PSW
         MVI         A,ERROR_2D
         STC
         RET
 
-
-;//////////////////////////////////////
-
-phys_tape_block_dev:
+physint_success:
         ;
-        ; Get drive number and skip past : at the end of the drive designator
+        ; Recover file open mode for parent file
         ;
-        CALL        parse_device_nr
-        RC
-        STA         assignement_drive_nr
-        CALL        INCHAR
-        RC
-        ;
-        ; Get filename of file to generate control block for
-        ;
-        LXI         D,FILNAM
-        CALL        FILENAME
-        RC
-        ;
-        ; Allocate space for new file control block
-        ;
-        PUSH        PSW
-        LXI         H,033H + 128 + 2
-        CALL        BUFALLOC
-        JC          phys_memory_error
-        SHLD        phys_fcb_ptr
-        LXI         H,tape_driver_set_list
-        SHLD        assignement_fcb_file_operations_table
-        ;
-        ; Save pointers to data buffer on stack
-        ;
-        LXI         D,033H
-        LHLD        phys_fcb_ptr
-        DAD         D
-        PUSH        H
-        ;
-        ; Calculate and set pointer to overflow bytes
-        ;
-        LXI         D,FCB_OVRPTR
-        LHLD        phys_fcb_ptr
-        DAD         D
-        XCHG
-        POP         H
-        PUSH        H
-        PUSH        B
-        LXI         B,128
-        DAD         B
-        POP         B
-        XCHG
-        MOV         M,E
-        INX         H
-        MOV         M,D
-        POP         H
-        PUSH        H
-        JMP         set_up_file_common_fields
-
-
-;//////////////////////////////////////
-
-phys_return_none:
-        ;
-        ; No file to return, potentially the end of a branch of linked files
-        ;
-        LXI         H,00000H
-        SHLD        phys_fcb_ptr
+        POP         PSW
         ANA         A
         RET
 
 
-;//////////////////////////////////////
+;//////////////////////////////////////////////////////////////////////////////
 
-phys_copy_assigned_file:
+intel_physint_setup:
         ;
-        ; Get abstract file nr from name
+        ; Set pointer to linking block buffer
         ;
-        CALL        get_tos_abstract_file_nr
-        RC
-        ANA         A
-        JZ          not_in_file_assignement
-        ;
-        ; Get pointer to previously assigned abstract file
-        ;
-        SUI         1
-        MOV         C,A
-        MVI         B,000H
-        LXI         H,DEVTAB
-        DAD         B
-        DAD         B
-        ;
-        ; Get file referenced by previously assigned abstract file
-        ;
-        MOV         E,M
         INX         H
-        MOV         D,M
+        INX         H
+        INX         H
+        INX         H
         XCHG
-        SHLD        phys_fcb_ptr
-        JMP         phys_file_ready
-
-not_in_file_assignement:
-        MVI         A,'$'
-        JMP         invalid_drive_error
-
-
-;//////////////////////////////////////
-
-phys_linked_file:
-        ;
-        ; Generate first nested file of linked file
-        ;
-        CALL        recursive_linked_file_call
-        RC
-        ;
-        ; Check if there is a second nested file and generate it if so
-        ;
-        CPI         ')'
-        JNZ         phys_linked_file_parse_second_part
-phys_file_ready:
-        LHLD        CI_FCB
-        CALL        INCHAR
-        RC
-phys_disk_fcb_ready:
+        LXI         H,128 + (022H - FCB_LNKPTR)
+        DAD         D
+        XCHG
+        MOV         M,E             ; FCB + FCB_LNKPTR
+        INX         H
+        MOV         M,D
         ANA         A
         RET
 
 
-;//////////////////////////////////////
+;//////////////////////////////////////////////////////////////////////////////
 
-phys_linked_file_parse_second_part:
+ibm_physint_setup:
         ;
-        ; Check if second nested file is an echo file
+        ; Replace any null characters in IBM filename with spaces
         ;
-        CPI         '/'
-        JNZ         phys_linked_file_ordinary_second_part
-        ;
-        ; Set echo file flag for the second nested file, to force output mode
-        ;
-        MVI         A,TRUE
-        STA         phys_echo_file_flag
-        ;
-        ; Generate second nested file of linked file
-        ;
-        LHLD        phys_fcb_ptr
-        PUSH        H
-        CALL        recursive_linked_file_call
-        POP         H
-        RC
-        ;
-        ; Verify end of linked file definition
-        ;
-        CPI         ')'
-        JNZ         invalid_drive_error
-        ;
-        ; Reset echo file flag and prepare for assembling the echo file
-        ;
-        PUSH        PSW
-        SUB         A
-        STA         phys_echo_file_flag
-        SHLD        first_linked_fcb_ptr
-        ;
-        ; Allocate memory for echo file
-        ;
-        LXI         H,006H
-        CALL        BUFALLOC
-        JC          phys_memory_error
-        POP         PSW
-        ;
-        ; Set file type and mode of echo file
-        ;
-        PUSH        H
-        MVI         M,3             ; FCB + FCB_TYPE
-        INX         H               ; FCB + FCB_MODE
-        MVI         M,FM_ASSIGNED + FM_INPUT
-assemble_linked_file_fcb:
-        INX         H
-        XCHG
-        LHLD        first_linked_fcb_ptr
-        XCHG
-        MOV         M,E             ; FCB + 002H, first nested file reference
-        INX         H
-        MOV         M,D
-        INX         H
-        XCHG
-        LHLD        phys_fcb_ptr
-        XCHG
-        MOV         M,E             ; FCB + 004H, second nested file reference
-        INX         H
-        MOV         M,D
-        INX         H
-        ;
-        ; Return echo or linked file
-        ;
-        POP         H
-        SHLD        phys_fcb_ptr
-        JMP         phys_file_ready
-
-phys_linked_file_ordinary_second_part:
-        ;
-        ; Verify normal linked file
-        ;
-        CPI         ','
-        JNZ         invalid_drive_error
-        ;
-        ; Generate second nested file of linked file
-        ;
-        LHLD        phys_fcb_ptr
-        PUSH        H
-        CALL        recursive_linked_file_call
-        POP         H
-        RC
-        ;
-        ; Verify end of linked file definition
-        ;
-        CPI         ')'
-        JNZ         invalid_drive_error
-        ;
-        ; Prepare for assembling the linked file
-        ;
-        PUSH        PSW
-        SHLD        first_linked_fcb_ptr
-        XCHG
-        INX         D
-        ;
-        ; Allocate memory for linked file
-        ;
-        LXI         H,006H
-        CALL        BUFALLOC
-        JC          phys_memory_error
-        POP         PSW
-        ;
-        ; Set file type and mode of linked file
-        ;
-        PUSH        H
-        MVI         M,6
-        INX         H
-        LDAX        D               ; First nested FCB + FCB_MODE
-        ORI         FM_ASSIGNED
-        MOV         M,A             ; FCB + FCB_MODE
-        JMP         assemble_linked_file_fcb
-
-
-;//////////////////////////////////////
-
-phys_parse_nonblock_device:
-        ;
-        ; Check for characters that should not occur here
-        ;
-        CPI         '$'
-        JZ          invalid_drive_error
-        CPI         CR
-        JZ          invalid_drive_error
-        ;
-        ; Save first character of device file name and get second character
-        ;
-        MOV         B,A
-        CALL        INCHAR
-        RC
-        CALL        check_alphanumeric
-        JC          invalid_drive_error
-        CALL        to_uppercase
-        MOV         C,A
-        ;
-        ; Scan through list of known device files and scan for device
-        ;
-        LXI         H,system_device_list
-check_next_device_file:
-        ;
-        ; Check for end of known device files list
-        ;
+        LXI         D,FCB_FNAME - (FCB_DRVFMT+1)
+        DAD         D
+        MVI         B,9
+ibm_physint_prep_filename_loop:
         MOV         A,M
         ANA         A
-        JZ          device_file_not_found
-        ;
-        ; Compare first character of name
-        ;
-        CMP         B
-        JZ          check_device_file_second_char
-        ;
-        ; Not match, check against next known file from the list
-        ;
-        LXI         D,004H
-        DAD         D
-        JMP         check_next_device_file
+        JNZ         ibm_physint_filename_char_ready
+        MVI         M,' '
+ibm_physint_filename_char_ready:
+        DCR         B
+        INX         H
+        JNZ         ibm_physint_prep_filename_loop
+        ANA         A
+        RET
 
-device_file_not_found:
-        MOV         A,C
-        JMP         invalid_drive_error
 
-check_device_file_second_char:
-        ;
-        ; Compare second character of name
-        ;
-        INX         H
-        MOV         A,M
-        INX         H
-        CMP         C
-        JZ          device_file_found
-        ;
-        ; Not match, check against next known file from the list
-        ;
-        INX         H
-        INX         H
-        JMP         check_next_device_file
+;//////////////////////////////////////////////////////////////////////////////
 
-device_file_found:
+tape_physint_setup:
         ;
-        ; Get and select pointer to device file
+        ; Set pointer to data-buffer overrun markers
         ;
-        MOV         E,M
-        INX         H
-        MOV         D,M
         XCHG
-        SHLD        phys_fcb_ptr
-        ;
-        ; Verify proper closure of device designator string
-        ;
-        LHLD        CI_FCB
-        CALL        INCHAR
-        RC
-        CPI         ':'
-        JNZ         invalid_drive_error
-        JMP         phys_file_ready
+        LXI         H,(128-2) + (035H - FCB_OVRPTR)
+        DAD         D
+        XCHG
+        MOV         M,L             ; FCB + FCB_OVRPTR
+        INX         H
+        MOV         M,L
+        ANA         A
+        RET
 
 
 ;//////////////////////////////////////////////////////////////////////////////
@@ -7064,11 +8065,6 @@ assign_next_file:
 
 valid_assignement_file:
         STA         current_tos_abstract_file_nr
-        ;
-        ; Reset flags
-        ;
-        SUB         A
-        STA         phys_echo_file_flag
         ;
         ; Verify that the character following the file name is an equal sign
         ;
@@ -7792,6 +8788,13 @@ DEV_CI_buffer:
 ;//                 -> Corrects ASCII to EBCDIC table index 07H, 3CH, 60H, C3H
 ;//                 -> Corrects EBCDIC to ASCII table index 4AH, 58H, 79H
 ;//
+;//             v1.5a:
+;//
+;//                 -> Corrects ASCII to EBCDIC table index 5CH, 7BH, 7DH, E7H,
+;//                    EEH, F5H
+;//                 -> Corrects EBCDIC to ASCII table index AAH, ACH, C0H, D0H,
+;//                    E0H, EBH
+;//
 
 
 ;//////////////////////////////////////////////////////////////////////////////
@@ -7812,11 +8815,11 @@ ascii_to_ebcdic_table:
         DB          07CH, 0C1H, 0C2H, 0C3H, 0C4H, 0C5H, 0C6H, 0C7H
         DB          0C8H, 0C9H, 0D1H, 0D2H, 0D3H, 0D4H, 0D5H, 0D6H
         DB          0D7H, 0D8H, 0D9H, 0E2H, 0E3H, 0E4H, 0E5H, 0E6H
-        DB          0E7H, 0E8H, 0E9H, 0EAH, 0EBH, 0ECH, 05FH, 06DH
+        DB          0E7H, 0E8H, 0E9H, 0EAH, 0E0H, 0ECH, 05FH, 06DH
         DB          079H, 081H, 082H, 083H, 084H, 085H, 086H, 087H
         DB          088H, 089H, 091H, 092H, 093H, 094H, 095H, 096H
         DB          097H, 098H, 099H, 0A2H, 0A3H, 0A4H, 0A5H, 0A6H
-        DB          0A7H, 0A8H, 0A9H, 0AAH, 0ABH, 0ACH, 04FH, 007H
+        DB          0A7H, 0A8H, 0A9H, 0C0H, 0ABH, 0D0H, 04FH, 007H
         DB          004H, 006H, 008H, 009H, 00AH, 014H, 015H, 017H
         DB          01AH, 01BH, 020H, 021H, 022H, 023H, 024H, 028H
         DB          029H, 02AH, 02BH, 02CH, 030H, 031H, 033H, 034H
@@ -7829,9 +8832,9 @@ ascii_to_ebcdic_table:
         DB          08DH, 08EH, 08FH, 090H, 09AH, 09BH, 09CH, 09DH
         DB          09EH, 09FH, 0A0H, 0A1H, 0ADH, 0AEH, 0AFH, 0B0H
         DB          0B1H, 0B2H, 0B3H, 0B4H, 0B5H, 0B6H, 0B7H, 0B8H
-        DB          0B9H, 0BAH, 0BBH, 0BCH, 0BDH, 0BEH, 0BFH, 0C0H
-        DB          0CAH, 0CBH, 0CCH, 0CDH, 0CEH, 0CFH, 0D0H, 0DAH
-        DB          0DBH, 0DCH, 0DDH, 0DEH, 0DFH, 0E0H, 0E1H, 0EDH
+        DB          0B9H, 0BAH, 0BBH, 0BCH, 0BDH, 0BEH, 0BFH, 0AAH
+        DB          0CAH, 0CBH, 0CCH, 0CDH, 0CEH, 0CFH, 0ACH, 0DAH
+        DB          0DBH, 0DCH, 0DDH, 0DEH, 0DFH, 0EBH, 0E1H, 0EDH
         DB          0EEH, 0EFH, 0FAH, 0FBH, 0FCH, 0FDH, 0FEH, 0FFH
 
 ebcdic_to_ascii_table:
@@ -7856,15 +8859,15 @@ ebcdic_to_ascii_table:
         DB          0CBH, 06AH, 06BH, 06CH, 06DH, 06EH, 06FH, 070H
         DB          071H, 072H, 0CCH, 0CDH, 0CEH, 0CFH, 0D0H, 0D1H
         DB          0D2H, 0D3H, 073H, 074H, 075H, 076H, 077H, 078H
-        DB          079H, 07AH, 07BH, 07CH, 07DH, 0D4H, 0D5H, 0D6H
+        DB          079H, 07AH, 0E7H, 07CH, 0EEH, 0D4H, 0D5H, 0D6H
         DB          0D7H, 0D8H, 0D9H, 0DAH, 0DBH, 0DCH, 0DDH, 0DEH
         DB          0DFH, 0E0H, 0E1H, 0E2H, 0E3H, 0E4H, 0E5H, 0E6H
-        DB          0E7H, 041H, 042H, 043H, 044H, 045H, 046H, 047H
+        DB          07BH, 041H, 042H, 043H, 044H, 045H, 046H, 047H
         DB          048H, 049H, 0E8H, 0E9H, 0EAH, 0EBH, 0ECH, 0EDH
-        DB          0EEH, 04AH, 04BH, 04CH, 04DH, 04EH, 04FH, 050h
+        DB          07DH, 04AH, 04BH, 04CH, 04DH, 04EH, 04FH, 050h
         DB          051H, 052H, 0EFH, 0F0H, 0F1H, 0F2H, 0F3H, 0F4H
-        DB          0F5H, 0F6H, 053H, 054H, 055H, 056H, 057H, 058H
-        DB          059H, 05AH, 05BH, 05CH, 05DH, 0F7H, 0F8H, 0F9H
+        DB          05CH, 0F6H, 053H, 054H, 055H, 056H, 057H, 058H
+        DB          059H, 05AH, 05BH, 0F5H, 05DH, 0F7H, 0F8H, 0F9H
         DB          030H, 031H, 032H, 033H, 034H, 035H, 036H, 037H
         DB          038H, 039H, 0FAH, 0FBH, 0FCH, 0FDH, 0FEH, 0FFH
 
@@ -7888,6 +8891,11 @@ ebcdic_to_ascii_table:
 ;//
 ;//                 -> Quick-references to :LP:, :XM: and :RC: added
 ;//                 -> Non-maintained constants removed
+;//
+;//             v1.5a:
+;//
+;//                 -> New PHYSINT API-call for creating FCB from file handle
+;//                 -> New API-call added for clean restart of TOS
 ;//
 
 
@@ -8055,6 +9063,10 @@ GETN:
         JMP         T_GETN
 GETBLK:
         JMP         T_GETBLK
+PHYSINT:
+        JMP         T_PHYSINT
+TOSINIT:
+        JMP         T_TOSINIT
 
 
 ;//////////////////////////////////////////////////////////////////////////////
@@ -8141,6 +9153,11 @@ AL_FCB:
 ;//                 -> Verifies the value of the debug flag, it is ignored if not
 ;//                    set to exactly the right value
 ;//                 -> Fixes the file-loading handling bug from v1.3
+;//
+;//             v1.5a:
+;//
+;//                 -> Program loader will only accept one line-continuation with
+;//                    the / character at the end of the commnand filename
 ;//
 
 
@@ -8230,12 +9247,15 @@ cli_get_program_filename:
         JC          cli_load_error
 cli_check_start_of_args:
         LDA         cli_next_char
+        ;
+        ; Check if the character after command name is a linebreak continuation
+        ;
+        CPI         '/'
+        JZ          cli_args_on_next_line
 cli_check_next_arg_char:
         ;
         ; Check first character of next part of command line arguments
         ;
-        CPI         '/'
-        JZ          cli_args_on_next_line
         CPI         CR
         JZ          run_program
         CPI         '$'
