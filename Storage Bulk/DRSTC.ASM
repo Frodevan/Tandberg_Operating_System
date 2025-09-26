@@ -23,6 +23,10 @@
 ;//                 -> First version I have
 ;//                 -> Has a bug where the final report string is not printed
 ;//
+;//             1.5: Entry at 0xC000
+;//
+;//                 -> Accepts lowercase input
+;//
 
 
 ;//////////////////////////////////////////////////////////////////////////////
@@ -76,7 +80,7 @@ welcome_prompt_str:
 
 ;//////////////////////////////////////////////////////////////////////////////
 ;//
-;//     Subroutines
+;//     Subroutines 1
 ;//
 ;//////////////////////////////////////////////////////////////////////////////
 
@@ -116,6 +120,7 @@ beginning:
         LXI         H,welcome_prompt_str
         CALL        print_str
         CALL        TTI
+        CALL        to_uppercase
         CPI         'Y'
         JZ          start_recovery
         ANA         A
@@ -211,6 +216,24 @@ restore_next_sector_last_half_track:
         ;
         SUB         A
         CALL        CUN
+        RET
+
+
+;//////////////////////////////////////////////////////////////////////////////
+;//
+;//     Subroutines 2
+;//
+;//////////////////////////////////////////////////////////////////////////////
+
+        ;
+        ; Convert ASCII character in A to uppercase
+        ;
+to_uppercase:
+        CPI         'a'
+        RM
+        CPI         'z'+1
+        RP
+        ANI         0DFH
         RET
 
 

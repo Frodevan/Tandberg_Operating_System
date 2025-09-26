@@ -50,6 +50,11 @@
 ;//                 -> Major rewrite in code for parsing and storing drive type
 ;//                 -> Fixes the v1.2 mapfile bug
 ;//
+;//             1.5a: Entry at 0xC000
+;//
+;//                 -> Fixes file-extension deliminer bug from v1.2
+;//                 -> Flushes excess input on exit
+;//
 
 
 ;//////////////////////////////////////////////////////////////////////////////
@@ -81,8 +86,11 @@ DISK_SECTOR EQU     00001H      ; Multiplier for floppy disk sector
 ;
 ; XMON system calls
 ;
+DSRDW       EQU     00073H      ; Read from disk with wait
+DSWRW       EQU     00076H      ; Write to disk with wait
 DSRAW       EQU     0007CH      ; Read from disk with wait and translate EBCDIC to ASCII
 DSWAW       EQU     0007FH      ; Translate ASCII to EBCDIC and write to disk with wait
+LOCDIR      EQU     00085H      ; Look up filetable entry of filename on disk
 CCAL        EQU     00091H      ; Reset tape cartridge
 CWT         EQU     000ACH      ; Wait for tape command complete
 CLOCDIR     EQU     000C1H      ; Look up filetable entry of filename on tape
@@ -108,9 +116,6 @@ INCHAR      EQU     0FD09H      ; Input single character
 OUTCHAR     EQU     0FD0CH      ; Output single character
 PUT         EQU     0FD12H      ; Output string of characters, inclusive CR
 PUTSTR      EQU     0FD15H      ; Output string of characters, exclusive CR
-DSRDW       EQU     0FD73H      ; Read from disk with wait
-DSWRW       EQU     0FD76H      ; Write to disk with wait
-LOCDIR      EQU     0FD85H      ; Look up filetable entry of filename on disk
 FILENAME    EQU     0FDCDH      ; Input TOS filename
 IBFIL       EQU     0FDD0H      ; Input IBM-3740 filename
 
@@ -135,11 +140,12 @@ ATTR_F      EQU     080H        ; Format file
 
 ;//////////////////////////////////////////////////////////////////////////////
 ;//
-;//     Legacy program entry
+;//     Program entry
 ;//
 ;//////////////////////////////////////////////////////////////////////////////
 
         ORG         0C000H
+start:
         JMP         beginning
 
 
@@ -160,6 +166,8 @@ ibm_read_call_ptr:
         DS          2
 ibm_write_call_ptr:
         DS          2
+input_char:
+        DS          1
 old_filename:
         DS          9
 new_filename:
@@ -203,7 +211,6 @@ to_uppercase:
 
 ;//////////////////////////////////////////////////////////////////////////////
 
-start:
 beginning:
         ;
         ; Scan for first character of mandatory command line argument
@@ -214,6 +221,7 @@ scan_for_first_char:
         LHLD        CI_FCB
         CALL        INCHAR
         RC
+        STA         input_char
         CPI         ' '
         JZ          scan_for_first_char
         CPI         CR
@@ -225,16 +233,17 @@ scan_for_first_char:
         JNZ         drive_set
         CALL        INCHAR
         RC
+        STA         input_char
         CPI         CR
         JZ          invalid_drive
         CALL        to_uppercase
         STA         drive_designator_str + 1
-valid_drive_type:
         ;
         ; Parse drive number
         ;
         CALL        INCHAR
         RC
+        STA         input_char
         STA         drive_designator_str + 2
         SUI         '0'
         JC          invalid_drive
@@ -246,10 +255,12 @@ valid_drive_type:
         ;
         CALL        INCHAR
         RC
+        STA         input_char
         CPI         ':'
         JNZ         invalid_drive
         CALL        INCHAR
         RC
+        STA         input_char
 drive_set:
         ;
         ; Check device type for IBM disk
@@ -267,6 +278,7 @@ drive_set:
         LXI         D,old_filename
         CALL        FILENAME
         RC
+        STA         input_char
         CPI         ','
         JNZ         invalid_input
         ;
@@ -284,6 +296,7 @@ scan_for_tos_new_filename:
         LXI         D,new_filename
         CALL        FILENAME
         RC
+        STA         input_char
         CPI         CR
         JNZ         invalid_input
         ;
@@ -402,6 +415,7 @@ rename_ibm:
         LXI         D,old_filename
         CALL        IBFIL
         RC
+        STA         input_char
         CPI         ','
         JNZ         invalid_input
         ;
@@ -419,6 +433,7 @@ scan_for_ibm_new_filename:
         LXI         D,new_filename
         CALL        IBFIL
         RC
+        STA         input_char
         CPI         CR
         JNZ         invalid_input
         ;
@@ -530,7 +545,18 @@ quit_with_error_print:
 print_and_quit:
         LHLD        CO_FCB
         CALL        PUT
-        RET
+        RC
+        ;
+        ; Flush remaining command line arguments before exiting
+        ;
+        LDA         input_char
+flush_next_char:
+        CPI         CR
+        RZ
+        LHLD        CI_FCB
+        CALL        INCHAR
+        RC
+        JMP         flush_next_char
 
 
 ;//////////////////////////////////////
@@ -595,11 +621,18 @@ dont_pad_filename_tail:
         DCR         B
         JNZ         print_file_name
         ;
+        ; Skip filename extension delimer if no extension
+        ;
+        LDAX        D
+        ORA         A
+        JZ          print_file_extension
+        ;
         ; Print filename extension
         ;
         MVI         A,'.'
         CALL        OUTCHAR
         RC
+print_file_extension:
         MVI         B,3
 print_next_file_ext_char:
         LDAX        D
@@ -621,17 +654,6 @@ file_ext_char_ready:
         MVI         A,' '
         CALL        OUTCHAR
         RET
-
-
-;//////////////////////////////////////////////////////////////////////////////
-
-        ;
-        ; Orphaned code, related to a different scheme of handling drive-types
-        ;
-setup_for_tape_file:
-        MVI         A,4
-        STA         drive_nr
-        JMP         valid_drive_type
 
 
 ;//////////////////////////////////////////////////////////////////////////////
@@ -723,6 +745,7 @@ copy_tape_filename_loop:
         ORI         030H
         OUT         CCMD_IO
         CALL        CWT
+        RC
         JMP         tos_file_rename_done
 
 
@@ -746,11 +769,8 @@ ibm_check_deleted:
         ; Deleted sectors are OK, other faults are not
         ;
         CPI         ERROR_20
-        JZ          ibm_is_deleted
         STC
-        RET
-
-ibm_is_deleted:
+        RNZ
         ANA         A
         RET
 

@@ -27,6 +27,11 @@
 ;//
 ;//                 -> Adds welcome prompt and reports on copied files
 ;//
+;//             1.5: Entry at 0xC000
+;//
+;//                 -> Accepts lower-case input to the prompt
+;//                 -> Minor optimization in code after a file has been copied
+;//
 
 
 ;//////////////////////////////////////////////////////////////////////////////
@@ -225,6 +230,8 @@ beginning:
         RC
         CPI         'Y'
         JZ          start_copying
+        CPI         'y'
+        JZ          start_copying
         ANA         A
         RET
 
@@ -419,11 +426,8 @@ read_error:
         ; Check for end of file
         ;
         ANA         A
-        JZ          end_of_file
         STC
-        RET
-
-end_of_file:
+        RNZ
         ;
         ; Copy went ok, print status, close output file to update file-system
         ;

@@ -27,9 +27,13 @@
 ;//         can on the other hand be used with FORMAT right away, without the need
 ;//         of any additional preparation.
 ;//
-;//         If the S argument is given, any system files from drive :F0: will
-;//         be looked up, but since the S argument is only partially implemented in
-;//         this version no actual copying of these files will take place.
+;//         If the S argument is given, any system files from the same drive FORMAT
+;//         was run from will be copied over to the newly formatted disk, keeping
+;//         all of their file attributes intact.
+;//
+;//         NOTE: Cannot be used with later TOS v1.8 due to the program overwriting
+;//               parts of TOS. As such, TOS v1.8 and v1.81 needs the approproate
+;//               later version of FORMAT that accounts for this.
 ;//
 ;//         NOTE: It is not possible to use the drive which is being formatted as
 ;//               the source drive for the system-files when bootable system-media
@@ -53,6 +57,19 @@
 ;//                 -> Only has skeleton-code for parsing the system attribute in a
 ;//                    directory instead of code to actually transfer the system
 ;//
+;//             1.5a: Entry at 0xC000
+;//
+;//                 -> Optimizes parsing of drive type
+;//                 -> Gets system drive from command line buffer instead of
+;//                    blindly assuming :F0: to be the system disk
+;//                 -> Replaces the skeleton-code from v1.3 with working code that
+;//                    transfers the system
+;//                 -> Adds the S command line argument for drive type M
+;//                 -> Flushes excess input on exit
+;//                 -> Fixes the map/message-file preparation bug from v1.3
+;//                 -> Has a bug where the drive-requirements for the S argument
+;//                    is only being checked if a floppy disk is being formatted
+;//
 
 
 ;//////////////////////////////////////////////////////////////////////////////
@@ -73,6 +90,15 @@ NULL        EQU     000H        ; Null character
 CR          EQU     00DH        ; Cartridge Return
 
 ;
+; IO ports
+;
+CBLKLG_IOH  EQU     021H        ; Tape block data length high byte
+CBLKLG_IOL  EQU     022H        ; Tape block data length low byte
+CBUF_IOH    EQU     023H        ; Tape block data address high byte
+CBUF_IOL    EQU     024H        ; Tape block data address low byte
+CCMD_IO     EQU     027H        ; Tape command (W) and status (R)
+
+;
 ; XMON constants
 ;
 DISK_TRACK  EQU     00100H      ; Multiplier for floppy disk track
@@ -81,22 +107,50 @@ DISK_SECTOR EQU     00001H      ; Multiplier for floppy disk sector
 ;
 ; XMON system calls
 ;
+DCALW       EQU     00070H      ; Reset disk drive with wait
+DSRDW       EQU     00073H      ; Read from disk with wait
+DSWRW       EQU     00076H      ; Write to disk with wait
+LOCDIR      EQU     00085H      ; Look up filetable entry of filename on disk
 CCAL        EQU     00091H      ; Reset tape cartridge
 CUN         EQU     000A6H      ; Rewind and unload tape cartridge
+CWT         EQU     000ACH      ; Wait for tape command complete
+CBRDW       EQU     000AFH      ; Read data from tape cartridge with wait
 CBWRW       EQU     000B2H      ; Write data to tape cartridge with wait
 CBTMW       EQU     000B8H      ; Write tape mark to tape cartridge with wait
+CLOCDIR     EQU     000C1H      ; Look up filetable entry of filename on tape
+
+;
+; XMON and TOS system data
+;
+BUF2        EQU     02600H      ; Sector data of last filesystem operation
+TRK         EQU     02731H      ; Pointer to block address of next directory data block
+CPROG       EQU     02741H      ; Tape prog status
+CUNIT       EQU     02742H      ; Tape unit number
+CCONT       EQU     02743H      ; Tape cont address
+CBUF        EQU     02745H      ; Tape data buffer address
+CTRK        EQU     02747H      ; Tape track nr
+CRETRY      EQU     0274DH      ; Tape retry address
+CBLKLG      EQU     02750H      ; Tape block length
 
 ;
 ; TOS system calls
 ;
 INCHAR      EQU     0FD09H      ; Input single character
+GET         EQU     0FD0FH      ; Input string, inclusive CR
 PUT         EQU     0FD12H      ; Output string of characters, inclusive CR
 PUTSTR      EQU     0FD15H      ; Output string of characters, exclusive CR
-DCALW       EQU     0FD70H      ; Reset disk drive with wait
-DSRDW       EQU     0FD73H      ; Read from disk with wait
-DSWRW       EQU     0FD76H      ; Write to disk with wait
-LOCDIR      EQU     0FD85H      ; Look up filetable entry of filename on disk
+GETBIN      EQU     0FD18H      ; Input a given number of raw bytes
+OPEN        EQU     0FD1EH      ; Open block device
+READ        EQU     0FD21H      ; Read next block from block device
+WRITE       EQU     0FD24H      ; Write next block to block device
+CLOSE       EQU     0FD27H      ; Close block device
 FILENAME    EQU     0FDCDH      ; Input TOS filename
+
+;
+; TOS constants
+;
+TABTC_PTR   EQU     0FDE6H      ; Pointer to Tandberg tape cartridge device driver
+TABIN_PTR   EQU     0FDEAH      ; Pointer to Intel floppy disk device driver
 
 ;
 ; TOS standard files
@@ -116,6 +170,54 @@ ATTR_NONE   EQU     000H        ; Normal file
 ATTR_I      EQU     001H        ; Invisible file
 ATTR_S      EQU     002H        ; System file
 ATTR_F      EQU     080H        ; Format file
+
+;
+; TOS File Control Block, block device variables
+;
+FCB_BUFIDX  EQU     002H        ; Block/buffered-device data buffer index
+FCB_BUFLEN  EQU     004H        ; Length of block/buffered-device data buffer
+FCB_BUFPTR  EQU     006H        ; Pointer to block/buffered-device data buffer
+FCB_READ    EQU     008H        ; Device-driver Read API call
+FCB_WRITE   EQU     00AH        ; Device-driver Write API call
+FCB_OPEN    EQU     00CH        ; Device-driver Open API call
+FCB_CLOSE   EQU     00EH        ; Device-driver Close API call
+FCB_DEVTYP  EQU     010H        ; Block-device type
+FCB_DRVNR   EQU     011H        ; Drive number
+FCB_FNAME   EQU     012H        ; Filename string
+FCB_DRVFMT  EQU     01BH        ; Media format
+FCB_OVRPTR  EQU     01CH        ; Pointer to tape block-device buffer overrun bytes
+FCB_LNKPTR  EQU     020H        ; Pointer to floppy block-device linking block buffer
+
+;
+; FCB mode flags
+;
+FM_NONE     EQU     000H        ; No file mode set, typically closed file
+FM_INPUT    EQU     001H        ; File open for reading flag
+FM_OUTPUT   EQU     002H        ; File open for writing flag
+FM_BINARY   EQU     004H        ; Binary flag
+
+
+;//////////////////////////////////////////////////////////////////////////////
+;//
+;//     Data buffers
+;//
+;//////////////////////////////////////////////////////////////////////////////
+
+        ORG         02000H
+file_data_buffer:
+        DS          128
+tape_buffer_overrun:
+        DS          2
+src_file_linking_block:
+        DS          128
+dest_file_linking_block:
+        DS          128
+dir_file_data_buffer:
+        DS          128
+dir_file_linking_block_buffer:
+        DS          128
+scratchpad_ram:
+        DS          16
 
 
 ;//////////////////////////////////////////////////////////////////////////////
@@ -146,23 +248,42 @@ invalid_drive_str:
 invalid_cli_args_str:
         DB          'IMPROPER PARAMETER LIST',CR
 same_sys_disk_str:
-        DB          'SYSTEM DISKETTE FORMATTING UNIT=0',CR
+        DB          'SYSTEM DISKETTE FORMATTING UNIT 0 NOT ALLOWED',CR
+format_non_sys_tape_ok_str:
+        DB          'NON - SYSTEM CARTRIDGE',CR
+format_sys_tape_ok_str:
+        DB          'SYSTEM CARTRIDGE CREATED',CR
+copying_system_str:
+        DB          'COPYING SYSTEM FILES',CR
+same_sys_tape_str:
+        DB          'SYSTEM CARTRIDGE FORMATTING UNIT 0 NOT ALLOWED',CR
 
+input_char:
+        DB          NULL
+sys_drive_type:
+        DB          'F'
+drive_type:
+        DB          'F'
+tape_sys_file_count:
+        DB          1
+tape_skip_file_countdown:
+        DB          0
+sys_file_attributes:
+        DB          ATTR_NONE
 sys_transfer_dir_block:
         DW          0*DISK_TRACK + 0*DISK_SECTOR
 sys_transfer_file_entry_ptr:
         DW          00000H
 sys_transfer_file_entry_countdown:
         DB          0
+sys_drive_number:
+        DB          0
 drive_number:
         DB          0
-system_disk_flag:
+transfer_system_flag:
         DB          FALSE
         DB          000H
 
-intel_dir_filename_str:
-        DB          'ISIS',NULL,NULL
-        DB          'DIR'
 intel_label_str:
         DS          9
 
@@ -276,6 +397,68 @@ tape_track_end_block:
         DB          '/'
         DB          0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0
 
+DIR_FCB:
+        DB          5
+        DB          FM_NONE
+        DW          0
+        DW          128
+        DW          dir_file_data_buffer
+        DW          00000H
+        DW          00000H
+        DW          00000H
+        DW          00000H
+        DB          0
+        DB          0
+        DB          'ISIS',NULL,NULL
+        DB          'DIR'
+        DB          001H
+        DW          00000H
+        DB          000H
+        DB          000H
+        DW          dir_file_linking_block_buffer
+
+SRC_FILE_FCB:
+        DB          5
+        DB          FM_NONE
+        DW          0
+        DW          128
+        DW          file_data_buffer
+        DW          00000H
+        DW          00000H
+        DW          00000H
+        DW          00000H
+        DB          0
+        DB          0
+        DS          9
+        DB          000H
+        DW          00000H
+        DB          000H
+        DB          000H
+        DW          00000H
+
+        DS          17
+
+DEST_FILE_FCB:
+        DB          5
+        DB          FM_NONE
+        DW          0
+        DW          128
+        DW          file_data_buffer
+        DW          00000H
+        DW          00000H
+        DW          00000H
+        DW          00000H
+        DB          0
+        DB          0
+        DS          9
+        DB          001H
+        DW          00000H
+        DB          000H
+        DB          000H
+        DW          00000H
+
+        DS          17
+
 
 ;//////////////////////////////////////////////////////////////////////////////
 ;//
@@ -285,33 +468,41 @@ tape_track_end_block:
 
 invalid_drive:
         LXI         D,invalid_drive_str
-        LHLD        CO_FCB
-        CALL        PUT
-        RET
+        JMP         print_and_quit
 
 
 ;//////////////////////////////////////
 
 invalid_cli_args:
         LXI         D,invalid_cli_args_str
-        LHLD        CO_FCB
-        CALL        PUT
-        RET
+        JMP         print_and_quit
 
 
 ;//////////////////////////////////////
 
 same_drive_not_supported:
         LXI         D,same_sys_disk_str
-        LHLD        CO_FCB
-        CALL        PUT
-        RET
+        CPI         'F'
+        JZ          print_and_quit
+        LXI         D,same_sys_tape_str
 
 
 ;//////////////////////////////////////
 
+print_and_quit:
+        LHLD        CO_FCB
+        CALL        PUT
+        RC
 quit_program:
-        ANA         A
+        ;
+        ; Flush any remaining input before quitting
+        ;
+        LDA         input_char
+        CPI         CR
+        RZ
+        LHLD        CI_FCB
+        LXI         D,scratchpad_ram
+        CALL        GET
         RET
 
 
@@ -323,34 +514,75 @@ beginning:
         ;
         SUB         A
         STA         drive_number
-        STA         system_disk_flag
+        STA         transfer_system_flag
         ;
         ; Parse drive designator from command line args, if any
         ;
         LHLD        CI_FCB
         CALL        INCHAR
         RC
+        STA         input_char
         CPI         ':'
-        JNZ         use_intel_drive
+        JNZ         drive_set
         CALL        INCHAR
         RC
         CALL        to_uppercase
-        CPI         'F'
-        JNZ         check_other_drive_types
+        STA         drive_type
+        STA         input_char
         CALL        INCHAR
         RC
-        CPI         '0'
-        JM          invalid_drive
-        CPI         '4'
-        JP          invalid_drive
+        STA         input_char
         SUI         '0'
+        JM          invalid_drive
+        CPI         4
+        JP          invalid_drive
         STA         drive_number
         CALL        INCHAR
         RC
+        STA         input_char
         CPI         ':'
         JNZ         invalid_drive
         CALL        INCHAR
         RC
+        STA         input_char
+drive_set:
+        ;
+        ; Peek back into the start of the entire command line buffer
+        ;
+        LHLD        CI_FCB
+        LXI         D,FCB_BUFPTR
+        DAD         D
+        MOV         E,M
+        INX         H
+        MOV         D,M
+        ;
+        ; Skip any spaces at start of command line buffer
+        ;
+skip_arg_spaces:
+        LDAX        D
+        INX         D
+        CPI         ' '
+        JZ          skip_arg_spaces
+        ;
+        ; Get optional system drive, if specified before the FORMAT command
+        ;
+        CPI         ':'
+        JNZ         verify_drive_type
+        LDAX        D
+        CALL        to_uppercase
+        STA         sys_drive_type
+        INX         D
+        LDAX        D
+        SUI         '0'
+        STA         sys_drive_number
+        ;
+        ; Verify the drive type and take action accordingly
+        ;
+verify_drive_type:
+        LDA         drive_type
+        CPI         'F'
+        JNZ         check_other_drive_types
+        LDA         input_char
 use_intel_drive:
         ;
         ; Parse disk label from command line args
@@ -358,6 +590,7 @@ use_intel_drive:
         LXI         D,intel_label_str
         CALL        FILENAME
         RC
+        STA         input_char
         CPI         CR
         JZ          format_intel_disk
         ;
@@ -369,20 +602,21 @@ use_intel_drive:
         CALL        INCHAR
         RC
         CALL        to_uppercase
+        STA         input_char
         CPI         'S'
         JNZ         invalid_cli_args
-        STA         system_disk_flag
+        STA         transfer_system_flag
         ;
         ; Make sure to not format system drive if system-transfer switch is set
         ;
-        LDA         drive_number
-        CPI         0
+        CALL        verify_valid_system_drive
         JZ          same_drive_not_supported
         ;
         ; Make sure there is no more command line args after this
         ;
         CALL        INCHAR
         RC
+        STA         input_char
         CPI         CR
         JNZ         invalid_cli_args
 
@@ -393,12 +627,12 @@ format_intel_disk:
         ;
         ; Check if there is already an Intel filesystem on the disk
         ;
-        LXI         H,intel_dir_filename_str
+        LXI         H,DIR_FCB + FCB_FNAME
         LDA         drive_number
         CALL        LOCDIR
         JC          write_new_intel_filesys
-        MOV         A,M
-        CPI         000H
+        XRA         A
+        ORA         M
         JNZ         write_new_intel_filesys
         ;
         ; If filesystem already exists, prompt user if they want to overwrite
@@ -417,11 +651,13 @@ format_intel_disk:
         ; Expect a single 'Y' to continue
         ;
         CALL        to_uppercase
+        STA         input_char
         CPI         'Y'
         JNZ         quit_program
         LHLD        CI_FCB
         CALL        INCHAR
         RC
+        STA         input_char
         CPI         CR
         JNZ         quit_program
 write_new_intel_filesys:
@@ -501,12 +737,6 @@ write_next_intel_dir_block:
         CALL        DSWRW
         RC
         ;
-        ; Transfer system if system flag set
-        ;
-        LDA         system_disk_flag
-        ANA         A
-        JNZ         transfer_intel_system
-        ;
         ; Write new mapfile data to disk
         ;
         CALL        clear_data_buffer
@@ -562,9 +792,9 @@ link_next_intel_err_block:
         ;
         ; Transfer system if system flag set
         ;
-        LDA         system_disk_flag
+        LDA         transfer_system_flag
         ANA         A
-        JNZ         transfer_intel_system
+        JNZ         transfer_system
         ;
         ; Format of non-system disk complete, print status and quit
         ;
@@ -574,115 +804,441 @@ link_next_intel_err_block:
         RET
 
 
+;//////////////////////////////////////////////////////////////////////////////
+;//
+;//     Main program - System transfer
+;//
+;//////////////////////////////////////////////////////////////////////////////
+
+transfer_system:
+        ;
+        ; Print copying system status message
+        ;
+        LXI         D,copying_system_str
+        LHLD        CO_FCB
+        CALL        PUT
+        RC
+        ;
+        ; Check if system to be copied from tape drive
+        ;
+        LDA         sys_drive_type
+        CPI         'M'
+        JZ          check_next_tape_file
+
+
 ;//////////////////////////////////////
 
-transfer_intel_system:
         ;
-        ; Begin transfer by pointing to block before start of directory
+        ; Assign Intel disk device driver to directory file
         ;
-        LXI         H,1*DISK_TRACK + 1*DISK_SECTOR
-        SHLD        sys_transfer_dir_block
+        LHLD        TABIN_PTR
+        SHLD        DIR_FCB + FCB_OPEN
+        LXI         D,006H
+        DAD         D
+        SHLD        DIR_FCB + FCB_READ
+        DAD         D
+        SHLD        DIR_FCB + FCB_CLOSE
+        LDA         sys_drive_number
+        STA         DIR_FCB + FCB_DRVNR
+        LXI         H,DIR_FCB
+        ;
+        ; Open directory file for reading, in binary-mode
+        ;
+        MVI         A,FM_INPUT
+        CALL        OPEN
+        RC
+        INX         H
+        MOV         A,M             ; DIR_FCB + FCB_MODE
+        ORI         FM_BINARY
+        MOV         M,A
         ;
         ; Scan through directory for files with the system attribute set
         ;
-check_next_intel_dir_block:
+check_next_intel_file:
         ;
-        ; Advance block address and read next system disk directory block
+        ; Get and check status byte of file entry
         ;
-        LHLD        sys_transfer_dir_block
-        INX         H
-        SHLD        sys_transfer_dir_block
-        MOV         B,H
-        MOV         C,L
-        MOV         A,C
-        CPI         27
-        JZ          system_transfer_complete
+        LXI         H,DIR_FCB
+        CALL        INCHAR
+        JC          transfer_from_disk_complete
+        ANA         A
+        JZ          intel_file_found
+        ;
+        ; Non-active file, skip to next entry
+        ;
+        MVI         B,15
+        LXI         D,scratchpad_ram
+        CALL        GETBIN
+        RC
+        JMP         check_next_intel_file
+
+
+;//////////////////////////////////////
+
+check_next_tape_file:
+        ;
+        ; Reset tape drive and set up countdown to which file to check
+        ;
+        LDA         sys_drive_number
+        CALL        CCAL
+        RC
+        LDA         tape_sys_file_count
+        STA         tape_skip_file_countdown
+        ;
+        ; Read tape first block, expect volume label
+        ;
+        LDA         sys_drive_number
+        MVI         B,0
         LXI         H,data_buffer
-        SUB         A
-        CALL        DSRDW
+        CALL        CBRDW
         RC
         ;
-        ; Set up pointers to check all file entries in block
+        ; Expect volume label at start of trak, throw an error if not
         ;
+        LDA         data_buffer
+        CPI         088H
+        MVI         A,03AH
+        STC
+        RNZ
+        ;
+        ; Read tape files until next active file found
+        ;
+scan_for_next_tape_file:
+        ;
+        ; Read file entry
+        ;
+        LDA         sys_drive_number
+        MVI         B,0
         LXI         H,data_buffer
-        SHLD        sys_transfer_file_entry_ptr
-        MVI         A,8
-        STA         sys_transfer_file_entry_countdown
+        CALL        CBRDW
+        RC
         ;
-        ; Transfer file if system-attribute is set
+        ; Check status of file. Expect active, deleted or cartridge usage block
         ;
-check_intel_file:
+        LDA         data_buffer
+        ANA         A
+        JZ          tape_file_found
+        CPI         0FFH
+        JZ          scan_for_next_tape_file
+        CPI         07FH
+        JZ          transfered_from_tape_complete
+        MVI         A,03BH
+        STC
+        RET
+
+tape_file_found:
         ;
-        ; Check attributes of file
+        ; Check file attributes for system file
+        ;
+        LDA         data_buffer + 012H
+        STA         sys_file_attributes
+        ANI         ATTR_S
+        JZ          scan_for_next_tape_file
+        ;
+        ; Check if we are at the target system file, keep scanning if not
+        ;
+        LXI         H,tape_skip_file_countdown
+        DCR         M
+        JNZ         scan_for_next_tape_file
+        LXI         H,tape_sys_file_count
+        INR         M
+        ;
+        ; Set up source file-control-block to read the target file from tape
+        ;
+        LXI         H,data_buffer + 001H
+        LXI         D,SRC_FILE_FCB + FCB_FNAME
+        MVI         C,9
+        CALL        copy_memory
+        MVI         A,1
+        STA         SRC_FILE_FCB + FCB_DEVTYP
+        STA         SRC_FILE_FCB + FCB_DRVFMT
+        LXI         H,tape_buffer_overrun
+        SHLD        SRC_FILE_FCB + FCB_OVRPTR
+        LHLD        TABTC_PTR
+        JMP         copy_system_file
+
+
+;//////////////////////////////////////
+
+intel_file_found:
+        ;
+        ; Read filename from file entry into source file file-control-block
+        ;
+        LXI         H,DIR_FCB
+        MVI         B,9
+        LXI         D,SRC_FILE_FCB + FCB_FNAME
+        CALL        GETBIN
+        RC
+        ;
+        ; Get file attribute of source file
+        ;
+        CALL        INCHAR
+        RC
+        STA         sys_file_attributes
+        ;
+        ; Flush remaining bytes of file entry
+        ;
+        MVI         B,5
+        LXI         D,scratchpad_ram
+        CALL        GETBIN
+        RC
+        ;
+        ; Check file attributes for system file
+        ;
+        LDA         sys_file_attributes
+        ANI         ATTR_S
+        JZ          check_next_intel_file
+        ;
+        ; Set up the rest of source file FCB
+        ;
+        MVI         A,1
+        STA         SRC_FILE_FCB + FCB_DRVFMT
+        LXI         H,src_file_linking_block
+        SHLD        SRC_FILE_FCB + FCB_LNKPTR
+        XRA         A
+        STA         SRC_FILE_FCB + FCB_DEVTYP
+        LHLD        TABIN_PTR
+
+
+;//////////////////////////////////////
+
+copy_system_file:
+        ;
+        ; Set up source file-control-block device drivers and device number
+        ;
+        SHLD        SRC_FILE_FCB + FCB_OPEN
+        LXI         D,006H
+        DAD         D
+        SHLD        SRC_FILE_FCB + FCB_READ
+        DAD         D
+        SHLD        SRC_FILE_FCB + FCB_CLOSE
+        LDA         sys_drive_number
+        STA         SRC_FILE_FCB + FCB_DRVNR
+        ;
+        ; Open source file for reading
+        ;
+        LXI         H,SRC_FILE_FCB
+        MVI         A,FM_INPUT
+        CALL        OPEN
+        RC
+        ;
+        ; Check destination drive type
+        ;
+        LDA         drive_type
+        CPI         'M'
+        JZ          copy_to_tape
+        ;
+        ; Set up destination file-control-block for floppy disk
+        ;
+        MVI         A,1
+        STA         DEST_FILE_FCB + FCB_DRVFMT
+        XRA         A
+        STA         DEST_FILE_FCB + FCB_DEVTYP
+        LXI         H,dest_file_linking_block
+        SHLD        DEST_FILE_FCB + FCB_LNKPTR
+        LHLD        TABIN_PTR
+        JMP         write_system_file
+
+copy_to_tape:
+        ;
+        ; Set up destination file-control-block for tape cartridge
+        ;
+        MVI         A,1
+        STA         DEST_FILE_FCB + FCB_DRVFMT
+        STA         DEST_FILE_FCB + FCB_DEVTYP
+        LXI         H,tape_buffer_overrun
+        SHLD        DEST_FILE_FCB + FCB_OVRPTR
+        LHLD        TABTC_PTR
+write_system_file:
+        ;
+        ; Set up destination FCB device drivers and drive number
+        ;
+        INX         H
+        INX         H
+        INX         H
+        SHLD        DEST_FILE_FCB + FCB_OPEN
+        LXI         D,006H
+        DAD         D
+        SHLD        DEST_FILE_FCB + FCB_WRITE
+        DAD         D
+        SHLD        DEST_FILE_FCB + FCB_CLOSE
+        LDA         drive_number
+        STA         DEST_FILE_FCB + FCB_DRVNR
+        ;
+        ; Set destination filename
+        ;
+        LXI         H,SRC_FILE_FCB + FCB_FNAME
+        LXI         D,DEST_FILE_FCB + FCB_FNAME
+        MVI         C,9
+        CALL        copy_memory
+        ;
+        ; Open destination file for writing
+        ;
+        LXI         H,DEST_FILE_FCB
+        MVI         A,FM_OUTPUT
+        CALL        OPEN
+        RC
+        JMP         write_next_block_to_copy
+
+read_next_block_to_copy:
+        ;
+        ; Read the next from source file
+        ;
+        LXI         H,SRC_FILE_FCB
+        CALL        READ
+        JC          file_copy_done
+write_next_block_to_copy:
+        ;
+        ; Arm destination file FCB to write source file FCB buffer
+        ;
+        LHLD        SRC_FILE_FCB + FCB_BUFLEN
+        SHLD        DEST_FILE_FCB + FCB_BUFIDX
+        SHLD        DEST_FILE_FCB + FCB_BUFLEN
+        ;
+        ; Write the block to destination file
+        ;
+        LXI         H,DEST_FILE_FCB
+        CALL        WRITE
+        RC
+        JMP         read_next_block_to_copy
+
+
+;//////////////////////////////////////
+
+file_copy_done:
+        ;
+        ; Quit program instantly if errors
+        ;
+        ORA         A
+        STC
+        RNZ
+        ;
+        ; Close input/output files
+        ;
+        LXI         H,SRC_FILE_FCB
+        CALL        CLOSE
+        RC
+        LXI         H,DEST_FILE_FCB
+        CALL        CLOSE
+        RC
+        ;
+        ; Check destination drive type to update attributes
+        ;
+        LDA         drive_type
+        CPI         'M'
+        JZ          update_attributes_tape
+        ;
+        ; Look up floppy file entry for the file copy
+        ;
+        LDA         drive_number
+        LXI         H,DEST_FILE_FCB + FCB_FNAME
+        CALL        LOCDIR
+        RC
+        ;
+        ; Set attributes of copy to the same as souce file
         ;
         LXI         D,00AH
         DAD         D
-        MOV         A,M
-        ANI         ATTR_S
-        JNZ         non_system_intel_file
+        LDA         sys_file_attributes
+        MOV         M,A
         ;
-        ; NOTE: Copying of system files is not implemented in this version
+        ; Write changes back to disk
         ;
-check_next_intel_file:
+        LHLD        TRK
+        DCX         H
+        MOV         B,M
+        DCX         H
+        MOV         C,M
+        LXI         H,BUF2
+        LDA         drive_number
+        CALL        DSWRW
+        RC
+        JMP         copy_next_file
+
+update_attributes_tape:
         ;
-        ; Advance to next file entry in block
+        ; Look up tape file entry for the file copy
         ;
-        LHLD        sys_transfer_file_entry_ptr
-        LXI         D,010H
+        LDA         drive_number
+        STA         CUNIT
+        LXI         H,DEST_FILE_FCB + FCB_FNAME
+        CALL        CLOCDIR
+        RC
+        SHLD        CBUF
+        ;
+        ; Set attributes of copy to the same as souce file
+        ;
+        LXI         D,012H
         DAD         D
-        SHLD        sys_transfer_file_entry_ptr
-        LDA         sys_transfer_file_entry_countdown
-        DCR         A
-        STA         sys_transfer_file_entry_countdown
-        JNZ         check_intel_file
-        JMP         check_next_intel_dir_block
+        LDA         sys_file_attributes
+        MOV         M,A
+        ;
+        ; Set up tape control block and prepare controller for write
+        ;
+        CALL        wait_for_tape_ready
+        LHLD        CBUF
+        MOV         A,H
+        OUT         CBUF_IOH
+        MOV         A,L
+        OUT         CBUF_IOL
+        MVI         A,0FFH
+        STA         CPROG
+        LXI         H,32
+        SHLD        CBLKLG
+        MOV         A,H
+        OUT         CBLKLG_IOH
+        MOV         A,L
+        OUT         CBLKLG_IOL
+        XRA         A
+        STA         CTRK
+        LXI         H,00000H
+        SHLD        CCONT
+        SHLD        CRETRY
+        ;
+        ; Send write command to tape controller
+        ;
+        LXI         H,CUNIT
+        MOV         A,M
+        ORI         030H
+        OUT         CCMD_IO
+        CALL        CWT
+        RC
 
-non_system_intel_file:
-        JMP         check_next_intel_file
 
-system_transfer_complete:
+;//////////////////////////////////////
+
+copy_next_file:
+        ;
+        ; Copy complete, go copy next file
+        ;
+        LDA         sys_drive_type
+        CPI         'F'
+        JZ          check_next_intel_file
+        JMP         check_next_tape_file
+
+
+;//////////////////////////////////////
+
+transfer_from_disk_complete:
+        ANA         A
+        STC
+        RNZ
+transfered_from_tape_complete:
+        LHLD        CO_FCB
+        LDA         drive_type
+        CPI         'M'
+        JZ          transferred_from_tape_status
         ;
         ; Format of system disk complete, print status and quit
         ;
-        LHLD        CO_FCB
         LXI         D,format_sys_disk_ok_str
         CALL        PUT
-        RET
+        RC
+        JMP         quit_program
 
-
-;//////////////////////////////////////////////////////////////////////////////
-;//
-;//     Subroutines
-;//
-;//////////////////////////////////////////////////////////////////////////////
-
-        ;
-        ; Convert ASCII character in A to uppercase
-        ;
-to_uppercase:
-        CPI         'a'
-        RM
-        CPI         'z'+1
-        RP
-        ANI         0DFH
-        RET
-
-
-;//////////////////////////////////////////////////////////////////////////////
-
-        ;
-        ; Clear sector data-buffer used for disk operations
-        ;
-clear_data_buffer:
-        LXI         H,data_buffer
-        MVI         B,128
-        SUB         A
-clear_next_byte:
-        MOV         M,A
-        INX         H
-        DCR         B
-        JNZ         clear_next_byte
-        RET
+transferred_from_tape_status:
+        LXI         D,format_sys_tape_ok_str
+        JMP         print_unload_tape_and_quit
 
 
 ;//////////////////////////////////////////////////////////////////////////////
@@ -697,26 +1253,31 @@ check_other_drive_types:
         ;
         CPI         'M'
         JNZ         invalid_drive
-        CALL        INCHAR
-        RC
-        CPI         '0'
-        JM          invalid_drive
-        CPI         '4'
-        JP          invalid_drive
-        SUI         '0'
-        STA         drive_number
-        CALL        INCHAR
-        RC
-        CPI         ':'
-        JNZ         invalid_drive
-        CALL        INCHAR
-        RC
+        LDA         input_char
         ;
         ; Parse tape label from command line args
         ;
         LXI         D,tape_label_str
         CALL        FILENAME
         RC
+        STA         input_char
+        ;
+        ; Check if system-transfer switch is set in args
+        ;
+        CPI         ','
+        JNZ         no_more_tape_args
+        LHLD        CI_FCB
+        CALL        INCHAR
+        RC
+        STA         input_char
+        CALL        to_uppercase
+        CPI         'S'
+        JNZ         invalid_cli_args
+        STA         transfer_system_flag
+        CALL        INCHAR
+        RC
+        STA         input_char
+no_more_tape_args:
         ;
         ; Make sure there is no more command line args after this
         ;
@@ -802,10 +1363,108 @@ tape_file_track_done:
         CPI         4
         JNZ         prepare_tape_file_track
         ;
+        ; Transfer system if system flag set
+        ;
+        LDA         transfer_system_flag
+        ANA         A
+        JNZ         transfer_system
+        LXI         D,format_non_sys_tape_ok_str
+print_unload_tape_and_quit:
+        ;
+        ; Print status
+        ;
+        LHLD        CO_FCB
+        CALL        PUT
+        RC
+        ;
         ; Tape formatting complete, rewind and unload tape
         ;
         LDA         drive_number
         CALL        CUN
+        RC
+        JMP         quit_program
+
+
+;//////////////////////////////////////////////////////////////////////////////
+;//
+;//     Subroutines
+;//
+;//////////////////////////////////////////////////////////////////////////////
+
+        ;
+        ; Wait for tape controller to set the ready-bit
+        ;
+wait_for_tape_ready:
+        PUSH        PSW
+tape_wait_loop:
+        IN          CCMD_IO
+        ANI         001H
+        JNZ         tape_wait_loop
+        POP         PSW
+        RET
+
+
+;//////////////////////////////////////////////////////////////////////////////
+
+        ;
+        ; Make sure drive to be formatted is not the same as system drive
+        ;
+verify_valid_system_drive:
+        LDA         drive_number
+        MOV         C,A
+        LDA         sys_drive_number
+        CMP         C
+        RNZ
+        LDA         drive_type
+        MOV         C,A
+        LDA         sys_drive_type
+        CMP         C
+        RET
+
+
+;//////////////////////////////////////////////////////////////////////////////
+
+        ;
+        ; Copy C bytes pointed at by HL into memory pointed at by DE
+        ;
+copy_memory:
+        MOV         A,M
+        STAX        D
+        INX         H
+        INX         D
+        DCR         C
+        JNZ         copy_memory
+        RET
+
+
+;//////////////////////////////////////////////////////////////////////////////
+
+        ;
+        ; Convert ASCII character in A to uppercase
+        ;
+to_uppercase:
+        CPI         'a'
+        RM
+        CPI         'z'+1
+        RP
+        ANI         0DFH
+        RET
+
+
+;//////////////////////////////////////////////////////////////////////////////
+
+        ;
+        ; Clear sector data-buffer used for disk operations
+        ;
+clear_data_buffer:
+        LXI         H,data_buffer
+        MVI         B,128
+        SUB         A
+clear_next_byte:
+        MOV         M,A
+        INX         H
+        DCR         B
+        JNZ         clear_next_byte
         RET
 
 
