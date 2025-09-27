@@ -59,6 +59,10 @@
 ;//                 -> Adds a bug where the last 9 bytes of the tape buffer does
 ;//                    not get cleared to zero on program start
 ;//
+;//             1.6a: Entry at 0xC000
+;//
+;//                 -> Version ID written to 0x2700
+;//
 
 
 ;//////////////////////////////////////////////////////////////////////////////
@@ -89,6 +93,7 @@ CCAL        EQU     00091H      ; Reset tape cartridge
 ;
 TRK         EQU     02731H      ; Track and sector of last filesystem operation
 BUF2        EQU     02600H      ; Sector data of last filesystem operation
+SIGNATURE   EQU     02700H      ; Program signature
 
 ;
 ; TOS system calls
@@ -111,6 +116,17 @@ CO_FCB      EQU     0FF02H      ; Console output abstract file FCB pointer
 ;
 ATTR_S      EQU     002H        ; System file
 ATTR_A      EQU     008H        ; Alias file
+
+
+;//////////////////////////////////////////////////////////////////////////////
+;//
+;//     Signature
+;//
+;//////////////////////////////////////////////////////////////////////////////
+
+        ORG         SIGNATURE
+        DB          'ALIAS',NULL
+        DB          '106'
 
 
 ;//////////////////////////////////////////////////////////////////////////////
@@ -468,20 +484,6 @@ print_filename_final_part:
 ;//
 ;//////////////////////////////////////////////////////////////////////////////
 
-drive_designator_str:
-        DB          ':F0:',CR
-
-improper_unit_str:
-        DB          'IMPROPER UNIT SPECIFICATION',CR
-improper_parameters_str:
-        DB          'IMPROPER PARAMETER LIST',CR
-not_found_str:
-        DB          '   NOT FOUND',CR
-already_exists_str:
-        DB          '   EXISTS',CR
-made_alias_str:
-        DB          '   MADE ALIAS',CR
-
 previous_input_char:
         DB          NULL
 drive_number:
@@ -496,4 +498,18 @@ tape_end_block_buffer:
 alias_filetable_entry:
         DB          000H
         DS          31
+
+drive_designator_str:
+        DB          ':F0:',CR
+
+improper_unit_str:
+        DB          'IMPROPER UNIT SPECIFICATION',CR
+improper_parameters_str:
+        DB          'IMPROPER PARAMETER LIST',CR
+not_found_str:
+        DB          '   NOT FOUND',CR
+already_exists_str:
+        DB          '   EXISTS',CR
+made_alias_str:
+        DB          '   MADE ALIAS',CR
 
