@@ -25,6 +25,10 @@
 ;//
 ;//                 -> Will accept lowercase input at the prompt
 ;//
+;//             1.6: Entry at 0xC055
+;//
+;//                 -> Version ID written to 0x2700
+;//
 
 
 ;//////////////////////////////////////////////////////////////////////////////
@@ -36,6 +40,7 @@
 ;
 ; ASCII control characters
 ;
+NULL        EQU     000H        ; Null character
 LF          EQU     00AH        ; Line Feed
 CR          EQU     00DH        ; Cartridge Return
 
@@ -52,27 +57,30 @@ CBRDW       EQU     000AFH      ; Read data from tape cartridge with wait
 CBWRW       EQU     000B2H      ; Write data to tape cartridge with wait
 CBTMW       EQU     000B8H      ; Write tape mark to tape cartridge with wait
 
+;
+; XMON and TOS system data
+;
+SIGNATURE   EQU     02700H      ; Program signature
+
 
 ;//////////////////////////////////////////////////////////////////////////////
 ;//
-;//     Program entry
+;//     Signature
+;//
+;//////////////////////////////////////////////////////////////////////////////
+
+        ORG         SIGNATURE
+        DB          'MDUP',NULL,NULL
+        DB          '106'
+
+
+;//////////////////////////////////////////////////////////////////////////////
+;//
+;//     Strings
 ;//
 ;//////////////////////////////////////////////////////////////////////////////
 
         ORG         0C000H
-start:
-        JMP         beginning
-
-
-;//////////////////////////////////////////////////////////////////////////////
-;//
-;//     Strings and data
-;//
-;//////////////////////////////////////////////////////////////////////////////
-
-current_track:
-        DB          0
-
 welcome_prompt_str:
         DB          'CARTRIDGE COPY FROM 0 TO 1 REPLY Y TO START',CR
 copy_ok_str:
@@ -80,6 +88,25 @@ copy_ok_str:
 copy_aborted_str:
         DB          'NO COPY MADE',CR
 
+
+;//////////////////////////////////////////////////////////////////////////////
+;//
+;//     Program entry
+;//
+;//////////////////////////////////////////////////////////////////////////////
+
+start:
+        JMP         beginning
+
+
+;//////////////////////////////////////////////////////////////////////////////
+;//
+;//     Data
+;//
+;//////////////////////////////////////////////////////////////////////////////
+
+current_track:
+        DB          0
 preliminary_data_end_ptr:
         DW          00000H
 

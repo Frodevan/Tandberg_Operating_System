@@ -35,6 +35,10 @@
 ;//                 -> Accepts lowercase input
 ;//                 -> Adds a status print after remapping is done
 ;//
+;//             1.6: Entry at 0xC000
+;//
+;//                 -> Version ID written to 0x2700
+;//
 
 
 ;//////////////////////////////////////////////////////////////////////////////
@@ -56,6 +60,11 @@ DSRDW       EQU     00073H      ; Read from disk with wait
 DSWRW       EQU     00076H      ; Write to disk with wait
 
 ;
+; XMON and TOS system data
+;
+SIGNATURE   EQU     02700H      ; Program signature
+
+;
 ; TOS system calls
 ;
 INCHAR      EQU     0FD09H      ; Input single character
@@ -67,6 +76,17 @@ LOCDIR      EQU     0FD85H      ; Look up filetable entry of filename on disk
 ;
 CI_FCB      EQU     0FF00H      ; Console input abstract file FCB pointer
 CO_FCB      EQU     0FF02H      ; Console output abstract file FCB pointer
+
+
+;//////////////////////////////////////////////////////////////////////////////
+;//
+;//     Signature
+;//
+;//////////////////////////////////////////////////////////////////////////////
+
+        ORG         SIGNATURE
+        DB          'REMAP',NULL
+        DB          '106'
 
 
 ;//////////////////////////////////////////////////////////////////////////////

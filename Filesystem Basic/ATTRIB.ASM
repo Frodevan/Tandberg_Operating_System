@@ -61,6 +61,12 @@
 ;//                 -> Only writes file-entry back when all changes are made
 ;//                 -> Fixes file-extension deliminer bug from v1.3
 ;//
+;//             1.6: Entry at 0xC09F
+;//
+;//                 -> Version ID written to 0x2700
+;//                 -> No longer allows adding the system attribute to direct-
+;//                    access files
+;//
 
 
 ;//////////////////////////////////////////////////////////////////////////////
@@ -95,6 +101,7 @@ CLOCDIR     EQU     000C1H      ; Look up filetable entry of filename on tape
 ; XMON and TOS system data
 ;
 BUF2        EQU     02600H      ; Sector data of last filesystem operation
+SIGNATURE   EQU     02700H      ; Program signature
 TRK         EQU     02731H      ; Track and sector of last filesystem operation
 CPROG       EQU     02741H      ; Tape prog status
 CUNIT       EQU     02742H      ; Tape unit number
@@ -126,25 +133,27 @@ ATTR_I      EQU     001H        ; Invisible file
 ATTR_S      EQU     002H        ; System file
 ATTR_W      EQU     004H        ; Write-protected file
 ATTR_A      EQU     008H        ; Alias file
+ATTR_X      EQU     040H        ; Direct-access file
 
 
 ;//////////////////////////////////////////////////////////////////////////////
 ;//
-;//     Program entry
+;//     Signature
+;//
+;//////////////////////////////////////////////////////////////////////////////
+
+        ORG         SIGNATURE
+        DB          'ATTRIB'
+        DB          '106'
+
+
+;//////////////////////////////////////////////////////////////////////////////
+;//
+;//     Data
 ;//
 ;//////////////////////////////////////////////////////////////////////////////
 
         ORG         0C000H
-start:
-        JMP         beginning
-
-
-;//////////////////////////////////////////////////////////////////////////////
-;//
-;//     Strings and data
-;//
-;//////////////////////////////////////////////////////////////////////////////
-
 file_entry_ptr:
         DW          00000H
 
@@ -157,20 +166,7 @@ filename_str:
 input_char:
         DB          00h
 file_entry_attribute_byte_ptr:
-        DB          00h
-
-not_found_str:
-        DB          'NOT FOUND',CR
-attributes_altered_str:
-        DB          'ATTRIBUTES ALTERED',CR
-system_alias_error_str:
-        DB          'SYSTEM ATTRIBUTE ON ALIAS FILE NOT ALLOWED',CR
-improper_unit_str:
-        DB          'IMPROPER UNIT SPECIFICATION',CR
-improper_params_str:
-        DB          'IMPROPER PARAMETER LIST',CR
-unknown_attribute_str:
-        DB          'ATTRIBUTE UNKNOWN',CR
+        DW          00h
 
 drive_designator_str:
         DB          ':F0:',CR
@@ -202,7 +198,7 @@ to_uppercase:
 ;//
 ;//////////////////////////////////////////////////////////////////////////////
 
-beginning:
+start:
         ;
         ; Set default drive number
         ;
@@ -216,7 +212,7 @@ beginning:
         RC
         STA         input_char
         CPI         ' '
-        JZ          beginning
+        JZ          start
         ;
         ; Parse potential drive designator
         ;
@@ -362,7 +358,7 @@ add_attribute:
         ANI         ATTR_S
         JZ          valid_attribute_combination
         MOV         A,M
-        ANI         ATTR_A
+        ANI         ATTR_A + ATTR_X
         JZ          valid_attribute_combination
         LXI         D,system_alias_error_str
         JMP         print_string_and_quit
@@ -580,3 +576,23 @@ wait_for_ready_bit:
         JNZ         wait_for_ready_bit
         POP         PSW
         RET
+
+
+;//////////////////////////////////////////////////////////////////////////////
+;//
+;//     Strings
+;//
+;//////////////////////////////////////////////////////////////////////////////
+
+not_found_str:
+        DB          'NOT FOUND',CR
+attributes_altered_str:
+        DB          'ATTRIBUTES ALTERED',CR
+system_alias_error_str:
+        DB          'SYSTEM ATTRIBUTE ON ALIAS FILE NOT ALLOWED',CR
+improper_unit_str:
+        DB          'IMPROPER UNIT SPECIFICATION',CR
+improper_params_str:
+        DB          'IMPROPER PARAMETER LIST',CR
+unknown_attribute_str:
+        DB          'ATTRIBUTE UNKNOWN',CR

@@ -12,10 +12,8 @@
 ;//
 ;//                 Drive type T:
 ;//                     A       Floppy (IBM 3740, ASCII)
-;//                     B       Floppy (IBM 3740, ASCII)
 ;//                     F       Floppy (Intel ISIS)
 ;//                     I       Floppy (IBM 3740, EBCDIC)
-;//                     J       Floppy (IBM 3740, EBCDIC)
 ;//                     M       Tape
 ;//
 ;//                 Drive number n:
@@ -52,6 +50,11 @@
 ;//                 -> Recognizes B and J as valid drive types
 ;//                 -> Introduces a bug where drive types B and J are reported to
 ;//                    the user as type A and I respectively
+;//
+;//             1.6a: Entry at 0xC0AA
+;//
+;//                 -> Reverts all changes from v1.5b
+;//                 -> Version ID written to 0x2700
 ;//
 
 
@@ -91,6 +94,7 @@ CLOCDIR     EQU     000C1H      ; Look up filetable entry of filename on tape
 ; XMON and TOS system data
 ;
 BUF2        EQU     02600H      ; Sector data of last filesystem operation
+SIGNATURE   EQU     02700H      ; Program signature
 SSWITCH     EQU     0272CH      ; TOS system switch
 TRK         EQU     02731H      ; Track and sector of last filesystem operation
 CPROG       EQU     02741H      ; Tape prog status
@@ -127,12 +131,13 @@ ATTR_F      EQU     080H        ; Format file
 
 ;//////////////////////////////////////////////////////////////////////////////
 ;//
-;//     Legacy program entry
+;//     Signature
 ;//
 ;//////////////////////////////////////////////////////////////////////////////
 
-        ORG         0C000H
-        JMP         beginning
+        ORG         SIGNATURE
+        DB          'RENAME'
+        DB          '106'
 
 
 ;//////////////////////////////////////////////////////////////////////////////
@@ -141,6 +146,7 @@ ATTR_F      EQU     080H        ; Format file
 ;//
 ;//////////////////////////////////////////////////////////////////////////////
 
+        ORG         0C000H
 old_file_dir_entry_ptr:
         DW          00000H
 
@@ -159,18 +165,6 @@ old_filename:
 new_filename:
         DS          9
 
-not_found_str:
-        DB          'NOT FOUND',CR
-renamed_str:
-        DB          'RENAMED',CR
-protected_str:
-        DB          'PROTECTED',CR
-exists_str:
-        DB          'EXISTS',CR
-invalid_drive_str:
-        DB          'IMPROPER UNIT SPECIFICATION',CR
-invalid_args_str:
-        DB          'IMPROPER PARAMETER LIST',CR
 drive_designator_str:
         DB          ':F0:',CR
 
@@ -198,7 +192,6 @@ to_uppercase:
 ;//////////////////////////////////////////////////////////////////////////////
 
 start:
-beginning:
         ;
         ; Scan for first character of mandatory command line argument
         ;
@@ -224,15 +217,6 @@ scan_for_first_char:
         CPI         CR
         JZ          invalid_drive
         CALL        to_uppercase
-        CPI         'J'
-        JNZ         ibm_type_j_check_done
-        DCR         A
-ibm_type_j_check_done:
-        CPI         'B'
-        JNZ         ibm_type_b_check_done
-        DCR         A
-ibm_type_b_check_done:
-        STA         input_char
         STA         drive_designator_str + 1
         CALL        INCHAR
         RC
@@ -872,3 +856,23 @@ wait_for_ready_bit:
         JNZ         wait_for_ready_bit
         POP         PSW
         RET
+
+
+;//////////////////////////////////////////////////////////////////////////////
+;//
+;//     Strings
+;//
+;//////////////////////////////////////////////////////////////////////////////
+
+not_found_str:
+        DB          'NOT FOUND',CR
+renamed_str:
+        DB          'RENAMED',CR
+protected_str:
+        DB          'PROTECTED',CR
+exists_str:
+        DB          'EXISTS',CR
+invalid_drive_str:
+        DB          'IMPROPER UNIT SPECIFICATION',CR
+invalid_args_str:
+        DB          'IMPROPER PARAMETER LIST',CR
