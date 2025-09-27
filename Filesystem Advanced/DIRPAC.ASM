@@ -30,6 +30,10 @@
 ;//
 ;//                 -> First version I have
 ;//
+;//             1.6: Entry at 0xC10B
+;//
+;//                 -> Version ID written to 0x2700
+;//
 
 
 ;//////////////////////////////////////////////////////////////////////////////
@@ -50,6 +54,11 @@ DISK_TRACK  EQU     00100H      ; Multiplier for floppy disk track
 DISK_SECTOR EQU     00001H      ; Multiplier for floppy disk sector
 
 ;
+; XMON and TOS system data
+;
+SIGNATURE   EQU     02700H      ; Program signature
+
+;
 ; TOS system calls
 ;
 INCHAR      EQU     0FD09H      ; Input single character
@@ -67,21 +76,22 @@ CO_FCB      EQU     0FF02H      ; Console output abstract file FCB pointer
 
 ;//////////////////////////////////////////////////////////////////////////////
 ;//
-;//     Program entry
+;//     Signature
+;//
+;//////////////////////////////////////////////////////////////////////////////
+
+        ORG         SIGNATURE
+        DB          'DIRPAC'
+        DB          '106'
+
+
+;//////////////////////////////////////////////////////////////////////////////
+;//
+;//     Data
 ;//
 ;//////////////////////////////////////////////////////////////////////////////
 
         ORG         0C000H
-start:
-        JMP         beginning
-
-
-;//////////////////////////////////////////////////////////////////////////////
-;//
-;//     Strings and data
-;//
-;//////////////////////////////////////////////////////////////////////////////
-
 drive_number:
         DB          0
 input_track_sector:
@@ -102,11 +112,6 @@ input_data_buffer:
 output_data_buffer:
         DS          128
 
-completed_ok_str:
-        DB          'DIRECTORY PACKED',CR
-invalid_drive_str:
-        DB          'IMPROPER UNIT SPECIFICATION',CR
-
 
 ;//////////////////////////////////////////////////////////////////////////////
 ;//
@@ -114,6 +119,7 @@ invalid_drive_str:
 ;//
 ;//////////////////////////////////////////////////////////////////////////////
 
+start:
 beginning:
         ;
         ; Set default drive to floppy disk drive 0
@@ -341,3 +347,15 @@ to_uppercase:
         RP
         ANI         0DFH
         RET
+
+
+;//////////////////////////////////////////////////////////////////////////////
+;//
+;//     Strings
+;//
+;//////////////////////////////////////////////////////////////////////////////
+
+completed_ok_str:
+        DB          'DIRECTORY PACKED',CR
+invalid_drive_str:
+        DB          'IMPROPER UNIT SPECIFICATION',CR

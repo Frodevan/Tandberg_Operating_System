@@ -27,6 +27,10 @@
 ;//
 ;//                 -> Accepts lowercase input
 ;//
+;//             1.6: Entry at 0xC063
+;//
+;//                 -> Version ID written to 0x2700
+;//
 
 
 ;//////////////////////////////////////////////////////////////////////////////
@@ -38,6 +42,7 @@
 ;
 ; ASCII control characters
 ;
+NULL        EQU     000H        ; Null character
 LF          EQU     00AH        ; Line Feed
 CR          EQU     00DH        ; Cartridge Return
 
@@ -52,16 +57,21 @@ CCAL        EQU     00091H      ; Reset tape cartridge
 CUN         EQU     000A6H      ; Rewind and unload tape cartridge
 CBRDW       EQU     000AFH      ; Read data from tape cartridge with wait
 
+;
+; XMON and TOS system data
+;
+SIGNATURE   EQU     02700H      ; Program signature
+
 
 ;//////////////////////////////////////////////////////////////////////////////
 ;//
-;//     Program entry
+;//     Signature
 ;//
 ;//////////////////////////////////////////////////////////////////////////////
 
-        ORG         0C000H
-start:
-        JMP         beginning
+        ORG         SIGNATURE
+        DB          'DRSTC',NULL
+        DB          '106'
 
 
 ;//////////////////////////////////////////////////////////////////////////////
@@ -70,12 +80,13 @@ start:
 ;//
 ;//////////////////////////////////////////////////////////////////////////////
 
-track_number:
-        DS          1
-
+        ORG         0C000H
 welcome_prompt_str:
         DB          'RESTORE FROM CARTRIDGE 0 TRK 0 TO DISKETTE 0  TYPE Y TO START',CR
         DB          'END OF RESTORE',CR
+
+track_number:
+        DS          1
 
 
 ;//////////////////////////////////////////////////////////////////////////////
@@ -113,7 +124,7 @@ print_next_char:
 ;//
 ;//////////////////////////////////////////////////////////////////////////////
 
-beginning:
+start:
         ;
         ; Wait for user confirmation
         ;

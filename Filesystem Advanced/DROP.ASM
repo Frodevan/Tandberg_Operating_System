@@ -69,6 +69,13 @@
 ;//                    instead of the status-message for "Illegal input parameter".
 ;//                 -> Ignores leading spaces before numbers
 ;//
+;//             1.6a: Entry at 0xC000
+;//
+;//                 -> Version ID written to 0x2700
+;//                 -> Fixes a bug where too many newlines were needed to quit
+;//                 -> Reintroduces the bug where the blocks will be freed instead
+;//                    of reserved
+;//
 
 
 ;//////////////////////////////////////////////////////////////////////////////
@@ -95,6 +102,7 @@ DSWRW       EQU     00076H      ; Write to disk with wait
 ;
 BUF2        EQU     02600H      ; Sector data of last filesystem operation
 BUF1        EQU     02680H      ; Additional sector data for filesysyem operation
+SIGNATURE   EQU     02700H      ; Program signature
 MAP1        EQU     02739H      ; Block address of first half of mapfile data
 MAP2        EQU     0273BH      ; Block address of last half of mapfile data
 
@@ -110,6 +118,17 @@ OUTCHAR     EQU     0FD0CH      ; Output single character
 CI_FCB      EQU     0FF00H      ; Console input abstract file FCB pointer
 CO_FCB      EQU     0FF02H      ; Console output abstract file FCB pointer
 SI_FCB      EQU     0FF04H      ; Standard input abstract file FCB pointer
+
+
+;//////////////////////////////////////////////////////////////////////////////
+;//
+;//     Signature
+;//
+;//////////////////////////////////////////////////////////////////////////////
+
+        ORG         SIGNATURE
+        DB          'DROP',NULL,NULL
+        DB          '106'
 
 
 ;//////////////////////////////////////////////////////////////////////////////
@@ -160,6 +179,7 @@ flush_next_input_char:
         RC
         CPI         CR
         JNZ         flush_next_input_char
+        STA         input_char
         JMP         drive_nr_set
 
 use_default_drive:
@@ -309,7 +329,8 @@ bitmask_ready:
         ;
         ; Reserve block in mapfile pt6: Mark block as reserved
         ;
-        ORA         M
+        CMA
+        ANA         M
         MOV         M,A
         ;
         ; Check if we are at end of line of instructions
