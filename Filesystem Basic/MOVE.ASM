@@ -81,6 +81,10 @@
 ;//
 ;//                 -> Version ID written to 0x2700
 ;//
+;//             1.6b: Entry at 0xC000
+;//
+;//                 -> Adds newline on END-OF-BLOCK status in paged modes
+;//
 
 
 ;//////////////////////////////////////////////////////////////////////////////
@@ -366,8 +370,10 @@ read_next_input_byte:
         ;
         ; Get next input byte
         ;
+input_data_call:
         CALL        INCHAR
         JC          error_reading_input
+input_data_call_done:
         ;
         ; Check if input data needs to be echoed to console
         ;
@@ -428,7 +434,7 @@ error_reading_input:
         ; Check for end-of-block for IBM file type B and J
         ;
         CPI         ERROR_5C
-        JZ          read_next_input_byte
+        JZ          check_newline_from_ibm_file
         ;
         ; Check for end of file
         ;
@@ -436,6 +442,39 @@ error_reading_input:
         JZ          end_of_input
         STC
         JMP         cleanup_and_quit
+
+check_newline_from_ibm_file:
+        ;
+        ; Check if any paged mode is active
+        ;
+        LDA         console_paged_output_flag
+        ORA         A
+        JNZ         add_newline_from_ibm_file
+        LDA         printer_paged_output_flag
+        ORA         A
+        JZ          read_next_input_byte
+
+add_newline_from_ibm_file:
+        ;
+        ; If so, inject a cartridge return and force injection of linefeed next
+        ;
+        PUSH        H
+        LXI         H,inject_linefeed
+        SHLD        input_data_call+1
+        MVI         A,CR
+        POP         H
+        JMP         input_data_call_done
+
+inject_linefeed:
+        ;
+        ; Inject linefeed and restore input data call instruction
+        ;
+        XTHL
+        LXI         H,INCHAR
+        SHLD        input_data_call+1
+        MVI         A,LF
+        POP         H
+        JMP         input_data_call_done
 
 end_of_input:
         ;
