@@ -82,6 +82,12 @@
 ;//                 -> Recognizes the X (Direct-Access) file attribute
 ;//                 -> Major bugfixes
 ;//
+;//             v1.61: Entry at 0xDB03
+;//
+;//                 -> IBM floppy disk support stable
+;//                 -> PHYSINT and file assigning stable
+;//                 -> Adds a handfull of bugfixes
+;//
 
 
 ;//////////////////////////////////////////////////////////////////////////////
@@ -851,7 +857,7 @@ error_str:
 newline_str:
         DB          CR
 title_str:
-        DB          'TOS21 VER. 1.6',CR
+        DB          'TOS21 VER. 1.61',CR
 
 
 ;//////////////////////////////////////////////////////////////////////////////
@@ -2786,6 +2792,11 @@ read_write_return:
 ;//                 -> Clears input buffer to prompts in the case of a line buffer
 ;//                    overflow exception
 ;//
+;//             v1.61:
+;//
+;//                 -> IBM READs will set the buffer length to the first linebreak
+;//                    in data if not BLOCKLINE and the detect-EOF mode flag is set
+;//
 
 
 ;//////////////////////////////////////////////////////////////////////////////
@@ -2808,11 +2819,111 @@ T_READ:
         JM          read_wrong_file_type
         JZ          read_from_type_4
         ;
+        ; Set up stack for return from block device read
+        ;
+        PUSH        H
+        PUSH        H
+        LXI         H,read_type_5_return
+        XTHL
+        ;
         ; Read next block from block-device
         ;
         PUSH        D
         LXI         D,FCB_READ
         JMP         read_write_type_5_driver_call
+
+
+;//////////////////////////////////////
+
+read_type_5_return:
+        POP         H
+        RC
+        ;
+        ; Save registers
+        ;
+        PUSH        PSW
+        PUSH        B
+        PUSH        D
+        PUSH        H
+        ;
+        ; Check pending end of file flag
+        ;
+        INX         H
+        MOV         A,M             ; FCB + FCB_MODE
+        ANI         FM_EOF_NEXT
+        JZ          read_type_5_cleanup_done
+        ;
+        ; If so, check for IBM format
+        ;
+        POP         H
+        PUSH        H
+        LXI         D,FCB_DRVFMT
+        DAD         D
+        MOV         A,M             ; FCB + FCB_DRVFMT
+        ANI         002H
+        JZ          read_type_5_cleanup_done
+        ;
+        ; If so, check for BLOCKLINE mode
+        ;
+        MOV         A,M             ; FCB + FCB_DRVFMT
+        ANI         DF_BLKLINE
+        JNZ         read_type_5_cleanup_done
+        ;
+        ; Get pointer to last character in block buffer
+        ;
+        POP         H
+        PUSH        H
+        LXI         D,FCB_BUFLEN
+        DAD         D
+        MOV         C,M             ; FCB + FCB_BUFLEN
+        INX         H
+        MOV         B,M
+        INX         H
+        MOV         E,M             ; FCB + FCB_BUFPTR
+        INX         H
+        MOV         D,M
+        XCHG
+        DAD         B
+        DCX         H
+        ;
+        ; Scan for last newline in last block of IBM non-BLOCKLINE file
+        ;
+read_type_5_scan_for_line_end_loop:
+        MOV         A,M
+        CPI         LF
+        JZ          read_type_5_end_of_line_found
+        CPI         CR
+        JZ          read_type_5_end_of_line_found
+        ;
+        ; Advance one character backward and check for end of line
+        ;
+        DCX         H
+        DCX         B
+        MOV         A,C
+        ORA         B
+        JNZ         read_type_5_scan_for_line_end_loop
+        JMP         read_type_5_cleanup_done
+
+read_type_5_end_of_line_found:
+        ;
+        ; Turncate last block of file to final newline
+        ;
+        POP         H
+        PUSH        H
+        LXI         D,FCB_BUFLEN
+        DAD         D
+        MOV         M,C
+        INX         H
+        MOV         M,B
+read_type_5_cleanup_done:
+        ;
+        ; Restore registers
+        ;
+        POP         H
+        POP         D
+        POP         B
+        POP         PSW
+        RET
 
 
 ;//////////////////////////////////////
@@ -4293,6 +4404,18 @@ intel_file_first_linking_block_addr:
 ;//////////////////////////////////////
 
         ;
+        ; Close Intel output file at HL, setting the map semaphore in advance
+        ;
+intel_close_output_with_semaphore:
+        MVI         A,TRUE
+        STA         MAPSEM
+        CALL        intel_close_output
+        JMP         intel_release_mapfile_semaphore
+
+
+;//////////////////////////////////////
+
+        ;
         ; Close Intel output file at HL
         ;
 intel_close_output:
@@ -4745,6 +4868,10 @@ intel_mapfile_name:
 ;//                 -> Adds a bug that causes the blocks of the same track or
 ;//                    sector as the last block in file, to be moved to the error
 ;//                    tracks
+;//
+;//             v1.61:
+;//
+;//                 -> Fixes error track bug from v1.6
 ;//
 
 
@@ -5414,30 +5541,6 @@ ibm_next_data_block_ready:
         DCX         H
         MOV         M,C             ; FCB + 01CH, sector of next data record
         POP         B
-        ;
-        ; Check if record is on an error-track
-        ;
-        INX         H
-        INX         H
-        MOV         A,M             ; FCB + 01EH, sector number of file tail
-        CMP         B
-        JNZ         not_first_error_track
-        ;
-        ; Use track 75 instead of error track 1
-        ;
-        MVI         B,75
-        JMP         error_track_check_done
-
-not_first_error_track:
-        INX         H
-        MOV         A,M             ; FCB + 01FH, track number of file tail
-        CMP         B
-        JNZ         error_track_check_done
-        ;
-        ; Use track 76 instead of error track 2
-        ;
-        MVI         B,76
-error_track_check_done:
         ;
         ; Get pointer to block data buffer
         ;
@@ -6933,7 +7036,7 @@ T_TABIN:
         JMP         intel_read_input
         JMP         intel_write_output
         JMP         intel_close_input
-        JMP         intel_close_output
+        JMP         intel_close_output_with_semaphore
 
 
 ;//////////////////////////////////////////////////////////////////////////////
@@ -7011,6 +7114,10 @@ T_LOAD:
 ;//                    modes being input and output files.
 ;//                 -> Fixes the PHYSINT block device format bug from v1.5a
 ;//                 -> Fixes the PHYSINT IBM filename padding bug from v1.5a
+;//
+;//             v1.61:
+;//
+;//                 -> Fixes the PHYSINT empty IBM filename bug from v1.5b
 ;//
 
 
@@ -7904,7 +8011,7 @@ physint_open_routine_ready:
         LDA         physint_device_format
         ANI         002H
         JZ          physint_get_fiename
-        LXI         B,00800H
+        LXI         B,00801H
 physint_get_fiename:
         ;
         ; Parse and validate filename

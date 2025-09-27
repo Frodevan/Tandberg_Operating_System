@@ -12,8 +12,10 @@
 ;//
 ;//                 Drive type T:
 ;//                     A       Floppy (IBM 3740, ASCII)
+;//                     B       Floppy (IBM 3740, ASCII)
 ;//                     F       Floppy (Intel ISIS)
 ;//                     I       Floppy (IBM 3740, EBCDIC)
+;//                     J       Floppy (IBM 3740, EBCDIC)
 ;//                     M       Tape
 ;//
 ;//                 Drive number n:
@@ -55,6 +57,11 @@
 ;//
 ;//                 -> Reverts all changes from v1.5b
 ;//                 -> Version ID written to 0x2700
+;//
+;//             1.6b: Entry at 0xC0AA
+;//
+;//                 -> Re-introduces support for the B and J drive types without
+;//                    the bug in v1.5b
 ;//
 
 
@@ -254,7 +261,11 @@ drive_set:
         LDA         drive_designator_str + 1
         CPI         'I'
         JZ          rename_ibm_ebcdic
+        CPI         'J'
+        JZ          rename_ibm_ebcdic
         CPI         'A'
+        JZ          rename_ibm_ascii
+        CPI         'B'
         JZ          rename_ibm_ascii
         POP         PSW
         ;

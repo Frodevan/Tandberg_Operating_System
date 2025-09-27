@@ -11,8 +11,10 @@
 ;//
 ;//                 Drive type T:
 ;//                     A       Floppy (IBM 3740, ASCII)
+;//                     B       Floppy (IBM 3740, ASCII)
 ;//                     F       Floppy (Intel ISIS)
 ;//                     I       Floppy (IBM 3740, EBCDIC)
+;//                     J       Floppy (IBM 3740, EBCDIC)
 ;//                     M       Tape
 ;//
 ;//                 Drive number n:
@@ -58,6 +60,11 @@
 ;//
 ;//                 -> Reverts all changes from v1.5b
 ;//                 -> Version ID written to 0x2700
+;//
+;//             1.6b: Entry at 0xC0AD
+;//
+;//                 -> Re-introduces support for the B and J drive types without
+;//                    the bug in v1.5b
 ;//
 
 
@@ -254,7 +261,11 @@ beginning:
         JZ          valid_drive_type
         CPI         'A'
         JZ          valid_drive_type
+        CPI         'B'
+        JZ          valid_drive_type
         CPI         'I'
+        JZ          valid_drive_type
+        CPI         'J'
         JZ          valid_drive_type
         CPI         'M'
         JNZ         invalid_drive
@@ -285,7 +296,11 @@ valid_drive_type:
         LDA         drive_designator+1
         CPI         'I'
         JZ          delete_ibm_ebcdic_file
+        CPI         'J'
+        JZ          delete_ibm_ebcdic_file
         CPI         'A'
+        JZ          delete_ibm_ascii_file
+        CPI         'B'
         JZ          delete_ibm_ascii_file
         POP         PSW
 parse_filename:
