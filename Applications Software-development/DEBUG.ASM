@@ -18,6 +18,7 @@
 ;//             1.6: Entry at 0xC000
 ;//
 ;//                 -> Version ID written to 0x2700
+;//                 -> Sets XMON debug flag for later XMON versions that needs this
 ;//
 
 
@@ -42,6 +43,7 @@ NULL        EQU     000H        ; Null character
 ;
 SIGNATURE   EQU     02700H      ; Program signature
 DEBUG       EQU     0272DH      ; TOS debug flag
+DEBUGX      EQU     0275EH      ; XMON debug flag
 
 
 ;//////////////////////////////////////////////////////////////////////////////
@@ -65,4 +67,5 @@ DEBUG       EQU     0272DH      ; TOS debug flag
 start:
         MVI         A,TRUE
         STA         DEBUG
+        STA         DEBUGX
         RET

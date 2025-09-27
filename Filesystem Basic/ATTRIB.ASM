@@ -64,6 +64,8 @@
 ;//             1.6: Entry at 0xC09F
 ;//
 ;//                 -> Version ID written to 0x2700
+;//                 -> No longer allows adding the system attribute to direct-
+;//                    access files
 ;//
 
 
@@ -131,6 +133,7 @@ ATTR_I      EQU     001H        ; Invisible file
 ATTR_S      EQU     002H        ; System file
 ATTR_W      EQU     004H        ; Write-protected file
 ATTR_A      EQU     008H        ; Alias file
+ATTR_X      EQU     040H        ; Direct-access file
 
 
 ;//////////////////////////////////////////////////////////////////////////////
@@ -146,20 +149,11 @@ ATTR_A      EQU     008H        ; Alias file
 
 ;//////////////////////////////////////////////////////////////////////////////
 ;//
-;//     Legacy program entry
-;//
-;//////////////////////////////////////////////////////////////////////////////
-
-        ORG         0C000H
-        JMP         beginning
-
-
-;//////////////////////////////////////////////////////////////////////////////
-;//
 ;//     Data
 ;//
 ;//////////////////////////////////////////////////////////////////////////////
 
+        ORG         0C000H
 file_entry_ptr:
         DW          00000H
 
@@ -172,7 +166,7 @@ filename_str:
 input_char:
         DB          000H
 file_entry_attribute_byte_ptr:
-        DB          000H
+        DW          00000H
 
 drive_designator_str:
         DB          ':F0:',CR
@@ -205,7 +199,6 @@ to_uppercase:
 ;//////////////////////////////////////////////////////////////////////////////
 
 start:
-beginning:
         ;
         ; Set default drive number
         ;
@@ -219,7 +212,7 @@ beginning:
         RC
         STA         input_char
         CPI         ' '
-        JZ          beginning
+        JZ          start
         ;
         ; Parse potential drive designator
         ;
@@ -365,7 +358,7 @@ add_attribute:
         ANI         ATTR_S
         JZ          valid_attribute_combination
         MOV         A,M
-        ANI         ATTR_A
+        ANI         ATTR_A + ATTR_X
         JZ          valid_attribute_combination
         LXI         D,system_alias_error_str
         JMP         print_string_and_quit

@@ -81,6 +81,8 @@
 ;//             v2.3: Entry at 0xBC00
 ;//
 ;//                 -> Version ID written to 0x2700
+;//                 -> EQU can now use symbols in the code- or data-segment
+;//                 -> Asserts on long-line cases for DB instructions
 ;//
 
 ;//////////////////////////////////////////////////////////////////////////////
@@ -1222,7 +1224,7 @@ p1_handle_equ:
         ;
         ; Validate that it's a local absolute value
         ;
-        ANI         BASE_CSEG + BASE_DSEG + BASE_EXT + EXP_TP_END + EXP_TP_ERR
+        ANI         BASE_EXT + EXP_TP_END + EXP_TP_ERR
         JZ          p1_equ_update_symbol
         ;
         ; Otherwise mark error and make sure expression is not assigned a type
@@ -1245,13 +1247,23 @@ p1_equ_update_symbol:
         LHLD        expression_value
         XCHG
         ;
-        ; Override symbol base to become the same as EQU expression
+        ; Override symbol base to become the same as EQU expression...
         ;
         MOV         A,M
         ANI         BASE_EXT + SYM_TP_PUB + SYM_TP_DUPL
         MOV         B,A
         LDA         expression_flags
         ORA         B
+        ;
+        ; ...but not if it's already in the code- or data-segment
+        ;
+        MOV         B,A
+        ANI         BASE_CSEG + BASE_DSEG
+        MVI         A,NOT-NULL
+        JZ          p1_equ_expr_base_mask_ready
+        MVI         A,NOT-BASE_ABS
+p1_equ_expr_base_mask_ready:
+        ANA         B
         MOV         M,A
         ;
         ; Set assigned symbol value
@@ -2330,12 +2342,57 @@ db_byte_value_added:
         LDA         in_byte_string_expr_flag
         ORA         A
         JNZ         p2_parse_next_byteval
+
+
+;//////////////////////////////////////
+
         ;
-        ; Write final data to object file if there is any pending data
+        ; Check for end of the instruction
+        ;
+        LDA         expr_next_char
+        CPI         ','
+        JZ          db_end_finish
+        CPI         CR
+        JZ          db_end_finish
+        CPI         SEMICOLON
+        JZ          db_end_finish
+        ;
+        ; Otherwise skip any whitespace after instruction
+        ;
+        LHLD        instr_str_first_arg_ptr
+db_end_skip_whitespace:
+        MOV         A,M
+        INX         H
+        CPI         ' '
+        JZ          db_end_skip_whitespace
+        ;
+        ; ...and assume start of comment or end of line here
+        ;
+        CPI         SEMICOLON
+        JZ          db_end_finish
+        CPI         CR
+        JZ          db_end_finish
+        MVI         A,LONG_LN_ERR
+        STA         current_error_nr
+db_end_finish:
+        ;
+        ; Check if there is any pending data
         ;
         LDA         current_line_bin_data_len
         ORA         A
-        JZ          second_pass_main
+        JNZ         db_byte_write_pending
+        ;
+        ; Otherwise print any pending errors
+        ;
+        LDA         current_error_nr
+        ORA         A
+        CNZ         list_error_if_any
+        JMP         second_pass_main
+
+        ;
+        ; Write final data to object file
+        ;
+db_byte_write_pending:
         CALL        write_data_and_list_db_line
         JMP         second_pass_main
 
@@ -6975,4 +7032,5 @@ rasm_title_str:
         DB          'TDV 2100 ASSEMBLER V.2.3',NULL,CR
 error_str:
         DB          '****ERROR****: 00',CR,NULL
+        DB          NULL
 end_of_program:

@@ -11,10 +11,8 @@
 ;//
 ;//                 Drive type T:
 ;//                     A       Floppy (IBM 3740, ASCII)
-;//                     B       Floppy (IBM 3740, ASCII)
 ;//                     F       Floppy (Intel ISIS)
 ;//                     I       Floppy (IBM 3740, EBCDIC)
-;//                     J       Floppy (IBM 3740, EBCDIC)
 ;//                     M       Tape
 ;//
 ;//                 Drive number n:
@@ -58,6 +56,7 @@
 ;//
 ;//             1.6a: Entry at 0xC0AD
 ;//
+;//                 -> Reverts all changes from v1.5b
 ;//                 -> Version ID written to 0x2700
 ;//
 
@@ -250,14 +249,6 @@ beginning:
         CALL        INCHAR
         RC
         CALL        to_uppercase
-        CPI         'B'
-        JNZ         ibm_type_b_check_done
-        DCR         A
-ibm_type_b_check_done:
-        CPI         'J'
-        JNZ         ibm_type_j_check_done
-        DCR         A
-ibm_type_j_check_done:
         STA         input_char
         CPI         'F'
         JZ          valid_drive_type

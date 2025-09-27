@@ -72,6 +72,9 @@
 ;//             1.6a: Entry at 0xC000
 ;//
 ;//                 -> Version ID written to 0x2700
+;//                 -> Fixes a bug where too many newlines were needed to quit
+;//                 -> Reintroduces the bug where the blocks will be freed instead
+;//                    of reserved
 ;//
 
 
@@ -185,6 +188,7 @@ flush_next_input_char:
         RC
         CPI         CR
         JNZ         flush_next_input_char
+        STA         input_char
         JMP         drive_nr_set
 
 use_default_drive:
@@ -334,7 +338,8 @@ bitmask_ready:
         ;
         ; Reserve block in mapfile pt6: Mark block as reserved
         ;
-        ORA         M
+        CMA
+        ANA         M
         MOV         M,A
         ;
         ; Check if we are at end of line of instructions
