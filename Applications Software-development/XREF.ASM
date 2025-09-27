@@ -72,6 +72,10 @@
 ;//             1.5: Entry at 0xC800
 ;//
 ;//                 -> Version ID written to 0x2700
+;//                 -> Does not hardcode end of free ram at 0xC7FF, this limit is
+;//                    now set based on the program entry-point at assembly time
+;//                 -> Fixes the PL extra-argument bug from v1.5
+;//                 -> Fixes the opcode identification bug from v1.2
 ;//
 
 
@@ -145,6 +149,7 @@ ERROR_2E    EQU     02EH        ; IMPROPER ASSIGNMENT FORMAT
 
         ORG         0C800H
 start:
+program_origin:
         ;
         ; Zero all uninitialized working variables
         ;
@@ -152,11 +157,19 @@ start:
         MVI         A,variables_memory_end - variables_memory
         CALL        clear_memory
         ;
+        ; Set end of free RAM of last memory pool to where program starts
+        ;
+        LXI         H,program_origin
+        DCR         H
+        MOV         A,H
+        STA         free_mem_last_addr_msb
+        ;
         ; Print program title
         ;
         LXI         D,program_title_str
         LHLD        CO_FCB
         CALL        PUT
+        RC
 
 
 ;//////////////////////////////////////
@@ -175,13 +188,13 @@ start:
         CALL        test_memory
         JNZ         ram_to_7fff
         ;
-        ; Memory at both 4000H & 8000H, continous ram pool from 4000H to C7FFH
+        ; Memory at both 4000H & 8000H, continous ram pool from 4000H
         ;
-ram_to_c7ff:
+ram_to_end:
         ;
-        ; Set free memory end to C7FFH
+        ; Set free memory end to last possible address
         ;
-        MVI         A,0C7H
+        LDA         free_mem_last_addr_msb
 set_primary_ram_pool_end:
         STA         free_mem_end_addr_msb
         JMP         verify_files
@@ -194,7 +207,7 @@ check_ram_from_8000:
         CALL        test_memory
         JNZ         ram_from_c000
         ;
-        ; Memory at 8000H only, continous ram pool from 8000H to C7FFH
+        ; Memory at 8000H only, continous ram pool from 8000H
         ;
         JMP         set_continous_ram_pool
 
@@ -207,15 +220,15 @@ ram_to_7fff:
 
 ram_from_c000:
         ;
-        ; No extra memory, so only ram pool available is at C000H-C7FFH
+        ; No extra memory, so only ram pool available is from C000H
         ;
         LXI         H,0C000H
 set_continous_ram_pool:
         ;
-        ; Use one continous block as ram pool, ending at C7FFH
+        ; Use one continous block as ram pool, ending at last possible address
         ;
         SHLD        free_mem_start_addr
-        JMP         ram_to_c7ff
+        JMP         ram_to_end
 
 
 ;//////////////////////////////////////
@@ -342,8 +355,11 @@ implied_page_length_arg:
         JC          parse_next_cli_arg
         CPI         '9'+1
         JNC         parse_next_cli_arg
+        JMP         parse_default_page_length_arg
+
 parse_page_length_arg:
         INX         H
+parse_default_page_length_arg:
         ;
         ; Set page length from command line argument
         ;
@@ -514,6 +530,12 @@ compare_next_opcode:
         XCHG
         SHLD        current_opcode_db_item_len
         ;
+        ; Get length of opcode name
+        ;
+        DCR         L
+        DCR         L
+        MOV         C,L
+        ;
         ; Compare name of opcode to current word
         ;
         LHLD        input_line_ptr
@@ -523,7 +545,32 @@ compare_opcode_char:
         ;
         LDAX        D
         CMP         M
-        JZ          compare_next_opcode_char
+        JNZ         compare_opcode_done
+        ;
+        ; Advance to next character if match
+        ;
+        INX         H
+        INX         D
+        DCR         C
+        JNZ         compare_opcode_char
+compare_opcode_done:
+        ;
+        ; Check if current word matched entrie opcode name from database entry
+        ;
+        XRA         A
+        ORA         C
+        JNZ         opcode_not_match
+        ;
+        ; Verify that opcode name is not just the start of the current word
+        ;
+        MOV         A,M
+        CPI         '0'
+        JC          opcode_match_found
+        CPI         '9'+1
+        JC          opcode_not_match
+        CPI         'A'-1
+        JC          opcode_match_found
+opcode_not_match:
         ;
         ; If opcode does not match, check for end of opcode database
         ;
@@ -537,20 +584,6 @@ compare_opcode_char:
         LHLD        opcode_database_ptr
         DAD         D
         JMP         compare_next_opcode
-
-compare_next_opcode_char:
-        ;
-        ; Check for end of word in input string
-        ;
-        INX         H
-        MOV         A,M
-        CPI         ' '
-        JZ          opcode_match_found
-        ;
-        ; Otherwise advance to next character of opcode to compare with
-        ;
-        INX         D
-        JMP         compare_opcode_char
 
 opcode_match_found:
         ;
@@ -1103,14 +1136,16 @@ available_mem_block_full:
         ;
         ; Check if available memory is continous or split
         ;
-        CPI         0C7H
+        MOV         E,A
+        LDA         free_mem_last_addr_msb
+        CMP         E
         JZ          completely_out_of_memory
         ;
         ; If split, forget about first block and start using second block
         ;
         LXI         H,0C000H
         SHLD        free_mem_start_addr
-        MVI         A,0C7H
+        LDA         free_mem_last_addr_msb
         STA         free_mem_end_addr_msb
         POP         PSW
         JMP         allocate_in_current_block
@@ -1742,6 +1777,8 @@ line_counter_bcd_nr:
         DS          2
 free_mem_end_addr_msb:
         DS          1
+free_mem_last_addr_msb:
+        DS          1
 is_label_def_flag:
         DS          1
 first_bcd_digit_found_flag:
@@ -1893,7 +1930,7 @@ header_str:
 four_newline_str:
         DB          LF,LF,LF,LF,CR
 program_title_str:
-        DB          'TOS21 SYMBOL CROSS REFERENCE, V1.4'
+        DB          'TOS21 SYMBOL CROSS REFERENCE, V1.5'
 program_title_str_end:
         DB          CR
 page_number_str:

@@ -10,6 +10,8 @@
 ;//         If the S option is used, the user will be prompted to swap disk every
 ;//         once in a while. This prompt will take any keypress to continue.
 ;//
+;//         NOTE: Will not support sectors written using the deleted address marks.
+;//
 ;//         NOTE: This program derives the size of user-memory on its own, and the
 ;//               code used expects a gap between start of user-memory and XMON-
 ;//               memory. This is true for machines with 48k RAM or less, but not
@@ -53,6 +55,7 @@
 ;//             1.6a: Entry at 0x2000
 ;//
 ;//                 -> Version ID written to 0x2700
+;//                 -> Reverts all changes from v1.5b
 ;//
 
 
@@ -82,7 +85,6 @@ INDISP      EQU     0006AH      ; Get character at console cursor
 DCALW       EQU     00070H      ; Reset disk drive with wait
 DSRDW       EQU     00073H      ; Read from disk with wait
 DSWRW       EQU     00076H      ; Write to disk with wait
-DSDLW       EQU     00079H      ; Write deleted to disk with wait
 
 ;
 ; XMON and TOS system data
@@ -90,11 +92,6 @@ DSDLW       EQU     00079H      ; Write deleted to disk with wait
 SIGNATURE   EQU     02700H      ; Program signature
 BUFLIM      EQU     0272EH      ; Lowest address of current TOS buffers
 KEYBUF      EQU     02780H      ; Console input buffer
-
-;
-; TOS Errors
-;
-ERROR_20    EQU     020H        ; DELETED DATA RECORD
 
 
 ;//////////////////////////////////////////////////////////////////////////////
@@ -151,7 +148,7 @@ ram_test_loop:
         ;
         ; Prepare to set up a list of pointers to individual track data buffers
         ;
-        LXI         D,26*(1+128)
+        LXI         D,26*128
         LXI         B,track_buffer_list+2
         XRA         A
         STA         track_buffer_count
@@ -400,7 +397,7 @@ verify_current_track:
         LHLD        track_buffer_list
         XCHG
         LHLD        current_track_buffer_ptr
-        LXI         B,26*(1+128)
+        LXI         B,26*128
 verify_next_byte:
         LDAX        D
         CMP         M
@@ -532,25 +529,10 @@ print_str:
 read_track:
         MVI         C,1
 read_next_sector:
-        ;
-        ; Read sector and append read status before first byte of sector data
-        ;
         LDA         current_drive_nr
-        INX         H
         CALL        DSRDW
-        DCX         H
-        MOV         M,A
-        ;
-        ; Check sector read status, allow for normal and deleted
-        ;
-        JNC         read_sector_ok
-        CPI         ERROR_20
-        RNZ
-read_sector_ok:
-        ;
-        ; Advance to next sector
-        ;
-        LXI         D,1+128
+        RC
+        LXI         D,128
         DAD         D
         INR         C
         MOV         A,C
@@ -567,32 +549,9 @@ read_sector_ok:
 write_track:
         MVI         C,1
 write_next_sector:
-        ;
-        ; Check sector status
-        ;
-        MOV         A,M
-        INX         H
-        CPI         ERROR_20
-        JNZ         write_normal_sector
-        ;
-        ; Write deleted sector
-        ;
-        LDA         current_drive_nr
-        CALL        DSDLW
-        RC
-        JMP         write_sector_ok
-
-write_normal_sector:
-        ;
-        ; Write normal sector
-        ;
         LDA         current_drive_nr
         CALL        DSWRW
         RC
-write_sector_ok:
-        ;
-        ; Advance to next sector
-        ;
         LXI         D,128
         DAD         D
         INR         C
