@@ -11,10 +11,8 @@
 ;//
 ;//                 Drive type T:
 ;//                     A       Floppy (IBM 3740, ASCII)
-;//                     B       Floppy (IBM 3740, ASCII)
 ;//                     F       Floppy (Intel ISIS)
 ;//                     I       Floppy (IBM 3740, EBCDIC)
-;//                     J       Floppy (IBM 3740, EBCDIC)
 ;//                     M       Tape
 ;//
 ;//                 Drive number n:
@@ -78,6 +76,15 @@
 ;//
 ;//                 -> Recognizes B and J as valid drive types
 ;//
+;//             1.6a: Entry at 0xC165
+;//
+;//                 -> Reverts the changes from v1.5b
+;//                 -> Version ID written to 0x2700
+;//                 -> Ends file listing for drive type F at first case of an entry
+;//                    which has never been used, instead of scanning entire file
+;//                    directory
+;//                 -> Adds printing of the X attribute to drive type F and M
+;//
 
 
 ;//////////////////////////////////////////////////////////////////////////////
@@ -111,6 +118,7 @@ CBRDW       EQU     000AFH      ; Read data from tape cartridge
 ;
 ; XMON and TOS system data
 ;
+SIGNATURE   EQU     02700H      ; Program signature
 MAP1        EQU     02739H      ; Track and sector of first half of mapfile
 MAP2        EQU     0273BH      ; Track and sector of last half of mapfile
 
@@ -148,6 +156,7 @@ ATTR_W      EQU     004H        ; Write-protected file
 ATTR_A      EQU     008H        ; Alias file
 ATTR_B      EQU     010H        ; BASIC program file (EC-10 multiuser BASIC)
 ATTR_D      EQU     020H        ; Data file (EC-10 multiuser BASIC)
+ATTR_X      EQU     040H        ; Direct-access file
 ATTR_F      EQU     080H        ; Format file
 
 ;
@@ -157,6 +166,17 @@ FCB_READ    EQU     008H        ; Device-driver Read API call
 FCB_OPEN    EQU     00CH        ; Device-driver Open API call
 FCB_CLOSE   EQU     00EH        ; Device-driver Close API call
 FCB_DRVNR   EQU     011H        ; Drive number
+
+
+;//////////////////////////////////////////////////////////////////////////////
+;//
+;//     Signature
+;//
+;//////////////////////////////////////////////////////////////////////////////
+
+        ORG         SIGNATURE
+        DB          'DIR',NULL,NULL,NULL
+        DB          '106'
 
 
 ;//////////////////////////////////////////////////////////////////////////////
@@ -171,34 +191,9 @@ FCB_DRVNR   EQU     011H        ; Drive number
 
 ;//////////////////////////////////////////////////////////////////////////////
 ;//
-;//     Strings and data
+;//     Data
 ;//
 ;//////////////////////////////////////////////////////////////////////////////
-
-dir_label_str:
-        DB          'DIRECTORY OF '
-        DS          10
-        DB          CR
-intel_dir_header_str:
-        DB          'NAME  .EXT   BLKS    LENGTH ATTR'
-newline_str:
-        DB          CR
-invalid_drive_str:
-        DB          'IMPROPER UNIT SPECIFICATION',CR
-illegal_tape_fmt_str:
-        DB          'ILLEGAL TAPE FORMAT',CR
-tape_dir_header_str:
-        DB          'NAME  .EXT    TRK   FILE   BLKS LENGTH ATTR',CR
-tracks_usage_str:
-        DB          'TRACK USAGE:  TRK   BLKS  FILES',CR
-ibm_dir_header_str:
-        DB          ' SECTOR   FILENAME  REC   BOE    EOE   P  CRDATE  EXDATE   EOD',CR
-map_status_str:
-        DB          'MAP STATUS',CR
-blocks_used_str:
-        DB          '/2002 BLOCKS USED',CR
-invalid_disk_format_str:
-        DB          'UNRECOGNIZED DISKETTE FORMAT',CR
 
 intel_mapfile_name:
         DB          'ISIS',NULL,NULL
@@ -432,7 +427,11 @@ list_next_intel_file:
         ;
         LDA         intel_file_entry_buffer
         ANA         A
-        JNZ         list_next_intel_file
+        JZ          check_intel_file
+        CPI         07FH
+        JZ          intel_end_of_directory
+        JMP         list_next_intel_file
+check_intel_file:
         ;
         ; Check invisible attribute, if not I switch
         ;
@@ -504,6 +503,7 @@ intel_file_include_size:
         LHLD        intel_file_entry_buffer + 00CH
         PUSH        D
         PUSH        H
+        DCX         H
         LXI         D,-62
         LXI         B,1
 count_next_linking_block:
@@ -579,6 +579,7 @@ done_printing_attributes:
 
 attribute_list:
         DB          ATTR_F,'F'
+        DB          ATTR_X,'X'
         DB          ATTR_D,'D'
         DB          ATTR_B,'B'
         DB          ATTR_A,'A'
@@ -827,14 +828,6 @@ decimal_magnitude_list:
 parse_drive_type:
         CPI         'M'
         JZ          use_tape_format
-        CPI         'J'
-        JNZ         ibm_type_j_check_done
-        DCR         A
-ibm_type_j_check_done:
-        CPI         'B'
-        JNZ         ibm_type_b_check_done
-        DCR         A
-ibm_type_b_check_done:
         CPI         'I'
         JZ          use_ibm_edbdic_format
         CPI         'A'
@@ -1538,3 +1531,35 @@ done_counting_bit:
         DAD         D
         SHLD        total_block_count
         RET
+
+
+;//////////////////////////////////////////////////////////////////////////////
+;//
+;//     Strings
+;//
+;//////////////////////////////////////////////////////////////////////////////
+
+dir_label_str:
+        DB          'DIRECTORY OF '
+        DS          10
+        DB          CR
+intel_dir_header_str:
+        DB          'NAME  .EXT   BLKS    LENGTH ATTR'
+newline_str:
+        DB          CR
+invalid_drive_str:
+        DB          'IMPROPER UNIT SPECIFICATION',CR
+illegal_tape_fmt_str:
+        DB          'ILLEGAL TAPE FORMAT',CR
+tape_dir_header_str:
+        DB          'NAME  .EXT    TRK   FILE   BLKS LENGTH ATTR',CR
+tracks_usage_str:
+        DB          'TRACK USAGE:  TRK   BLKS  FILES',CR
+ibm_dir_header_str:
+        DB          ' SECTOR   FILENAME  REC   BOE    EOE   P  CRDATE  EXDATE   EOD',CR
+map_status_str:
+        DB          'MAP STATUS',CR
+blocks_used_str:
+        DB          '/2002 BLOCKS USED',CR
+invalid_disk_format_str:
+        DB          'UNRECOGNIZED DISKETTE FORMAT',CR
