@@ -11,7 +11,6 @@
 ;//                 Drive type T:
 ;//                     F       Floppy (Interlaced)
 ;//                     I       Floppy (Non-interlaced)
-;//                     J       Floppy (Non-interlaced)
 ;//
 ;//                 Drive number n:
 ;//                     0-3
@@ -86,7 +85,13 @@
 ;//
 ;//             v1.7: Entry at 0x8000
 ;//
+;//                 -> Reverts the change from version early-c
 ;//                 -> Version ID written to 0x2700
+;//                 -> Fixes the filename bug from the early versions
+;//                 -> Writes a blank volume label instead of 'IBMIRD'
+;//                 -> Prompts the user for more disks to initialize at end
+;//                 -> Introduces a bug causing the 'Operation Aborted' status
+;//                    message to never print
 ;//
 
 
@@ -228,10 +233,6 @@ prune_initial_spaces_loop:
         CALL        INCHAR
         RC
         CALL        to_uppercase
-        CPI         'J'
-        JNZ         ibm_type_j_check_done
-        DCR         A
-ibm_type_j_check_done:
         CPI         'F'
         JZ          sector_layout_set
         LXI         D,noninterlaced_sector_order
@@ -358,16 +359,25 @@ add_next_track_zero_sector:
         LXI         D,16*2 + 1
         DAD         D
         MOV         B,A
-        ANI         0F0H
+        CPI         10
+        JC          bcd_adjust_done
+        CPI         20
+        JC          bcd_adjust_once
+        ADI         6
+bcd_adjust_once:
+        ADI         6
+bcd_adjust_done:
+        MOV         C,A
         RRC
         RRC
         RRC
         RRC
+        ANI         00FH
         ADI         0F0H
         MOV         M,A
         INX         H
         INX         H
-        MOV         A,B
+        MOV         A,C
         ANI         00FH
         ADI         0F0H
         MOV         M,A
@@ -931,12 +941,12 @@ label_record_pattern:
         DB            1, 0FFH, 0D6H
         DB            1, 0FFH, 0D3H
         DB            1, 0FFH, 0F1H
-        DB            1, 0FFH, 0C9H
-        DB            1, 0FFH, 0C2H
-        DB            1, 0FFH, 0D4H
-        DB            1, 0FFH, 0C9H
-        DB            1, 0FFH, 0D9H
-        DB            1, 0FFH, 0C4H
+        DB            1, 0FFH, 040H
+        DB            1, 0FFH, 040H
+        DB            1, 0FFH, 040H
+        DB            1, 0FFH, 040H
+        DB            1, 0FFH, 040H
+        DB            1, 0FFH, 040H
         DB           69, 0FFH, 040H
         DB            1, 0FFH, 0E3H
         DB           48, 0FFH, 000H
@@ -1135,11 +1145,30 @@ track_readback_buffer:
 
 operation_completed:
         ;
-        ; Print status message
+        ; Prompt for starting a new disk initialization
         ;
         LXI         D,operation_completed_str
-print_and_quit:
         CALL        print_str
+init_again_prompt:
+        CALL        TTI
+        CALL        to_uppercase
+        CPI         'Y'
+        JZ          parse_init_again_prompt
+        CPI         'N'
+        JZ          parse_init_again_prompt
+        MVI         A,BEL
+        CALL        TTO
+        JMP         init_again_prompt
+
+parse_init_again_prompt:
+        CALL        TTO
+        PUSH        PSW
+        LXI         D,newline_str
+        CALL        print_str
+        POP         PSW
+        CPI         'Y'
+        JZ          format_first_track
+quit:
         ;
         ; Check if a non-system drive was formatted
         ;
@@ -1153,14 +1182,17 @@ print_and_quit:
         CALL        print_str
 system_disk_prompt:
         CALL        TTI
+        CALL        to_uppercase
         CPI         'C'
-        JZ          reload_system_and_exit
-        CPI         'c'
-        JZ          reload_system_and_exit
+        JZ          system_disk_prompt_done
         MVI         A,BEL
         CALL        TTO
         JMP         system_disk_prompt
 
+system_disk_prompt_done:
+        CALL        TTO
+        LXI         D,newline_str
+        CALL        print_str
 reload_system_and_exit:
         ;
         ; Make sure to reload TOS before quitting program
@@ -1183,7 +1215,8 @@ system_filename_str:
 
 operation_aborted:
         LXI         D,operation_aborted_str
-        JMP         print_and_quit
+        LXI         D,print_str
+        JMP         quit
 
 
 ;//////////////////////////////////////////////////////////////////////////////
@@ -1307,9 +1340,9 @@ welcome_prompt_str:
 operation_interrupted_str:
         DB          'OPERATION INTERRUPTED',CR,ETX
 operation_completed_str:
-        DB          'OPERATION COMPLETED',CR,ETX
+        DB          'OPERATION COMPLETED, MORE? (Y/N): ',ETX
 sys_disk_prompt_str:
-        DB          'CHANGE TO SYSTEM DISKETTE, TYPE "C" TO CONTINUE',BEL,CR,ETX
+        DB          'INSERT SYSTEM DISKETTE IN DRIVE 0, TYPE "C" TO CONTINUE: ',BEL,ETX
 
 
 ;//////////////////////////////////////////////////////////////////////////////

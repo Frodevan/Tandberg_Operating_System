@@ -85,7 +85,7 @@
 ;//
 ;//             NOTE: Track and sector entries can take a comma or a space as
 ;//                   deliminer, instead of the slash. In any way, track must be a
-;//                   number between 0 and 76, while sector must be a number within
+;//                   number between 1 and 73, while sector must be a number within
 ;//                   the range 1 to 26.
 ;//
 ;//             NOTE: During any point, it is possible to press the Home arrow-key
@@ -115,6 +115,15 @@
 ;//             1.6: Entry at 0xC000
 ;//
 ;//                 -> Version ID written to 0x2700
+;//                 -> Check if target file already exist before and after prompts
+;//                 -> Check if replace file exists at prompt as well
+;//                 -> More verbose responses on invalid input
+;//                 -> Minimum record lengt must be 1, as 0 is no longer allowed
+;//                 -> Track numbers cannot be 0 or higher than 73
+;//                 -> Checks that BOE is not to be after EOE
+;//                 -> Checks that EOD is after or at BOE
+;//                 -> Checks that EOD is not after EOE+1
+;//                 -> Default EOD = BOE for new files
 ;//
 
 
@@ -157,6 +166,7 @@ DSWAW       EQU     0007FH      ; Translate ASCII to EBCDIC and write to disk wi
 SIGNATURE   EQU     02700H      ; Program signature
 ROLLSW      EQU     0271FH      ; Cursor line number if no hardware autoscroll
 ASCI        EQU     0277EH      ; EBCDIC to ASCII translation table reference
+KEYBUF      EQU     02780H      ; Console input buffer
 
 ;
 ; TOS system calls
@@ -204,13 +214,15 @@ start:
         ;
         ; Get command line arguments into buffer
         ;
-        CALL        get_input_line
+        LXI         D,input_line_buffer
+        LHLD        CI_FCB
+        CALL        GET
         RC
         ;
         ; Get drive from command line arguments, else use default
         ;
         LXI         H,drive_designator_str
-        LXI         D,input_line_and_data_buffer
+        LXI         D,input_line_buffer
         LDAX        D
         CPI         ':'
         JNZ         drive_set
@@ -254,9 +266,11 @@ drive_set:
         ; Get target filename from command line arguments, if specified
         ;
         LXI         H,target_filename+4
+        MVI         B,13
         CPI         CR
         JZ          prepare_filename
         LXI         H,target_filename
+        MVI         B,17
 prepare_filename:
         CALL        copy_valid_filename
         JC          filename_error
@@ -282,17 +296,33 @@ ibm_disk_type_set:
         LXI         B,0*DISK_TRACK + 8*DISK_SECTOR
         CALL        read_ibm_disk_sector
         RC
-        LXI         H,input_line_and_data_buffer
+        LXI         H,input_data_buffer
         LXI         D,active_file_label_id
         MVI         A,4
         CALL        compare_memory
         JZ          valid_ibm_disk
-        LXI         H,input_line_and_data_buffer
+        LXI         H,input_data_buffer
         LXI         D,deleted_file_label_id
         MVI         A,4
         CALL        compare_memory
         JNZ         unrecognized_file_label_found_error
 valid_ibm_disk:
+        ;
+        ; Verify that target file does not exist
+        ;
+        LXI         H,target_filename
+        SHLD        filename_ptr
+        CALL        look_up_ibm_file
+        RC
+        JNZ         get_fresh_file_parameters
+        LXI         D,drive_designator_str
+        CALL        print_str
+        LXI         D,target_filename
+        CALL        print_ibm_filename
+        LXI         D,already_exists_str
+        CALL        print_str
+        ANA         A
+        RET
 
 
 ;//////////////////////////////////////////////////////////////////////////////
@@ -315,13 +345,15 @@ autoscroll_prepared:
         ;
         MVI         A,CR
         STA         replace_filename
-        MVI         B,50
+        LXI         B,55
         LXI         D,replace_filename+1
-        MVI         A,' '
 clear_parameters_data_loop:
+        MVI         A,' '
         STAX        D
         INX         D
-        DCR         B
+        DCX         B
+        MOV         A,C
+        ORA         B
         JNZ         clear_parameters_data_loop
         MVI         A,CR
         STA         bypass_char
@@ -362,7 +394,12 @@ parse_prompt_new_replace:
         CPI         'N'
         JZ          choice_new_replace_complete
         CPI         'R'
-        JNZ         choice_new_replace_invalid_input
+        JZ          choice_replace
+        LXI         D,improper_parameter_str
+        CALL        print_prompt_feedback_status
+        JMP         choice_new_replace_invalid_input
+
+choice_replace:
         ;
         ; Replace chosen, skip spaces between choice and filename
         ;
@@ -375,6 +412,7 @@ choice_replace_get_to_filename_loop:
         ; Copy filename, while checking for invalid characters
         ;
         LXI         H,replace_filename
+        MVI         B,17
         CALL        copy_valid_filename
         JNC         choice_replace_check_filename
 choice_new_replace_invalid_input:
@@ -389,6 +427,32 @@ choice_replace_check_filename:
         MOV         A,M
         CPI         ' '
         JZ          choice_new_replace_invalid_input
+        ;
+        ; Verify that replace filename does exist
+        ;
+        LXI         H,replace_filename
+        SHLD        filename_ptr
+        CALL        look_up_ibm_file
+        RC
+        JZ          choice_new_replace_complete
+        ;
+        ; Print status message at last line if replace file not found
+        ;
+        LHLD        cursor_location_ptr
+        PUSH        H
+        LXI         H,parameter_prompts_final_cursor_location
+        SHLD        cursor_location_ptr
+        CALL        move_cursor_to_next_location
+        LXI         D,drive_designator_str
+        CALL        print_str
+        LXI         D,replace_filename
+        CALL        print_ibm_filename
+        LXI         D,not_found_str
+        CALL        print_str
+        POP         H
+        SHLD        cursor_location_ptr
+        JMP         choice_new_replace_invalid_input
+
 choice_new_replace_complete:
 
 
@@ -428,14 +492,24 @@ choice_record_length_no_change:
         LDA         new_replace_choice
         CPI         'R'
         JZ          choice_record_length_complete
+        LXI         D,no_default_parameter_str
+        JMP         choice_record_length_error
+
 choice_record_length_invalid_input:
+        LXI         D,improper_record_length_str
+
+choice_record_length_error:
+        CALL        print_prompt_feedback_status
         CALL        prompt_current_line_again
         JMP         parse_prompt_record_length
 
 choice_record_length_verify:
         ;
-        ; Verify that the record length (in BCD) is within the range [0, 128]
+        ; Verify that the record length (in BCD) is within the range [1, 128]
         ;
+        MOV         A,L
+        ORA         H
+        JZ          choice_record_length_invalid_input
         LXI         D,-00129H
         XCHG
         DAD         D
@@ -458,15 +532,42 @@ choice_record_length_complete:
         ; Beginning of Extent (BOE) prompt
         ;
         CALL        prompt_next_line_for_track_and_sector
-choice_boe_verify:
+choice_boe_parse:
+        ;
+        ; Verify that BOE is entered correctly
+        ;
         CALL        check_track_sector_input
-        JZ          choice_boe_valid
+        JZ          choice_boe_parsed
+        LXI         D,no_default_parameter_str
+
+choice_boe_error:
+        CALL        print_prompt_feedback_status
         CALL        prompt_current_line_again_for_track_and_sector
-        JMP         choice_boe_verify
+        JMP         choice_boe_parse
+
+choice_boe_parsed:
+        ;
+        ; If replace, get BOE from existing file
+        ;
+        LXI         H,boe_str
+        LDAX        D
+        CPI         CR
+        JNZ         choice_boe_finalize
+        LXI         D,input_data_buffer+28
+        MVI         B,5
+choice_boe_finalize:
+        CALL        copy_memory
+        ;
+        ; Check if BOE is within bounds
+        ;
+        LXI         H,end_sector_boe_str
+        LXI         D,boe_str
+        CALL        track_sector_compare_for_carry_flag
+        JNC         choice_boe_valid
+        LXI         D,boe_out_of_range_str
+        JMP         choice_boe_error
 
 choice_boe_valid:
-        LXI         H,boe_str
-        CALL        copy_memory
 
 
 ;//////////////////////////////////////
@@ -475,15 +576,53 @@ choice_boe_valid:
         ; End of Extent (EOE) prompt
         ;
         CALL        prompt_next_line_for_track_and_sector
-choice_eoe_verify:
+choice_eoe_parse:
+        ;
+        ; Verify that EOE is entered correctly
+        ;
         CALL        check_track_sector_input
-        JZ          choice_eoe_valid
+        JZ          choice_eoe_parsed
+        LXI         D,no_default_parameter_str
+
+choice_eoe_error:
+        CALL        print_prompt_feedback_status
         CALL        prompt_current_line_again_for_track_and_sector
-        JMP         choice_eoe_verify
+        JMP         choice_eoe_parse
+
+choice_eoe_parsed:
+        ;
+        ; If replace, get EOE from existing file
+        ;
+        LXI         H,eoe_str
+        LDAX        D
+        CPI         CR
+        JNZ         choice_eoe_finalize
+        LXI         D,input_data_buffer+34
+        MVI         B,5
+choice_eoe_finalize:
+        CALL        copy_memory
+        ;
+        ; Check if EOE is within bounds
+        ;
+        LXI         H,end_sector_eoe_str
+        LXI         D,eoe_str
+        CALL        track_sector_compare_for_carry_flag
+        JNC         choice_eoe_compare_boe
+        LXI         D,eoe_out_of_range_str
+        JMP         choice_eoe_error
+
+choice_eoe_compare_boe:
+        ;
+        ; Check that BOE is within EOE
+        ;
+        LXI         H,eoe_str
+        LXI         D,boe_str
+        CALL        track_sector_compare_for_carry_flag
+        JNC         choice_eoe_valid
+        LXI         D,boe_out_of_eoe_str
+        JMP         choice_eoe_error
 
 choice_eoe_valid:
-        LXI         H,eoe_str
-        CALL        copy_memory
 
 
 ;//////////////////////////////////////
@@ -503,6 +642,8 @@ parse_prompt_use_defaults:
         JZ          all_file_parameters_set
         CPI         'N'
         JZ          choice_use_defaults_complete
+        LXI         D,improper_parameter_str
+        CALL        print_prompt_feedback_status
         CALL        prompt_current_line_again
         JMP         parse_prompt_use_defaults
 
@@ -526,6 +667,8 @@ parse_prompt_bypass:
         JZ          choice_bypass_valid
         CPI         'B'
         JZ          choice_bypass_valid
+        LXI         D,improper_parameter_str
+        CALL        print_prompt_feedback_status
         CALL        prompt_current_line_again
         JMP         parse_prompt_bypass
 
@@ -559,6 +702,8 @@ parse_prompt_protect:
         JZ          choice_protect_valid
         CPI         'P'
         JZ          choice_protect_valid
+        LXI         D,improper_parameter_str
+        CALL        print_prompt_feedback_status
         CALL        prompt_current_line_again
         JMP         parse_prompt_protect
 
@@ -603,6 +748,8 @@ parse_prompt_verify:
         JZ          choice_verify_valid
         CPI         ' '
         JZ          choice_verify_valid
+        LXI         D,improper_parameter_str
+        CALL        print_prompt_feedback_status
         CALL        prompt_current_line_again
         JMP         parse_prompt_verify
 
@@ -616,8 +763,98 @@ choice_verify_valid:
         ; End of Data (EOD) prompt
         ;
         CALL        prompt_next_line_for_track_and_sector
+choice_eod_parsed:
+        ;
+        ; If default EOD, use BOE for new file or EOD from replace file
+        ;
         LXI         H,eod_str
+        LDAX        D
+        CPI         CR
+        JNZ         choice_eod_finalize
+        LXI         D,input_data_buffer+74
+        LDA         new_replace_choice
+        CPI         'R'
+        JZ          choice_eod_default_decided
+        LXI         D,boe_str
+choice_eod_default_decided:
+        MVI         B,5
+choice_eod_finalize:
         CALL        copy_memory
+        ;
+        ; Check that EOD is above BOE
+        ;
+        LXI         D,boe_str
+        LXI         H,eod_str
+        CALL        track_sector_compare_for_carry_flag
+        JNC         choice_eod_check
+        LXI         D,boe_out_of_bounds_str
+
+choice_eod_error:
+        CALL        print_prompt_feedback_status
+        CALL        prompt_current_line_again_for_track_and_sector
+        JMP         choice_eod_parsed
+
+choice_eod_check:
+        ;
+        ; Get EOE Track/Sector as BCD numbers
+        ;
+        LXI         H,00000H
+        LDA         eoe_str
+        CALL        ascii_to_bcd_digit
+        LDA         eoe_str+1
+        CALL        ascii_to_bcd_digit
+        LDA         eoe_str+3
+        CALL        ascii_to_bcd_digit
+        LDA         eoe_str+4
+        CALL        ascii_to_bcd_digit
+        ;
+        ; Increase EOE sector by 1 to get highest possible EOD
+        ;
+        XRA         A
+        MOV         A,L
+        INR         A
+        DAA
+        MOV         L,A
+        ;
+        ; Increase EOE track by 1 on overflow, this should never happen
+        ;
+        MOV         A,H
+        ACI         0
+        DAA
+        MOV         H,A
+        ;
+        ; If sector is greater than 26, roll over to sector 1 of next track
+        ;
+        MOV         A,L
+        CPI         027H
+        JC          choice_eod_check_eoe
+        MVI         L,1
+        INR         H
+        XRA         A
+        MOV         A,H
+        DAA
+        MOV         H,A
+choice_eod_check_eoe:
+        ;
+        ; Encode EOD high limit as a string
+        ;
+        LXI         D,max_eod_str
+        MOV         A,H
+        CALL        bcd_to_ascii_byte
+        MVI         A,'0'
+        STAX        D
+        INX         D
+        MOV         A,L
+        CALL        bcd_to_ascii_byte
+        ;
+        ; Verify that file is within bounds
+        ;
+        LXI         D,eod_str
+        LXI         H,max_eod_str
+        CALL        track_sector_compare_for_carry_flag
+        JNC         all_file_parameters_set
+        LXI         D,eoe_out_of_bounds_str
+        JMP         choice_eod_error
 
 
 ;//////////////////////////////////////////////////////////////////////////////
@@ -674,7 +911,7 @@ scan_for_free_file_entry_loop:
         CALL        read_ibm_disk_sector
         RC
         JNZ         allocate_current_file
-        LXI         H,input_line_and_data_buffer
+        LXI         H,input_data_buffer
         LXI         D,deleted_file_label_id
         MVI         A,4
         CALL        compare_memory
@@ -692,21 +929,21 @@ allocate_current_file:
         ;
         ; Change file signature from deleted to active
         ;
-        LXI         H,input_line_and_data_buffer
+        LXI         H,input_data_buffer
         LXI         D,active_file_label_id
         MVI         B,4
         CALL        copy_memory
         ;
         ; Set new filename
         ;
-        LXI         H,input_line_and_data_buffer+5
+        LXI         H,input_data_buffer+5
         LXI         D,target_filename
         MVI         B,17
         CALL        copy_memory
         ;
         ; Set new record length
         ;
-        LXI         H,input_line_and_data_buffer+24
+        LXI         H,input_data_buffer+24
         LXI         D,record_length_str
         LDAX        D
         CPI         ' '
@@ -717,13 +954,13 @@ record_length_set:
         ;
         ; Set new BOE
         ;
-        LXI         H,input_line_and_data_buffer+28
+        LXI         H,input_data_buffer+28
         LXI         D,boe_str
         CALL        copy_5_bytes_if_nonzero
         ;
         ; Set new EOE
         ;
-        LXI         H,input_line_and_data_buffer+34
+        LXI         H,input_data_buffer+34
         LXI         D,eoe_str
         CALL        copy_5_bytes_if_nonzero
         ;
@@ -732,7 +969,7 @@ record_length_set:
         LDA         bypass_char
         CPI         CR
         JZ          bypass_character_set
-        STA         input_line_and_data_buffer+40
+        STA         input_data_buffer+40
 bypass_character_set:
         ;
         ; Set new access character
@@ -740,7 +977,7 @@ bypass_character_set:
         LDA         access_char
         CPI         CR
         JZ          access_character_set
-        STA         input_line_and_data_buffer+41
+        STA         input_data_buffer+41
 access_character_set:
         ;
         ; Set new protect character
@@ -748,12 +985,12 @@ access_character_set:
         LDA         protect_char
         CPI         CR
         JZ          protect_character_set
-        STA         input_line_and_data_buffer+42
+        STA         input_data_buffer+42
 protect_character_set:
         ;
         ; Set new creation date
         ;
-        LXI         H,input_line_and_data_buffer+47
+        LXI         H,input_data_buffer+47
         LXI         D,creation_date_str
         LDAX        D
         CPI         CR
@@ -764,7 +1001,7 @@ creation_date_set:
         ;
         ; Set new expiration date
         ;
-        LXI         H,input_line_and_data_buffer+66
+        LXI         H,input_data_buffer+66
         LXI         D,expiration_date_str
         LDAX        D
         CPI         CR
@@ -778,7 +1015,7 @@ expiration_date_set:
         LDA         verify_char
         CPI         CR
         JZ          set_default_verify_character
-        STA         input_line_and_data_buffer+72
+        STA         input_data_buffer+72
         JMP         verify_character_set
 
 set_default_verify_character:
@@ -786,12 +1023,12 @@ set_default_verify_character:
         CPI         'R'
         JZ          verify_character_set
         MVI         A,' '
-        STA         input_line_and_data_buffer+72
+        STA         input_data_buffer+72
 verify_character_set:
         ;
         ; Set new EOD, force EOD to BOE if new file
         ;
-        LXI         H,input_line_and_data_buffer+74
+        LXI         H,input_data_buffer+74
         LXI         D,eod_str
         CALL        copy_5_bytes_if_nonzero
         JC          write_updated_ibm_file_entry
@@ -966,7 +1203,7 @@ prompt_current_line_again:
         ; Restart parameter prompts from start if the Home-key was pressed
         ;
 check_for_home:
-        LXI         D,input_line_and_data_buffer
+        LXI         D,input_line_buffer
         LDAX        D
         CPI         CURH
         RNZ
@@ -988,7 +1225,7 @@ parse_prompt_track_sector:
         ;
         ; Update pointers and set length to 1 if no data
         ;
-        LXI         D,input_line_and_data_buffer
+        LXI         D,input_line_buffer
         MVI         B,1
         RET
 
@@ -1003,8 +1240,23 @@ choice_track_sector_has_input:
         JZ          track_number_decoded
         CPI         ' '
         JZ          track_number_decoded
+
+invalid_track_sector_format:
+        LXI         D,improper_parameter_str
+        JMP         choice_track_sector_error
+
+invalid_track:
+        LXI         D,improper_track_str
+        JMP         choice_track_sector_error
+
+invalid_sector:
+        LXI         D,improper_sector_str
+
+choice_track_sector_error:
+        CALL        print_prompt_feedback_status
+
         ;
-        ; Retry prompt if no deliminer between track and sector
+        ; Retry prompt after error
         ;
 prompt_current_line_again_for_track_and_sector:
         CALL        prompt_current_line_again
@@ -1018,14 +1270,16 @@ track_number_decoded:
         INX         D
         CALL        ascii_to_bcd_byte_with_verify
         CPI         CR
-        JNZ         prompt_current_line_again_for_track_and_sector
+        JNZ         invalid_track_sector_format
         ;
         ; Check that track number (in BCD format) is within range
         ;
-        LXI         D,input_line_and_data_buffer
+        LXI         D,input_line_buffer
         MOV         A,C
+        ANA         A
+        JZ          invalid_track
         CPI         077H
-        JNC         prompt_current_line_again_for_track_and_sector
+        JNC         invalid_track
         ;
         ; Store track number and deliminer as expected by IBM
         ;
@@ -1038,9 +1292,9 @@ track_number_decoded:
         ;
         MOV         A,L
         ORA         A
-        JZ          prompt_current_line_again_for_track_and_sector
+        JZ          invalid_sector
         CPI         027H
-        JNC         prompt_current_line_again_for_track_and_sector
+        JNC         invalid_sector
         ;
         ; Store sector number
         ;
@@ -1049,7 +1303,7 @@ track_number_decoded:
         ; Update pointers and set length
         ;
         MVI         B,5
-        LXI         D,input_line_and_data_buffer
+        LXI         D,input_line_buffer
         RET
 
 
@@ -1079,6 +1333,63 @@ ascii_to_bcd_digit_with_verify:
         RC
         CALL        ascii_to_bcd_digit
         INX         D
+        RET
+
+
+;//////////////////////////////////////////////////////////////////////////////
+
+        ;
+        ; Compare two track-sector strings, carry cleared if (HL) > (DE)
+        ;
+track_sector_compare_for_carry_flag:
+        CALL        compare_dual_digits_for_carry_flag
+        RNZ
+        INX         H
+        INX         D
+        CALL        compare_dual_digits_for_carry_flag
+        RNZ
+        ANA         A
+        RET
+
+
+;//////////////////////////////////////
+
+        ;
+        ; Compare two digits of two strings, carry cleared if (HL) > (DE)
+        ;
+compare_dual_digits_for_carry_flag:
+        CALL        compare_digit_for_carry_flag
+        RNZ
+
+        ;
+        ; Compare one digit of two strings, carry cleared if (HL) > (DE)
+        ;
+compare_digit_for_carry_flag:
+        LDAX        D
+        CMP         M
+        CMC
+        RNZ
+        INX         H
+        INX         D
+        RET
+
+
+;//////////////////////////////////////////////////////////////////////////////
+
+        ;
+        ; Print status after a failed prompt, as feedback for the user
+        ;
+print_prompt_feedback_status:
+        PUSH        H
+        LHLD        cursor_location_ptr
+        PUSH        H
+        LXI         H,parameter_prompts_final_cursor_location
+        SHLD        cursor_location_ptr
+        CALL        move_cursor_to_next_location
+        CALL        print_str
+        POP         H
+        SHLD        cursor_location_ptr
+        POP         H
         RET
 
 
@@ -1128,7 +1439,7 @@ choice_date_none:
         ; Fill the date string
         ;
 choice_date_empty:
-        LXI         D,input_line_and_data_buffer
+        LXI         D,input_line_buffer
 empty_date_loop:
         MOV         M,A
         INX         D
@@ -1140,7 +1451,7 @@ empty_date_loop:
         ;
 choice_date_valid:
         POP         H
-        LXI         D,input_line_and_data_buffer
+        LXI         D,input_line_buffer
         MVI         B,6
         CALL        copy_memory
         RET
@@ -1198,7 +1509,6 @@ copy_valid_filename:
         ;
         ; Check each character in filename
         ;
-        MVI         B,17
 verify_next_filename_char:
         LDAX        D
         CPI         CR
@@ -1265,6 +1575,8 @@ bcd_to_ascii_digit:
         ; Move cursor to next location in a list of column-row bytepairs
         ;
 move_cursor_to_next_location:
+        PUSH        H
+        PUSH        D
         LHLD        cursor_location_ptr
         MOV         E,M
         INX         H
@@ -1273,16 +1585,47 @@ move_cursor_to_next_location:
         SHLD        cursor_location_ptr
         XCHG
         CALL        CURSOR
+        POP         D
+        POP         H
         RET
 
 
 ;//////////////////////////////////////////////////////////////////////////////
 
         ;
-        ; Get a complete line from TOS console-input abstract FCB
+        ; Get a complete line from TOS console-input
         ;
 get_input_line:
-        LXI         D,input_line_and_data_buffer
+        ;
+        ; Wait for any input at all
+        ;
+wait_for_keyboard_input:
+        LDA         KEYBUF
+        ORA         A
+        JZ          wait_for_keyboard_input
+        ;
+        ; Clear previous status-printout
+        ;
+        LHLD        cursor_location_ptr
+        PUSH        H
+        LXI         H,parameter_prompts_final_cursor_location
+        SHLD        cursor_location_ptr
+        CALL        move_cursor_to_next_location
+        MVI         A,' '
+        MVI         L,50
+clear_status_print_loop:
+        CALL        TTO
+        DCR         L
+        JNZ         clear_status_print_loop
+        POP         H
+        DCX         H
+        DCX         H
+        SHLD        cursor_location_ptr
+        CALL        move_cursor_to_next_location
+        ;
+        ; Get the line
+        ;
+        LXI         D,input_line_buffer
         LHLD        CI_FCB
         CALL        GET
         XCHG
@@ -1301,7 +1644,7 @@ reset_current_prompt:
         ;
         ; Clear previous answer, both buffer and console echo
         ;
-        LXI         D,input_line_and_data_buffer
+        LXI         D,input_line_buffer
 clear_previous_input_loop:
         LDAX        D
         CPI         CR
@@ -1362,16 +1705,16 @@ check_ibm_data_label:
         ; Skip if deleted file
         ;
         LXI         D,deleted_file_label_id
-        LXI         H,input_line_and_data_buffer
+        LXI         H,input_data_buffer
         MVI         A,4
         CALL        compare_memory
         JZ          check_next_ibm_data_label
         ;
         ; Check if filename matches what we are looking for
         ;
-        LHLD        cursor_location_ptr
+        LHLD        filename_ptr
         XCHG
-        LXI         H,input_line_and_data_buffer+5
+        LXI         H,input_data_buffer+5
         MVI         A,17
         CALL        compare_memory
         RZ
@@ -1418,7 +1761,7 @@ handle_peculiar_sector:
         ;
         PUSH        B
         MVI         B,000H
-        LXI         D,input_line_and_data_buffer
+        LXI         D,input_data_buffer
         MVI         A,128
 convert_deleted_sector:
         PUSH        PSW
@@ -1462,7 +1805,7 @@ read_ibm_sector_call:
         ;
 ibm_sector_system_call:
         PUSH        H
-        LXI         H,input_line_and_data_buffer
+        LXI         H,input_data_buffer
         RET
 
 
@@ -1550,9 +1893,12 @@ verify_char:
         DS          1
 eod_str:
         DS          5
+max_eod_str:
+        DS          5
         DB          '      '
 
 filename_ptr:
+        DS          2
 cursor_location_ptr:
         DS          2
 drive_number:
@@ -1566,13 +1912,20 @@ read_call:
 write_call:
         DS          2
 
-input_line_and_data_buffer:
+input_line_buffer:
+        DS          128
+input_data_buffer:
         DS          128
 
 active_file_label_id:
         DB          'HDR1'
 deleted_file_label_id:
         DB          'DDR1'
+
+end_sector_boe_str:
+        DB          '73026'
+end_sector_eoe_str:
+        DB          '73026'
 
 parameter_prompts_str:
         DB          ERPAG
@@ -1602,3 +1955,23 @@ not_found_str:
         DB          ', NOT FOUND',CR,LF,ETX
 established_str:
         DB          ', ESTABLISHED',CR,LF,ETX
+improper_record_length_str:
+        DB          'IMPROPER RECORD LENGTH',CR,LF,ETX
+no_default_parameter_str:
+        DB          'DEFAULT PARAMETER NOT ALLOWED',CR,LF,ETX
+improper_parameter_str:
+        DB          'IMPROPER PARAMETER LIST',CR,LF,ETX
+boe_out_of_range_str:
+        DB          'BOE > 73/26 NOT ALLOWED',CR,LF,ETX
+eoe_out_of_range_str:
+        DB          'EOE > 73/26 NOT ALLOWED',CR,LF,ETX
+boe_out_of_eoe_str:
+        DB          'BOE > EOE NOT ALLOWED',CR,LF,ETX
+boe_out_of_bounds_str:
+        DB          'EOD < BOE NOT ALLOWED',CR,LF,ETX
+eoe_out_of_bounds_str:
+        DB          'EOD > EOE+1 NOT ALLOWED',CR,LF,ETX
+improper_track_str:
+        DB          'IMPROPER TRACK VALUE',CR,LF,ETX
+improper_sector_str:
+        DB          'IMPROPER SECTOR VALUE',CR,LF,ETX
