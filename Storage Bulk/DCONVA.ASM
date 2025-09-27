@@ -31,6 +31,10 @@
 ;//
 ;//                 -> First version I have
 ;//
+;//             1.6: Entry at 0xC000
+;//
+;//                 -> Version ID written to 0x2700
+;//
 
 
 ;//////////////////////////////////////////////////////////////////////////////
@@ -52,6 +56,7 @@ DSDLW       EQU     00079H      ; Write deleted to disk with wait
 ;
 ; XMON and TOS system data
 ;
+SIGNATURE   EQU     02700H      ; Program signature
 ASCI        EQU     0277EH      ; EBCDIC to ASCII translation table reference
 
 ;
@@ -68,6 +73,17 @@ DSWRW       EQU     0FD76H      ; Write to disk with wait
 ;
 CI_FCB      EQU     0FF00H      ; Console input abstract file FCB pointer
 CO_FCB      EQU     0FF02H      ; Console output abstract file FCB pointer
+
+
+;//////////////////////////////////////////////////////////////////////////////
+;//
+;//     Signature
+;//
+;//////////////////////////////////////////////////////////////////////////////
+
+        ORG         SIGNATURE
+        DB          'DCONVA'
+        DB          '106'
 
 
 ;//////////////////////////////////////////////////////////////////////////////
@@ -259,14 +275,15 @@ to_uppercase:
 ;//
 ;//////////////////////////////////////////////////////////////////////////////
 
-welcome_prompt_str:
-        DB          'CONVERT FROM EBCDIC TO ASCII (UNIT 0) - TYPE Y TO START',CR
-aborted_str:
-        DB          'DISKETTE IS ONLY PARTLY CONVERTED',CR
-
 sector_type_list_ptr:
         DS          2
 sector_type_list:
         DS          26
 track_data_buffer:
         DS          26*128
+        DS          26*128
+
+welcome_prompt_str:
+        DB          'CONVERT FROM EBCDIC TO ASCII (UNIT 0) - TYPE Y TO START',CR
+aborted_str:
+        DB          'DISKETTE IS ONLY PARTLY CONVERTED',CR

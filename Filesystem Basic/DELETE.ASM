@@ -11,10 +11,8 @@
 ;//
 ;//                 Drive type T:
 ;//                     A       Floppy (IBM 3740, ASCII)
-;//                     B       Floppy (IBM 3740, ASCII)
 ;//                     F       Floppy (Intel ISIS)
 ;//                     I       Floppy (IBM 3740, EBCDIC)
-;//                     J       Floppy (IBM 3740, EBCDIC)
 ;//                     M       Tape
 ;//
 ;//                 Drive number n:
@@ -55,6 +53,11 @@
 ;//                 -> Recognizes B and J as valid drive types
 ;//                 -> Introduces a bug where drive types B and J are reported to
 ;//                    the user as type A and I respectively
+;//
+;//             1.6a: Entry at 0xC0AD
+;//
+;//                 -> Reverts all changes from v1.5b
+;//                 -> Version ID written to 0x2700
 ;//
 
 
@@ -102,6 +105,7 @@ CLOCDIR     EQU     000C1H      ; Look up filetable entry of filename on tape
 ; XMON and TOS system data
 ;
 BUF2        EQU     02600H      ; Sector data of last filesystem operation
+SIGNATURE   EQU     02700H      ; Program signature
 SSWITCH     EQU     0272CH      ; TOS system switch
 TRK         EQU     02731H      ; Track and sector of last filesystem operation
 MAP1        EQU     02739H      ; Track and sector of first half of mapfile
@@ -143,6 +147,17 @@ ATTR_F      EQU     080H        ; Format file
 
 ;//////////////////////////////////////////////////////////////////////////////
 ;//
+;//     Signature
+;//
+;//////////////////////////////////////////////////////////////////////////////
+
+        ORG         SIGNATURE
+        DB          'DELETE'
+        DB          '106'
+
+
+;//////////////////////////////////////////////////////////////////////////////
+;//
 ;//     Legacy program entry
 ;//
 ;//////////////////////////////////////////////////////////////////////////////
@@ -153,7 +168,7 @@ ATTR_F      EQU     080H        ; Format file
 
 ;//////////////////////////////////////////////////////////////////////////////
 ;//
-;//     Strings and data
+;//     Data
 ;//
 ;//////////////////////////////////////////////////////////////////////////////
 
@@ -176,20 +191,6 @@ mapfile_name:
         DB          'ISIS',NULL,NULL
         DB          'MAP'
 
-not_found_str:
-        DB          'NOT FOUND',CR
-deleted_str:
-        DB          'DELETED',CR
-protected_str:
-        DB          'PROTECTED',CR
-alias_str:
-        DB          'ALIAS',CR
-deleted_alias_str:
-        DB          'DELETED ALIAS',CR
-improper_unit_str:
-        DB          'IMPROPER UNIT SPECIFICATION',CR
-improper_params_str:
-        DB          'IMPROPER PARAMETER LIST',CR
 drive_designator:
         DB          ':F*:',CR
 
@@ -242,14 +243,6 @@ beginning:
         CALL        INCHAR
         RC
         CALL        to_uppercase
-        CPI         'B'
-        JNZ         ibm_type_b_check_done
-        DCR         A
-ibm_type_b_check_done:
-        CPI         'J'
-        JNZ         ibm_type_j_check_done
-        DCR         A
-ibm_type_j_check_done:
         STA         input_char
         CPI         'F'
         JZ          valid_drive_type
@@ -901,3 +894,25 @@ print_next_ibm_filename_char:
         MVI         A,' '
         CALL        OUTCHAR
         RET
+
+
+;//////////////////////////////////////////////////////////////////////////////
+;//
+;//     Strings
+;//
+;//////////////////////////////////////////////////////////////////////////////
+
+not_found_str:
+        DB          'NOT FOUND',CR
+deleted_str:
+        DB          'DELETED',CR
+protected_str:
+        DB          'PROTECTED',CR
+alias_str:
+        DB          'ALIAS',CR
+deleted_alias_str:
+        DB          'DELETED ALIAS',CR
+improper_unit_str:
+        DB          'IMPROPER UNIT SPECIFICATION',CR
+improper_params_str:
+        DB          'IMPROPER PARAMETER LIST',CR

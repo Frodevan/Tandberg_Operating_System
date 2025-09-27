@@ -37,6 +37,10 @@
 ;//
 ;//                 -> First version I have
 ;//
+;//             1.6: Entry at 0xC061
+;//
+;//                 -> Version ID written to 0x2700
+;//
 
 
 ;//////////////////////////////////////////////////////////////////////////////
@@ -49,6 +53,11 @@
 ; ASCII control characters
 ;
 CR          EQU     00DH        ; Cartridge Return
+
+;
+; XMON and TOS system data
+;
+SIGNATURE   EQU     02700H      ; Program signature
 
 ;
 ; TOS system calls
@@ -71,13 +80,13 @@ SL_FCB      EQU     0FF08H      ; Standard line-printer output abstract file FCB
 
 ;//////////////////////////////////////////////////////////////////////////////
 ;//
-;//     Program entry
+;//     Signature
 ;//
 ;//////////////////////////////////////////////////////////////////////////////
 
-        ORG         0C000H
-start:
-        JMP         beginning
+        ORG         SIGNATURE
+        DB          'HEXBIN'
+        DB          '106'
 
 
 ;//////////////////////////////////////////////////////////////////////////////
@@ -86,6 +95,7 @@ start:
 ;//
 ;//////////////////////////////////////////////////////////////////////////////
 
+        ORG         0C000H
 input_buffer:
         DS          80
 
@@ -113,11 +123,6 @@ data_index:
 requested_start_address:
         DW          00000H
 
-record_type_err_str:
-        DB          'RECORD TYPE ERROR',CR
-start_address_err_str:
-        DB          'START ADDRESS ERROR',CR
-
 
 ;//////////////////////////////////////////////////////////////////////////////
 ;//
@@ -125,7 +130,7 @@ start_address_err_str:
 ;//
 ;//////////////////////////////////////////////////////////////////////////////
 
-beginning:
+start:
         ;
         ; Get all command line args into local buffer
         ;
@@ -482,3 +487,15 @@ start_address_arg_error:
 
 data_buffer:
         DS          4096
+
+
+;//////////////////////////////////////////////////////////////////////////////
+;//
+;//     Strings
+;//
+;//////////////////////////////////////////////////////////////////////////////
+
+record_type_err_str:
+        DB          'RECORD TYPE ERROR',CR
+start_address_err_str:
+        DB          'START ADDRESS ERROR',CR

@@ -28,6 +28,10 @@
 ;//                 -> Accepts lower-case input to the prompt
 ;//                 -> Minor optimization in code after a file has been copied
 ;//
+;//             1.6: Entry at 0xC28C
+;//
+;//                 -> Version ID written to 0x2700
+;//
 
 
 ;//////////////////////////////////////////////////////////////////////////////
@@ -41,6 +45,11 @@
 ;
 NULL        EQU     000H        ; Null character
 CR          EQU     00DH        ; Cartridge Return
+
+;
+; XMON and TOS system data
+;
+SIGNATURE   EQU     02700H      ; Program signature
 
 ;
 ; TOS system calls
@@ -86,18 +95,28 @@ FCB_FNAME   EQU     012H        ; Filename string
 
 ;//////////////////////////////////////////////////////////////////////////////
 ;//
-;//     Program entry
+;//     Signature
+;//
+;//////////////////////////////////////////////////////////////////////////////
+
+        ORG         SIGNATURE
+        DB          'TPGEN',NULL
+        DB          '106'
+
+
+;//////////////////////////////////////////////////////////////////////////////
+;//
+;//     Legacy program entry
 ;//
 ;//////////////////////////////////////////////////////////////////////////////
 
         ORG         0C000H
-start:
         JMP         beginning
 
 
 ;//////////////////////////////////////////////////////////////////////////////
 ;//
-;//     Strings and data
+;//     Data
 ;//
 ;//////////////////////////////////////////////////////////////////////////////
 
@@ -187,13 +206,6 @@ out_file_overrun_word:
 flush_outlet:
         DS          16
 
-welcome_prompt_str:
-        DB          'DATASET COPY FROM DISKETTE 0 TO CARTRIDGE 0 - TYPE Y TO START',CR
-not_copied_str:
-        DB          ' NOT'
-copied_ok_str:
-        DB          ' COPIED',CR
-
 
 ;//////////////////////////////////////////////////////////////////////////////
 ;//
@@ -201,6 +213,7 @@ copied_ok_str:
 ;//
 ;//////////////////////////////////////////////////////////////////////////////
 
+start:
 beginning:
         ;
         ; Print welcome prompt and check response
@@ -441,3 +454,17 @@ copying_done:
         RZ
         STC
         RET
+
+
+;//////////////////////////////////////////////////////////////////////////////
+;//
+;//     Strings
+;//
+;//////////////////////////////////////////////////////////////////////////////
+
+welcome_prompt_str:
+        DB          'DATASET COPY FROM DISKETTE 0 TO CARTRIDGE 0 - TYPE Y TO START',CR
+not_copied_str:
+        DB          ' NOT'
+copied_ok_str:
+        DB          ' COPIED',CR

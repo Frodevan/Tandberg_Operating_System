@@ -48,6 +48,10 @@
 ;//                 -> Checks for end of directory linking block
 ;//                 -> Allows for recovery of aliases
 ;//
+;//             1.6: Entry at 0xC000
+;//
+;//                 -> Version ID written to 0x2700
+;//
 
 
 ;//////////////////////////////////////////////////////////////////////////////
@@ -69,6 +73,11 @@ DSRDW       EQU     00073H      ; Read from disk with wait
 DSWRW       EQU     00076H      ; Write to disk with wait
 
 ;
+; XMON and TOS system data
+;
+SIGNATURE   EQU     02700H      ; Program signature
+
+;
 ; TOS system calls
 ;
 INCHAR      EQU     0FD09H      ; Input single character
@@ -83,6 +92,17 @@ FILENAME    EQU     0FDCDH      ; Input TOS filename
 ;
 CI_FCB      EQU     0FF00H      ; Console input abstract file FCB pointer
 CO_FCB      EQU     0FF02H      ; Console output abstract file FCB pointer
+
+
+;//////////////////////////////////////////////////////////////////////////////
+;//
+;//     Signature
+;//
+;//////////////////////////////////////////////////////////////////////////////
+
+        ORG         SIGNATURE
+        DB          'RESCUE'
+        DB          '106'
 
 
 ;//////////////////////////////////////////////////////////////////////////////
@@ -771,12 +791,6 @@ filename_print_last_part:
 
 drive_designator_str:
         DB          ':F0:',CR
-not_found_str:
-        DB          '  NOT FOUND',CR
-lost_str:
-        DB          '  LOST',CR
-reclaimed_str:
-        DB          '  RECLAIMED',CR
 
 drive_number:
         DB          0
@@ -822,3 +836,10 @@ mapfile_data_buffer:
         DS          256
 filename_str:
         DS          9+1
+
+not_found_str:
+        DB          '  NOT FOUND',CR
+lost_str:
+        DB          '  LOST',CR
+reclaimed_str:
+        DB          '  RECLAIMED',CR
