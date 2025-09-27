@@ -17,6 +17,10 @@
 ;//                 -> Version ID added
 ;//                 -> Has a bug where Version ID is not written to 0x2700
 ;//
+;//             1.6b: Entry at 0xC000
+;//
+;//                 -> Fixes Version ID bug from v1.6a
+;//
 
 
 ;//////////////////////////////////////////////////////////////////////////////
@@ -24,6 +28,11 @@
 ;//     Defines
 ;//
 ;//////////////////////////////////////////////////////////////////////////////
+
+;
+; XMON and TOS system data
+;
+SIGNATURE   EQU     02700H      ; Program signature
 
 ;
 ; TOS standard files
@@ -34,6 +43,17 @@ SL_FCB      EQU     0FF08H      ; Standard line-printer output abstract file FCB
 AI_FCB      EQU     0FF0AH      ; Auxilliary input abstract file FCB pointer
 AO_FCB      EQU     0FF0CH      ; Auxilliary output abstract file FCB pointer
 AL_FCB      EQU     0FF0EH      ; Auxilliary line-printer output abstract file FCB pointer
+
+
+;//////////////////////////////////////////////////////////////////////////////
+;//
+;//     Signature
+;//
+;//////////////////////////////////////////////////////////////////////////////
+
+        ORG         SIGNATURE
+        DB          'ASSIGN'
+        DB          '106'
 
 
 ;//////////////////////////////////////////////////////////////////////////////
@@ -89,13 +109,3 @@ lock_assigned_fcb_open:
         ORI         040H
         MOV         M,A
         RET
-
-
-;//////////////////////////////////////////////////////////////////////////////
-;//
-;//     Signature
-;//
-;//////////////////////////////////////////////////////////////////////////////
-
-        DB          'ASSIGN'
-        DB          '106'

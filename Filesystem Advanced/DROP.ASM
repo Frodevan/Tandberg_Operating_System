@@ -76,6 +76,12 @@
 ;//                 -> Reintroduces the bug where the blocks will be freed instead
 ;//                    of reserved
 ;//
+;//             1.6b: Entry at 0xC000
+;//
+;//                 -> Prints a prompt if using console input
+;//                 -> Fixes the status-message bug from v1.5
+;//                 -> Fixes the freeing vs reserving bug from v1.6a
+;//
 
 
 ;//////////////////////////////////////////////////////////////////////////////
@@ -83,6 +89,11 @@
 ;//     Defines
 ;//
 ;//////////////////////////////////////////////////////////////////////////////
+
+;
+; Flag values
+;
+TRUE        EQU     -1          ; Boolean True
 
 ;
 ; ASCII control characters
@@ -94,6 +105,7 @@ CR          EQU     00DH        ; Cartridge Return
 ;
 ; XMON system calls
 ;
+TTO         EQU     00043H      ; Console output
 DSRDW       EQU     00073H      ; Read from disk with wait
 DSWRW       EQU     00076H      ; Write to disk with wait
 
@@ -110,7 +122,7 @@ MAP2        EQU     0273BH      ; Track and sector of last half of mapfile
 ; TOS system calls
 ;
 INCHAR      EQU     0FD09H      ; Input single character
-OUTCHAR     EQU     0FD0CH      ; Output single character
+PUT         EQU     0FD12H      ; Output string of characters, inclusive CR
 
 ;
 ; TOS standard files
@@ -192,12 +204,19 @@ drive_nr_set:
         ;
         ; Determine input file, SI is prioritized over CI
         ;
+        XRA         A
+        STA         console_input_flag
         LHLD        SI_FCB
         MOV         A,L
         ORA         H
         JNZ         input_file_set
         LHLD        CI_FCB
         SHLD        SI_FCB
+        LXI         D,welcome_prompt_str
+        CALL        print_str
+        RC
+        MVI         A,TRUE
+        STA         console_input_flag
 input_file_set:
         ;
         ; Read mapfile from the requested disk
@@ -220,12 +239,19 @@ input_file_set:
 
 ;//////////////////////////////////////
 
-parse_next_instruction:
         ;
-        ; Assume valid instruction, so not at line end yet
+        ; First instruction, not at line end yet
         ;
         XRA         A
         STA         line_end_flag
+parse_next_instruction:
+        ;
+        ; Mark start of instruction if prompt has been printed
+        ;
+        LDA         console_input_flag
+        ANA         A
+        MVI         A,':'
+        CNZ         TTO
 parse_single_instruction:
         ;
         ; Get and verify track number
@@ -329,15 +355,14 @@ bitmask_ready:
         ;
         ; Reserve block in mapfile pt6: Mark block as reserved
         ;
-        CMA
-        ANA         M
+        ORA         M
         MOV         M,A
         ;
         ; Check if we are at end of line of instructions
         ;
         POP         PSW
         CPI         ','
-        JZ          parse_next_instruction
+        JZ          parse_single_instruction
 instruction_line_end:
         ;
         ; Set end flag if not already set, otherwise quit program
@@ -347,7 +372,7 @@ instruction_line_end:
         JNZ         update_mapfile_data
         DCR         A
         STA         line_end_flag
-        JMP         parse_single_instruction
+        JMP         parse_next_instruction
 
 update_mapfile_data:
         ;
@@ -546,7 +571,7 @@ to_uppercase:
 print_str:
         PUSH        H
         LHLD        CO_FCB
-        CALL        OUTCHAR
+        CALL        PUT
         POP         H
         RET
 
@@ -563,6 +588,8 @@ drive_nr:
         DS          1
 line_end_flag:
         DS          1
+console_input_flag:
+        DS          1
 
 mapfile_name:
         DB          'ISIS',NULL,NULL
@@ -570,3 +597,5 @@ mapfile_name:
 
 invalid_parameters_str:
         DB          ' ILLEGAL INPUT PARAMETER',CR
+welcome_prompt_str:
+        DB          ' ENTER TRACK/SECTOR PARAMETERS',CR
