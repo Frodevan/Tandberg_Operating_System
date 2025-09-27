@@ -6153,7 +6153,7 @@ flush_listing_output_loop:
 title_str:
         DB          title_str_line_end - title_str_line_start
 title_str_line_start:
-        DB          'TANDBERG TDV 2100 ASSEMBLER V.1.5.',CR,LF
+        DB          'TANDBERG TDV 2100 ASSEMBLER V.1.6.',CR,LF
 title_str_line_end:
 build_errors_report_str:
         DB          19

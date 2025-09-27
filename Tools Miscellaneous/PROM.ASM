@@ -92,6 +92,7 @@
 ;//             1.6: Entry at 0xC2D7
 ;//
 ;//                 -> Version ID written to 0x2700
+;//                 -> Fixes command E bug from v1.5, for newer XMON versions only
 ;//                 -> Introduces a bug where the strings used by the program may
 ;//                    be overwritten by a load using the L command. Should this
 ;//                    happen, the program will start to print garbage instead of
@@ -104,6 +105,11 @@
 ;//     Defines
 ;//
 ;//////////////////////////////////////////////////////////////////////////////
+
+;
+; Flag values
+;
+TRUE        EQU     -1          ; Boolean True
 
 ;
 ; ASCII control characters
@@ -126,6 +132,7 @@ XMIO        EQU     000CAH      ; Main UART output
 RCVBUF      EQU     025E0H      ; Main UART input buffer
 SIGNATURE   EQU     02700H      ; Program signature
 BUFLIM      EQU     0272EH      ; Lowest address of current TOS buffers
+DEBUGX      EQU     0275EH      ; XMON debug flag
 
 ;
 ; TOS system calls
@@ -772,6 +779,8 @@ command_error:
         ; Enter XMON debugger
         ;
 cmd_enter_debugger:
+        MVI         A,TRUE
+        STA         DEBUGX
         ;
         ; Push return address, then reset XMON to trigger ROM debugger
         ;

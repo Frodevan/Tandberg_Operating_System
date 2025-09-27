@@ -11,10 +11,8 @@
 ;//
 ;//                 Drive type T:
 ;//                     A       Floppy (IBM 3740, ASCII)
-;//                     B       Floppy (IBM 3740, ASCII)
 ;//                     F       Floppy (Intel ISIS)
 ;//                     I       Floppy (IBM 3740, EBCDIC)
-;//                     J       Floppy (IBM 3740, EBCDIC)
 ;//                     M       Tape
 ;//
 ;//                 Drive number n:
@@ -80,7 +78,12 @@
 ;//
 ;//             1.6a: Entry at 0xC165
 ;//
+;//                 -> Reverts the changes from v1.5b
 ;//                 -> Version ID written to 0x2700
+;//                 -> Ends file listing for drive type F at first case of an entry
+;//                    which has never been used, instead of scanning entire file
+;//                    directory
+;//                 -> Adds printing of the X attribute to drive type F and M
 ;//
 
 
@@ -164,6 +167,7 @@ ATTR_W      EQU     004H        ; Write-protected file
 ATTR_A      EQU     008H        ; Alias file
 ATTR_B      EQU     010H        ; BASIC program file (EC-10 multiuser BASIC)
 ATTR_D      EQU     020H        ; Data file (EC-10 multiuser BASIC)
+ATTR_X      EQU     040H        ; Direct-access file
 ATTR_F      EQU     080H        ; Format file
 
 ;
@@ -440,7 +444,11 @@ list_next_intel_file:
         ;
         LDA         intel_file_entry_buffer
         ANA         A
-        JNZ         list_next_intel_file
+        JZ          check_intel_file
+        CPI         07FH
+        JZ          intel_end_of_directory
+        JMP         list_next_intel_file
+check_intel_file:
         ;
         ; Check invisible attribute, if not I switch
         ;
@@ -512,6 +520,7 @@ intel_file_include_size:
         LHLD        intel_file_entry_buffer + 00CH
         PUSH        D
         PUSH        H
+        DCX         H
         LXI         D,-62
         LXI         B,1
 count_next_linking_block:
@@ -587,6 +596,7 @@ done_printing_attributes:
 
 attribute_list:
         DB          ATTR_F,'F'
+        DB          ATTR_X,'X'
         DB          ATTR_D,'D'
         DB          ATTR_B,'B'
         DB          ATTR_A,'A'
@@ -835,14 +845,6 @@ decimal_magnitude_list:
 parse_drive_type:
         CPI         'M'
         JZ          use_tape_format
-        CPI         'J'
-        JNZ         ibm_type_j_check_done
-        DCR         A
-ibm_type_j_check_done:
-        CPI         'B'
-        JNZ         ibm_type_b_check_done
-        DCR         A
-ibm_type_b_check_done:
         CPI         'I'
         JZ          use_ibm_edbdic_format
         CPI         'A'

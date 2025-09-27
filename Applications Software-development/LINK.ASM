@@ -147,6 +147,7 @@
 ;//             1.1: Entry at 0xC800
 ;//
 ;//                 -> Version ID written to 0x2700
+;//                 -> Fixes the start address bug from v1.0
 ;//
 
 
@@ -160,6 +161,7 @@
 ; Flag values
 ;
 TRUE        EQU     1           ; Boolean True
+TRUE_ALT    EQU     -1          ; Boolean True
 
 ;
 ; ASCII control characters
@@ -300,6 +302,8 @@ external_label_counter:
         DS          2
 max_external_label_count:
         DS          2
+start_addr_set_flag:
+        DS          1
 
 ;
 ;   Object-file list entry:
@@ -498,6 +502,7 @@ scan_for_memory_start_loop:
         STA         disable_separate_dseg_flag
         XRA         A
         STA         objectfile_entry_nr
+        STA         start_addr_set_flag
         ;
         ; Get next pending character of console input, if buffered line file
         ;
@@ -851,6 +856,8 @@ save_cseg_addr:
 
 save_start_addr:
         SHLD        current_start_addr
+        MVI         A,TRUE_ALT
+        STA         start_addr_set_flag
         RET
 
 
@@ -2853,10 +2860,11 @@ start_addr_record:
         ;
         ; Update start-address parameter, unless it's already set by the user
         ;
-        LHLD        current_start_addr
-        MOV         A,H
-        ORA         L
+        LDA         start_addr_set_flag
+        ANA         A
         JNZ         check_next_record
+        DCR         A
+        STA         start_addr_set_flag
         LHLD        current_record_data_abs_addr
         SHLD        current_start_addr
         JMP         check_next_record
@@ -2878,9 +2886,26 @@ write_last_block_to_output:
         LXI         H,0
         SHLD        output_bin_data_block_length
         ;
-        ; Write execution entrypoint reference to Intel Absolute Binary file
+        ; Get and check if the entry point parameter was set in advance
         ;
         LHLD        current_start_addr
+        LDA         start_addr_set_flag
+        ANA         A
+        JNZ         entry_point_addr_ready
+        ;
+        ; If not, get the first object file CSEG as default entry point
+        ;
+        LHLD        object_file_list_start_ptr
+        LXI         D,00BH
+        DAD         D
+        MOV         E,M
+        INX         H
+        MOV         D,M
+        XCHG
+entry_point_addr_ready:
+        ;
+        ; Write execution entrypoint reference to Intel Absolute Binary file
+        ;
         XCHG
         LHLD        output_bin_data_buffer_start_addr
         INX         H
@@ -2936,9 +2961,7 @@ print_next_xref:
         ; Table printed, feed out the remaining lines of the last page
         ;
         LDA         remaining_lines_on_page
-        MOV         B,A
-        LDA         lines_per_page
-        SUB         B
+        ADI         4
         MOV         B,A
 final_printer_page_feed_loop:
         CALL        print_sl_newline
@@ -3543,7 +3566,7 @@ externals_missing_str:
 routine_table_header_str:
         DB          'Routine table',CR
 program_title_str:
-        DB          'TDV 2100 LINKER V.1.0',CR
+        DB          'TDV 2100 LINKER V.1.1',CR
 program_str:
         DB          'Program: ',NULL
 bad_record_str:
