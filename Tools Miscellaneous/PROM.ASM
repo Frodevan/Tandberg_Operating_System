@@ -89,6 +89,15 @@
 ;//                 -> Introduces sanitycheck to prevent overwriting anything when
 ;//                    loading data from file
 ;//
+;//             1.6: Entry at 0xC2D7
+;//
+;//                 -> Version ID written to 0x2700
+;//                 -> Fixes command E bug from v1.5, for newer XMON versions only
+;//                 -> Introduces a bug where the strings used by the program may
+;//                    be overwritten by a load using the L command. Should this
+;//                    happen, the program will start to print garbage instead of
+;//                    the expected text.
+;//
 
 
 ;//////////////////////////////////////////////////////////////////////////////
@@ -98,8 +107,14 @@
 ;//////////////////////////////////////////////////////////////////////////////
 
 ;
+; Flag values
+;
+TRUE        EQU     -1          ; Boolean True
+
+;
 ; ASCII control characters
 ;
+NULL        EQU     000H        ; Null character
 STX         EQU     002H        ; Start of text
 ETX         EQU     003H        ; End of text
 CR          EQU     00DH        ; Cartridge Return
@@ -115,7 +130,9 @@ XMIO        EQU     000CAH      ; Main UART output
 ; XMON and TOS system data
 ;
 RCVBUF      EQU     025E0H      ; Main UART input buffer
+SIGNATURE   EQU     02700H      ; Program signature
 BUFLIM      EQU     0272EH      ; Lowest address of current TOS buffers
+DEBUGX      EQU     0275EH      ; XMON debug flag
 
 ;
 ; TOS system calls
@@ -155,12 +172,22 @@ FCB_DRVFMT  EQU     01BH        ; Media format
 
 ;//////////////////////////////////////////////////////////////////////////////
 ;//
-;//     Program entry
+;//     Signature
+;//
+;//////////////////////////////////////////////////////////////////////////////
+
+        ORG         SIGNATURE
+        DB          'PROM',NULL,NULL
+        DB          '106'
+
+
+;//////////////////////////////////////////////////////////////////////////////
+;//
+;//     Legacy program entry
 ;//
 ;//////////////////////////////////////////////////////////////////////////////
 
         ORG         0C000H
-start:
         JMP         beginning
 
 
@@ -228,18 +255,6 @@ output_file_fcb:
 
 command_prompt_str:
         DB          ':',CR
-command_error_str:
-        DB          ' COMMAND ERROR',CR
-program_prompt_str:
-        DB          ' SET UP FOR LOAD I/O EXECUTE',CR
-press_cr_str:
-        DB          ' PRESS CR',CR
-eof_error_str:
-        DB          ' UNEXPECTED END-OF-FILE',CR
-start_transfer_str:
-        DB          ' SET UP FOR PROGRAM I/O EXECUTE',CR
-load_out_of_range_str:
-        DB          ' LOAD AREA OUT OF RANGE',CR
 
 
 ;//////////////////////////////////////////////////////////////////////////////
@@ -585,6 +600,7 @@ end_of_hex_number:
 ;//
 ;//////////////////////////////////////////////////////////////////////////////
 
+start:
 beginning:
         ;
         ; Set up input file control block driver to Intel floppy
@@ -756,6 +772,8 @@ command_error:
         ; Enter XMON debugger
         ;
 cmd_enter_debugger:
+        MVI         A,TRUE
+        STA         DEBUGX
         ;
         ; Push return address, then reset XMON to trigger ROM debugger
         ;
@@ -1315,3 +1333,23 @@ write_next_entrypoint_byte:
 ;//////////////////////////////////////////////////////////////////////////////
 
 unused_program_memory:
+
+
+;//////////////////////////////////////////////////////////////////////////////
+;//
+;//     Strings
+;//
+;//////////////////////////////////////////////////////////////////////////////
+
+command_error_str:
+        DB          ' COMMAND ERROR',CR
+program_prompt_str:
+        DB          ' SET UP FOR LOAD I/O EXECUTE',CR
+press_cr_str:
+        DB          ' PRESS CR',CR
+eof_error_str:
+        DB          ' UNEXPECTED END-OF-FILE',CR
+start_transfer_str:
+        DB          ' SET UP FOR PROGRAM I/O EXECUTE',CR
+load_out_of_range_str:
+        DB          ' LOAD AREA OUT OF RANGE',CR

@@ -74,6 +74,10 @@
 ;//
 ;//                 -> Handles END-OF-BLOCK status for IBM file types :Bn: and :Jn:
 ;//
+;//             1.6a: Entry at 0xC000
+;//
+;//                 -> Version ID written to 0x2700
+;//
 
 
 ;//////////////////////////////////////////////////////////////////////////////
@@ -109,6 +113,7 @@ DCALW       EQU     00070H      ; Reset disk drive with wait
 ;
 ; XMON and TOS system data
 ;
+SIGNATURE   EQU     02700H      ; Program signature
 BUFLIM      EQU     0272EH      ; Lowest address of current TOS buffers
 KEYBUF      EQU     02780H      ; Console input buffer
 
@@ -150,21 +155,11 @@ OT_ENUM_OT  EQU     4           ; Other output
 
 ;//////////////////////////////////////////////////////////////////////////////
 ;//
-;//     Program entry
-;//
-;//////////////////////////////////////////////////////////////////////////////
-
-        ORG         02000H
-start:
-        JMP         beginning
-
-
-;//////////////////////////////////////////////////////////////////////////////
-;//
 ;//     Main program
 ;//
 ;//////////////////////////////////////////////////////////////////////////////
 
+        ORG         02000H
 main:
         ;
         ; Fill buffer with data from input file
@@ -414,15 +409,15 @@ save_input_to_buffer:
 
 error_reading_input:
         ;
-        ; Check for end of file
-        ;
-        ORA         A
-        JZ          end_of_input
-        ;
         ; Check for end-of-block for IBM file type B and J
         ;
         CPI         05CH
         JZ          read_next_input_byte
+        ;
+        ; Check for end of file
+        ;
+        ORA         A
+        JZ          end_of_input
         STC
         JMP         cleanup_and_quit
 
@@ -555,28 +550,6 @@ hex_or_ascii_prompt_end:
         ORA         A
         JZ          cleanup_and_quit
         JMP         hard_break_exit
-
-
-;//////////////////////////////////////
-
-input_disk_str:
-        DB          'input',CR
-output_disk_str:
-        DB          'output',CR
-insert_disk_str:
-        DB          'Insert ',CR
-continue_prompt_str:
-        DB          ' diskette, type C: ',BEL,CR
-option_a_str:
-        DB          'A',CR
-option_c_str:
-        DB          'C',CR
-option_h_str:
-        DB          'H',CR
-option_q_str:
-        DB          'Q',CR
-hex_or_ascii_prompt_str:
-        DB          'ASCII? Type H or A: ',BEL,CR
 
 
 ;//////////////////////////////////////////////////////////////////////////////
@@ -980,7 +953,7 @@ write_newline_to_output:
 
 ;//////////////////////////////////////////////////////////////////////////////
 ;//
-;//     Data
+;//     Strings and data
 ;//
 ;//////////////////////////////////////////////////////////////////////////////
 
@@ -1038,6 +1011,43 @@ stack_pointer_backup:
 console_input_buffer:
         DS          12
 
+input_disk_str:
+        DB          'input',CR
+output_disk_str:
+        DB          'output',CR
+insert_disk_str:
+        DB          'Insert ',CR
+continue_prompt_str:
+        DB          ' diskette, type C: ',BEL,CR
+option_a_str:
+        DB          'A',CR
+option_c_str:
+        DB          'C',CR
+option_h_str:
+        DB          'H',CR
+option_q_str:
+        DB          'Q',CR
+hex_or_ascii_prompt_str:
+        DB          'ASCII? Type H or A: ',BEL,CR
+
+eof_arg_str:
+        DB          'EOF=',NULL
+input_file_prompt_str:
+        DB          'Input file ?',CR
+page_ength_prompt_str:
+        DB          'Page length ?',CR
+
+
+;//////////////////////////////////////////////////////////////////////////////
+;//
+;//     Signature
+;//
+;//////////////////////////////////////////////////////////////////////////////
+
+        ORG         SIGNATURE
+        DB          'MOVE',NULL,NULL
+        DB          '106'
+
 
 ;//////////////////////////////////////////////////////////////////////////////
 ;//
@@ -1050,7 +1060,7 @@ default_data_buffer:
         ;
         ; This code is run once on program start, and is later overwritten
         ;
-beginning:
+start:
         ;
         ; Save stack pointer for breaking out of program from subroutines
         ;
@@ -1504,12 +1514,6 @@ input_file_required_error:
         JMP         cleanup_and_quit
 
 
-;//////////////////////////////////////
-
-eof_arg_str:
-        DB          'EOF=',NULL
-
-
 ;//////////////////////////////////////////////////////////////////////////////
 
         ;
@@ -1544,12 +1548,6 @@ prompt_for_input_file:
         LHLD        CI_FCB
         CALL        GET
         JMP         parse_diskswap_filecopy_mode_args
-
-
-;//////////////////////////////////////
-
-input_file_prompt_str:
-        DB          'Input file ?',CR
 
 
 ;//////////////////////////////////////////////////////////////////////////////
@@ -1753,9 +1751,3 @@ prompt_for_page_length:
         LHLD        CI_FCB
         CALL        GET
         JMP         parse_printer_mode_arg_str
-
-
-;//////////////////////////////////////
-
-page_ength_prompt_str:
-        DB          'Page length ?',CR
