@@ -45,6 +45,10 @@
 ;//                 -> Version ID added
 ;//                 -> Has a bug where Version ID is not written to 0x2700
 ;//
+;//             1.6b: Entry at 0xC000
+;//
+;//                 -> Fixes Version ID bug from v1.6a
+;//
 
 
 ;//////////////////////////////////////////////////////////////////////////////
@@ -57,6 +61,11 @@
 ; ASCII control characters
 ;
 CR          EQU     00DH        ; Cartridge Return
+
+;
+; XMON and TOS system data
+;
+SIGNATURE   EQU     02700H      ; Program signature
 
 ;
 ; TOS system calls
@@ -75,6 +84,17 @@ SL_FCB      EQU     0FF08H      ; Standard line-printer output abstract file FCB
 AI_FCB      EQU     0FF0AH      ; Auxilliary input abstract file FCB pointer
 AO_FCB      EQU     0FF0CH      ; Auxilliary output abstract file FCB pointer
 AL_FCB      EQU     0FF0EH      ; Auxilliary line-printer output abstract file FCB pointer
+
+
+;//////////////////////////////////////////////////////////////////////////////
+;//
+;//     Signature
+;//
+;//////////////////////////////////////////////////////////////////////////////
+
+        ORG         SIGNATURE
+        DB          'RELEAS'
+        DB          '106'
 
 
 ;//////////////////////////////////////////////////////////////////////////////
@@ -218,7 +238,7 @@ print_and_quit:
 
 ;//////////////////////////////////////////////////////////////////////////////
 ;//
-;//     Data
+;//     Strings and data
 ;//
 ;//////////////////////////////////////////////////////////////////////////////
 
@@ -231,23 +251,6 @@ aux_file_ptr_list:
         DW          AI_FCB
         DW          AO_FCB
         DW          AL_FCB
-
-
-;//////////////////////////////////////////////////////////////////////////////
-;//
-;//     Signature
-;//
-;//////////////////////////////////////////////////////////////////////////////
-
-        DB          'RELEAS'
-        DB          '106'
-
-
-;//////////////////////////////////////////////////////////////////////////////
-;//
-;//     Strings
-;//
-;//////////////////////////////////////////////////////////////////////////////
 
 released_str:
         DB          'RELEASED',CR
