@@ -10,8 +10,6 @@
 ;//         If the S option is used, the user will be prompted to swap disk every
 ;//         once in a while. This prompt will take any keypress to continue.
 ;//
-;//         NOTE: Will not support sectors written using the deleted address marks.
-;//
 ;//         NOTE: This program derives the size of user-memory on its own, and the
 ;//               code used expects a gap between start of user-memory and XMON-
 ;//               memory. This is true for machines with 48k RAM or less, but not
@@ -19,6 +17,8 @@
 ;//               version of this program on a 54k machine will cause the computer
 ;//               to crash, since the whole XMON working-RAM block (where the
 ;//               program itself resides) will be overwritten with floppy-data.
+;//
+;//         NOTE: The minor verification bug from v1.6 was never fixed.
 ;//
 ;//
 ;//         User choice prompt input:
@@ -57,6 +57,14 @@
 ;//                 -> Version ID written to 0x2700
 ;//                 -> Reverts all changes from v1.5b
 ;//
+;//             1.6b: Entry at 0x2000
+;//
+;//                 -> Re-introduces support for deleted sectors without the buffer
+;//                    overrun bug from v1.5b
+;//                 -> Introduces a bug where the last 25 bytes of each track won't
+;//                    be properly verified, neither will the sector type of the
+;//                    very last sector in each track
+;//
 
 
 ;//////////////////////////////////////////////////////////////////////////////
@@ -85,6 +93,7 @@ INDISP      EQU     0006AH      ; Get character at console cursor
 DCALW       EQU     00070H      ; Reset disk drive with wait
 DSRDW       EQU     00073H      ; Read from disk with wait
 DSWRW       EQU     00076H      ; Write to disk with wait
+DSDLW       EQU     00079H      ; Write deleted to disk with wait
 
 ;
 ; XMON and TOS system data
@@ -92,6 +101,11 @@ DSWRW       EQU     00076H      ; Write to disk with wait
 SIGNATURE   EQU     02700H      ; Program signature
 BUFLIM      EQU     0272EH      ; Lowest address of current TOS buffers
 KEYBUF      EQU     02780H      ; Console input buffer
+
+;
+; TOS Errors
+;
+ERROR_20    EQU     020H        ; DELETED DATA RECORD
 
 
 ;//////////////////////////////////////////////////////////////////////////////
@@ -128,7 +142,7 @@ start:
         ; Get highest possible start address of a track data buffer
         ;
         LHLD        BUFLIM
-        LXI         D,-26*128
+        LXI         D,-26*(128+1)
         DAD         D
         MOV         A,H
         INR         A
@@ -148,7 +162,7 @@ ram_test_loop:
         ;
         ; Prepare to set up a list of pointers to individual track data buffers
         ;
-        LXI         D,26*128
+        LXI         D,26*(128+1)
         LXI         B,track_buffer_list+2
         XRA         A
         STA         track_buffer_count
@@ -529,16 +543,46 @@ print_str:
 read_track:
         MVI         C,1
 read_next_sector:
+        ;
+        ; Read sector
+        ;
         LDA         current_drive_nr
         CALL        DSRDW
-        RC
+        JC          check_read_status
+        ;
+        ; Mark normal sector after sector data and advance to next sector
+        ;
         LXI         D,128
         DAD         D
+        MVI         M,000H
+read_sector_ok:
+        INX         H
         INR         C
         MOV         A,C
         CPI         27
         JC          read_next_sector
         RET
+
+
+;//////////////////////////////////////
+
+check_read_status:
+        ;
+        ; Check sector for deleted status
+        ;
+        CPI         ERROR_20
+        JZ          read_status_deleted
+        STC
+        RET
+
+read_status_deleted:
+        ;
+        ; Mark deleted sector after sector data and advance to next sector
+        ;
+        LXI         D,128
+        DAD         D
+        MVI         M,ERROR_20
+        JMP         read_sector_ok
 
 
 ;//////////////////////////////////////////////////////////////////////////////
@@ -549,15 +593,43 @@ read_next_sector:
 write_track:
         MVI         C,1
 write_next_sector:
+        ;
+        ; Check sector status
+        ;
+        LXI         D,128
+        DAD         D
+        MOV         A,M
+        LXI         D,-128
+        DAD         D
+        CPI         ERROR_20
         LDA         current_drive_nr
+        JZ          write_deleted_sector
+        ;
+        ; Write normal sector
+        ;
         CALL        DSWRW
         RC
-        LXI         D,128
+write_sector_ok:
+        ;
+        ; Advance to next sector
+        ;
+        LXI         D,128+1
         DAD         D
         INR         C
         MOV         A,C
         CPI         27
         JC          write_next_sector
+        RET
+
+write_deleted_sector:
+        ;
+        ; Write deleted sector
+        ;
+        CALL        DSDLW
+        JNC         write_sector_ok
+        CPI         ERROR_20
+        JZ          write_sector_ok
+        STC
         RET
 
 

@@ -11,8 +11,10 @@
 ;//
 ;//                 Drive type T:
 ;//                     A       Floppy (IBM 3740, ASCII)
+;//                     B       Floppy (IBM 3740, ASCII)
 ;//                     F       Floppy (Intel ISIS)
 ;//                     I       Floppy (IBM 3740, EBCDIC)
+;//                     J       Floppy (IBM 3740, EBCDIC)
 ;//                     M       Tape
 ;//
 ;//                 Drive number n:
@@ -84,6 +86,12 @@
 ;//                    which has never been used, instead of scanning entire file
 ;//                    directory
 ;//                 -> Adds printing of the X attribute to drive type F and M
+;//
+;//             1.6b: Entry at 0xC165
+;//
+;//                 -> Reintroduces support for B and J drive types
+;//                 -> Fixes the intel-file block-counting bug from v1.3
+;//                 -> Fixes the drive type bug introduced in v1.5b
 ;//
 
 
@@ -520,9 +528,12 @@ intel_file_include_size:
         LHLD        intel_file_entry_buffer + 00CH
         PUSH        D
         PUSH        H
+        LXI         B,1
+        MOV         A,L
+        ORA         H
+        JZ          linking_blocks_counted
         DCX         H
         LXI         D,-62
-        LXI         B,1
 count_next_linking_block:
         DAD         D
         JNC         linking_blocks_counted
@@ -847,7 +858,11 @@ parse_drive_type:
         JZ          use_tape_format
         CPI         'I'
         JZ          use_ibm_edbdic_format
+        CPI         'J'
+        JZ          use_ibm_edbdic_format
         CPI         'A'
+        JZ          use_ibm_ascii_format
+        CPI         'B'
         JZ          use_ibm_ascii_format
 invalid_drive:
         LXI         D,invalid_drive_str

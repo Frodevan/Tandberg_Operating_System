@@ -63,6 +63,10 @@
 ;//
 ;//                 -> Version ID written to 0x2700
 ;//
+;//             1.6b: Entry at 0xC000
+;//
+;//                 -> Properly return error if printing of filename fails
+;//
 
 
 ;//////////////////////////////////////////////////////////////////////////////
@@ -470,14 +474,24 @@ print_filename:
         ; Print filename before file extension
         ;
         PUSH        H
+        PUSH        B
+        MOV         C,A
         LHLD        CO_FCB
         CALL        PUTSTR
+        JNC         filename_printed_ok
+        POP         B
+        POP         H
+        RET
+filename_printed_ok:
+        MOV         A,C
+        POP         B
         POP         H
         MOV         M,A
+        XCHG
         MVI         A,'.'
+        LHLD        CO_FCB
         CALL        OUTCHAR
         RC
-        XCHG
 print_filename_final_part:
         ;
         ; Print file extension or extensionless filename
