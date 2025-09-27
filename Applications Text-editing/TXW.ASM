@@ -20,7 +20,9 @@
 ;//         to the format layout specified.
 ;//
 ;//         Output is sent to SO or SL, whichever is assigned, otherwise the output
-;//         goes to CO. Input is taken from SI.
+;//         goes to CO. Input is taken from SI, or AI may be used instead to point
+;//         to a job-list file containing the names of several files to render as
+;//         if all of them were a single file.
 ;//
 ;//
 ;//         Text inline special characters:
@@ -122,6 +124,21 @@
 ;//                   be deliminers between the code itself and the next parameter.
 ;//
 ;//
+;//         Batch-file line:
+;//
+;//             [:<Tn>:]<filename>
+;//
+;//                 filename    Name of input file target
+;//
+;//                 Drive type T:
+;//                     A       Floppy (IBM 3740, ASCII)
+;//                     B       Floppy (IBM 3740, ASCII)
+;//                     F       Floppy (Intel ISIS)
+;//                     I       Floppy (IBM 3740, EBCDIC)
+;//                     J       Floppy (IBM 3740, EBCDIC)
+;//                     M       Tape
+;//
+;//
 ;//         Changelog:
 ;//
 ;//             1.5: Entry at 0xC000
@@ -136,6 +153,7 @@
 ;//             1.6: Entry at 0xC000
 ;//
 ;//                 -> Version ID written to 0x2700
+;//                 -> Adds use of the AL device file for batch-file input
 ;//
 
 
@@ -173,7 +191,10 @@ SIGNATURE   EQU     02700H      ; Program signature
 ;
 GET         EQU     0FD0FH      ; Input string, inclusive CR
 PUT         EQU     0FD12H      ; Output string of characters, inclusive CR
+OPEN        EQU     0FD1EH      ; Open block device
+CLOSE       EQU     0FD27H      ; Close block device
 EDWH        EQU     0FD2DH      ; Convert word to 4-character ASCII hexadecimal
+PHYSINT     EQU     0FDDFH      ; Initialize FCB from full file designator
 
 ;
 ; TOS standard files
@@ -182,6 +203,12 @@ CO_FCB      EQU     0FF02H      ; Console output abstract file FCB pointer
 SI_FCB      EQU     0FF04H      ; Standard input abstract file FCB pointer
 SO_FCB      EQU     0FF06H      ; Standard output abstract file FCB pointer
 SL_FCB      EQU     0FF08H      ; Standard line-printer output abstract file FCB pointer
+AI_FCB      EQU     0FF0AH      ; Auxilliary input abstract file FCB pointer
+
+;
+; FCB mode flags
+;
+FM_INPUT    EQU     001H        ; File open for reading flag
 
 ;
 ; Text-layout settings datastructure
@@ -371,6 +398,30 @@ check_device_files:
         ;
         XRA         A
         STA         console_output_flag
+        STA         not_first_file_flag
+        ;
+        ; Check if AI is assigned to a batch file
+        ;
+        LHLD        AI_FCB
+        MOV         A,L
+        ORA         H
+        JZ          no_batch_file
+        ;
+        ; Check that SI is not assigned together with AI
+        ;
+        LHLD        SI_FCB
+        MOV         A,L
+        ORA         H
+        JZ          input_file_ok
+        ;
+        ; If both AI and SI is assigned, input mode cannot be decided
+        ;
+        LXI         D,multiple_inputs_str
+        LHLD        CO_FCB
+        CALL        PUT
+        JMP         quit
+
+no_batch_file:
         ;
         ; Check if SI is assigned for input data
         ;
@@ -509,12 +560,78 @@ reset_global_tabs_loop:
         ;
 get_next_input_line:
         ;
+        ; Check if batch-file input mode
+        ;
+        LHLD        AI_FCB
+        MOV         A,L
+        ORA         H
+        JZ          get_next_text_input_line
+        ;
+        ; If so, check if this is the first file in batch file
+        ;
+        LDA         not_first_file_flag
+        ANA         A
+        JNZ         get_next_text_input_line
+        ;
+        ; If first file, open it and set it as active input file
+        ;
+        DCR         A
+        STA         not_first_file_flag
+open_next_file_in_batch:
+        ;
+        ; Get filename from batch file
+        ;
+        LHLD        AI_FCB
+        LXI         D,input_line_buffer
+        CALL        GET
+        RC
+        ;
+        ; Create file FCB from filename
+        ;
+        LXI         H,input_line_buffer
+        XRA         A
+        CALL        PHYSINT
+        RC
+        ;
+        ; Allocate file to SI and open it for reading
+        ;
+        SHLD        SI_FCB
+        MVI         A,FM_INPUT
+        CALL        OPEN
+        RC
+get_next_text_input_line:
+        ;
         ; Get next line from input file
         ;
         LXI         D,input_line_buffer
         LHLD        SI_FCB
         CALL        GET
+        JNC         got_input_line
+        ;
+        ; Check for end of input text file
+        ;
+        ANA         A
+        STC
+        RNZ
+        ;
+        ; Return end of file if not batch-file input mode
+        ;
+        LHLD        AI_FCB
+        MOV         A,L
+        ORA         H
+        STC
+        RZ
+        ;
+        ; Otherwise advance to next text-file specified in batch file
+        ;
+        LHLD        SI_FCB
+        CALL        CLOSE
         RC
+        LXI         H,00000H
+        SHLD        SI_FCB
+        JMP         open_next_file_in_batch
+
+got_input_line:
         ;
         ; Reset input line pointers
         ;
@@ -2421,6 +2538,8 @@ current_line_on_page:
         DS          1
 multiple_pages_flag:
         DS          1
+not_first_file_flag:
+        DS          1
 paragraph_line_counter:
         DS          1
 input_line_wordbreak_ptr:
@@ -2456,6 +2575,8 @@ missing_si_str:
         DB          'No SI assigned',CR
 multiple_outputs_str:
         DB          'Both SO and SL',CR
+multiple_inputs_str:
+        DB          'Both SI and AI',CR
 
 page_nr_prefix_2_str:
         DB          'PAGE ',NULL

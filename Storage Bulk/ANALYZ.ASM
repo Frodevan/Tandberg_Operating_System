@@ -11,8 +11,10 @@
 ;//
 ;//                 Drive type T:
 ;//                     A       Floppy
+;//                     B       Floppy
 ;//                     F       Floppy
 ;//                     I       Floppy
+;//                     J       Floppy
 ;//
 ;//                 Drive number n:
 ;//                     0-3
@@ -52,6 +54,10 @@
 ;//             1.6: Entry at 0xC000
 ;//
 ;//                 -> Version ID written to 0x2700
+;//                 -> Adds drive type B and J as valid floppy-disk drives
+;//                 -> Resets disk-drive before test start
+;//                 -> Accepts deleted sectors as good sectors
+;//                 -> Counting of bad sectors moved to reporting-stage
 ;//
 
 
@@ -76,6 +82,7 @@ CR          EQU     00DH        ; Cartridge Return
 ;
 ; XMON system calls
 ;
+DCALW       EQU     00070H      ; Reset disk drive with wait
 DSRDW       EQU     00073H      ; Read from disk with wait
 
 ;
@@ -101,6 +108,7 @@ SO_FCB      EQU     0FF06H      ; Standard output abstract file FCB pointer
 ;
 ERROR_02    EQU     002H        ; CRC ERROR
 ERROR_10    EQU     010H        ; NON-VALID DISKETTE COMMAND
+ERROR_20    EQU     020H        ; DELETED DATA RECORD
 
 
 ;//////////////////////////////////////////////////////////////////////////////
@@ -188,6 +196,10 @@ is_uppercase:
         CPI         'I'
         JZ          valid_drive_type
         CPI         'A'
+        JZ          valid_drive_type
+        CPI         'B'
+        JZ          valid_drive_type
+        CPI         'J'
         JNZ         invalid_parameters
 valid_drive_type:
         ;
@@ -210,6 +222,12 @@ valid_drive_type:
         RC
         CPI         CR
         JNZ         invalid_parameters
+        ;
+        ; Reset selected drive
+        ;
+        LDA         drive_number
+        CALL        DCALW
+        RC
 
 
 ;//////////////////////////////////////
@@ -300,6 +318,8 @@ test_current_sector:
         ;
         ; Check read operation error code
         ;
+        CPI         ERROR_20
+        JZ          read_next_sector
         MOV         L,A
         CPI         ERROR_02
         JZ          register_bad_sector
@@ -321,20 +341,6 @@ register_bad_sector:
         DAD         B
         MVI         M,1
         POP         B
-        ;
-        ; Increase count of bad sectors
-        ;
-        XRA         A
-        LHLD        bad_sector_count_bcd
-        INX         H
-        MOV         A,L
-        DAA
-        MOV         L,A
-        MOV         A,H
-        ACI         000H
-        DAA
-        MOV         H,A
-        SHLD        bad_sector_count_bcd
 read_next_sector:
         ;
         ; Advance one secor
@@ -387,6 +393,22 @@ sumarize_sector:
         XRA         A
         ORA         M
         JZ          sumarize_next_sector
+        ;
+        ; Increase count of bad sectors
+        ;
+        PUSH        H
+        XRA         A
+        LHLD        bad_sector_count_bcd
+        INX         H
+        MOV         A,L
+        DAA
+        MOV         L,A
+        MOV         A,H
+        ACI         000H
+        DAA
+        MOV         H,A
+        SHLD        bad_sector_count_bcd
+        POP         H
         ;
         ; Add 'track/sector' of bad sector to report
         ;

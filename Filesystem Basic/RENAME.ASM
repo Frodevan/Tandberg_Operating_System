@@ -12,10 +12,8 @@
 ;//
 ;//                 Drive type T:
 ;//                     A       Floppy (IBM 3740, ASCII)
-;//                     B       Floppy (IBM 3740, ASCII)
 ;//                     F       Floppy (Intel ISIS)
 ;//                     I       Floppy (IBM 3740, EBCDIC)
-;//                     J       Floppy (IBM 3740, EBCDIC)
 ;//                     M       Tape
 ;//
 ;//                 Drive number n:
@@ -55,6 +53,7 @@
 ;//
 ;//             1.6a: Entry at 0xC0AA
 ;//
+;//                 -> Reverts all changes from v1.5b
 ;//                 -> Version ID written to 0x2700
 ;//
 
@@ -154,20 +153,11 @@ ATTR_F      EQU     080H        ; Format file
 
 ;//////////////////////////////////////////////////////////////////////////////
 ;//
-;//     Legacy program entry
-;//
-;//////////////////////////////////////////////////////////////////////////////
-
-        ORG         0C000H
-        JMP         beginning
-
-
-;//////////////////////////////////////////////////////////////////////////////
-;//
 ;//     Data
 ;//
 ;//////////////////////////////////////////////////////////////////////////////
 
+        ORG         0C000H
 old_file_dir_entry_ptr:
         DW          00000H
 
@@ -213,7 +203,6 @@ to_uppercase:
 ;//////////////////////////////////////////////////////////////////////////////
 
 start:
-beginning:
         ;
         ; Scan for first character of mandatory command line argument
         ;
@@ -239,15 +228,6 @@ scan_for_first_char:
         CPI         CR
         JZ          invalid_drive
         CALL        to_uppercase
-        CPI         'J'
-        JNZ         ibm_type_j_check_done
-        DCR         A
-ibm_type_j_check_done:
-        CPI         'B'
-        JNZ         ibm_type_b_check_done
-        DCR         A
-ibm_type_b_check_done:
-        STA         input_char
         STA         drive_designator_str + 1
         CALL        INCHAR
         RC

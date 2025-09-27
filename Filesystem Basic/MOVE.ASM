@@ -171,20 +171,11 @@ OT_ENUM_OT  EQU     4           ; Other output
 
 ;//////////////////////////////////////////////////////////////////////////////
 ;//
-;//     Legacy program entry
-;//
-;//////////////////////////////////////////////////////////////////////////////
-
-        ORG         02000H
-        JMP         beginning
-
-
-;//////////////////////////////////////////////////////////////////////////////
-;//
 ;//     Main program
 ;//
 ;//////////////////////////////////////////////////////////////////////////////
 
+        ORG         02000H
 main:
         ;
         ; Fill buffer with data from input file
@@ -434,15 +425,15 @@ save_input_to_buffer:
 
 error_reading_input:
         ;
-        ; Check for end of file
-        ;
-        ORA         A
-        JZ          end_of_input
-        ;
         ; Check for end-of-block for IBM file type B and J
         ;
         CPI         ERROR_5C
         JZ          read_next_input_byte
+        ;
+        ; Check for end of file
+        ;
+        ORA         A
+        JZ          end_of_input
         STC
         JMP         cleanup_and_quit
 
@@ -1086,7 +1077,6 @@ default_data_buffer:
         ; This code is run once on program start, and is later overwritten
         ;
 start:
-beginning:
         ;
         ; Save stack pointer for breaking out of program from subroutines
         ;

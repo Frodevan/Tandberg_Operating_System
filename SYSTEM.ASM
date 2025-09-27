@@ -75,6 +75,13 @@
 ;//
 ;//                 -> Adds a handfull of bugfixes
 ;//
+;//             v1.6: Entry at 0xDB03
+;//
+;//                 -> Adds device-file :CP:
+;//                 -> Enables erase-page and home keys on the command line
+;//                 -> Recognizes the X (Direct-Access) file attribute
+;//                 -> Major bugfixes
+;//
 
 
 ;//////////////////////////////////////////////////////////////////////////////
@@ -101,6 +108,7 @@ LF          EQU     00AH        ; Line Feed
 ROLUP       EQU     00CH        ; Scroll screen up one row
 CR          EQU     00DH        ; Cartridge Return
 ERPAG       EQU     019H        ; Clear screen
+CURH        EQU     01DH        ; Cursor home
 DEL         EQU     07FH        ; Delete
 
 ;
@@ -171,6 +179,8 @@ VERIFY      EQU     000D0H      ; Verify tape cartridge block type
 STACK       EQU     025BEH      ; TOS top of stack
 BUF2        EQU     02600H      ; Sector data of last filesystem operation
 BUF1        EQU     02680H      ; Additional sector data for filesysyem operation
+SIGNATURE   EQU     02700H      ; Program signature
+MAPSEM      EQU     02709H      ; Active mapfile in RAM-cache semaphore flag
 CTLBLK      EQU     02710H      ; Most recent TOS file control block
 CISAVE      EQU     0271BH      ; Pending TOS CI file assignement
 COSAVE      EQU     0271DH      ; Pending TOS CO file assignement
@@ -216,6 +226,7 @@ ERROR_22    EQU     022H        ; WRITE ON NON-BLOCK FILE
 ERROR_23    EQU     023H        ; WRITE/READ MISSING IN CTL-BLK
 ERROR_24    EQU     024H        ; READ ON FILETYPE OTHER THAN 4,5
 ERROR_25    EQU     025H        ; LINE OVERFLOW
+ERROR_26    EQU     026H        ; IMPROPER PARAMETER
 ERROR_27    EQU     027H        ; FILE ALREADY OPEN
 ERROR_28    EQU     028H        ; NO OPEN-ROUTINE IN CTL-BLK
 ERROR_29    EQU     029H        ; CLOSE ON CLOSED FILE
@@ -245,6 +256,7 @@ ERROR_5C    EQU     05CH        ; END-OF-BLOCK (B AND J FILES)
 ATTR_I      EQU     001H        ; Invisible file
 ATTR_S      EQU     002H        ; System file
 ATTR_W      EQU     004H        ; Write-protected file
+ATTR_X      EQU     040H        ; Direct-access file
 
 ;
 ; TOS File Control Block, block device variables
@@ -328,6 +340,12 @@ TAB_CLOSE   EQU     00CH        ; Device driver close routines
 ;//                    now automatically set up with console echo
 ;//                 -> Adds a bug where the newly exposed TOSINIT API routine is
 ;//                    overwritten by buffers
+;//
+;//             v1.6:
+;//
+;//                 -> Clears the new SIGNATURE field before prompting for next
+;//                    command at the command line prompt
+;//                 -> Fixes the TOSINIT API routine vs buffers bug from v1.5a
 ;//
 
 
@@ -521,6 +539,16 @@ main:
         STA         DEBUG
         LXI         SP,STACK
         ;
+        ; Clear signature
+        ;
+        LXI         H,SIGNATURE
+        MVI         A,9
+clear_signature_loop:
+        MVI         M,NULL
+        INX         H
+        DCR         A
+        JNZ         clear_signature_loop
+        ;
         ; Check for if a batch file is running, and skip printing prompt if so
         ;
         LHLD        CI_FCB
@@ -698,7 +726,6 @@ reset_file_buffer:
         MVI         A,LF
         STAX        D
         INX         D
-        MVI         A,LF
         STAX        D
         RET
 
@@ -824,7 +851,7 @@ error_str:
 newline_str:
         DB          CR
 title_str:
-        DB          'TOS21 VER. 1.5',CR
+        DB          'TOS21 VER. 1.6',CR
 
 
 ;//////////////////////////////////////////////////////////////////////////////
@@ -1955,6 +1982,10 @@ T_PUT:
 ;//                 -> Binary mode of linked files now propagates down through the
 ;//                    nested files
 ;//
+;//             v1.6:
+;//
+;//                 -> Fixes the line-buffered file OPEN bug from v1.3
+;//
 
 
 ;//////////////////////////////////////////////////////////////////////////////
@@ -2091,11 +2122,26 @@ open_file_test_for_type_4:
         JNZ         open_file_test_for_type_6
         ;
         ; OPEN line buffered file: Open nested input file
-        ; Get reference to nested file and verify that it is set
+        ; Get reference to nested file
+        ;
+        LXI         D,008H
+        DAD         D
+        MOV         E,M             ; FCB + 008H, nested file reference
+        INX         H
+        MOV         D,M
+        XCHG
+        ;
+        ; Check if nested file is a block device
+        ;
+        MOV         A,M             ; Nested file + FCB_TYPE
+        CPI         5
+        JNZ         open_type_4_5_done
+        ;
+        ; Get pointer to OPEN routine and verify that it is set
         ;
         LXI         D,FCB_OPEN
         DAD         D
-        MOV         E,M             ; Bug: file type 4 doesn't have a FCB_OPEN
+        MOV         E,M             ; Nested file + FCB_OPEN
         INX         H
         MOV         D,M
         MOV         A,E
@@ -2280,10 +2326,10 @@ open_type_5_continue:
         ;
         ; Read first block of file if everything went well and IO mode is input
         ;
-        JC          open_type_5_done
+        JC          open_type_4_5_done
         LDA         open_mode
         ANI         FM_INPUT
-        JZ          open_type_5_done
+        JZ          open_type_4_5_done
         PUSH        H
         LXI         D,FCB_READ
         DAD         D
@@ -2300,7 +2346,7 @@ open_type_5_continue:
 
 open_type_5_first_read_done:
         JNC         open_complete
-open_type_5_done:
+open_type_4_5_done:
         POP         H
         POP         D
         RET
@@ -2327,6 +2373,10 @@ open_type_5_done:
 ;//
 ;//                 -> No longer shares return code with OPEN
 ;//                 -> Fixes the linked-file de-allocation bug from v1.3
+;//
+;//             v1.6:
+;//
+;//                 -> Reports error if error when closing first file of fcb type 6
 ;//
 
 
@@ -2513,6 +2563,7 @@ close_file_type_6:
         XCHG
         CALL        T_CLOSE
         POP         H
+        JC          close_file_error
         ;
         ; Close second linked file
         ;
@@ -2690,6 +2741,11 @@ read_write_return:
 ;//                    file control block is an echo-file before echoing a tab
 ;//                    ASCII control character input on a READ.
 ;//
+;//             v1.6:
+;//
+;//                 -> Clears input buffer to prompts in the case of a line buffer
+;//                    overflow exception
+;//
 
 
 ;//////////////////////////////////////////////////////////////////////////////
@@ -2776,7 +2832,24 @@ read_type_4_get_next_char:
 
 read_line_overflow:
         MVI         A,ERROR_25
+        ;
+        ; Empty buffer before raising exception
+        ;
+        POP         H
+        PUSH        H
+        LXI         D,FCB_BUFPTR
+        DAD         D
+        MOV         E,M
+        INX         H
+        MOV         D,M
+        XCHG
+        MVI         M,LF
+        INX         H
+        MVI         M,LF
 read_type_4_error:
+        ;
+        ; Restore other registers and return exception
+        ;
         POP         H
         POP         D
         POP         B
@@ -2964,6 +3037,17 @@ read_type_4_erase_char:
 ;//
 ;//                 -> Fixes Intel close on empty linking-block bug from v1.3
 ;//
+;//             v1.6:
+;//
+;//                 -> Adds a semaphore MAPSEM to indicate that an active copy of
+;//                    the mapfile is currently cached in the BUF2/1 buffers in RAM
+;//                 -> Does not open files with the X Direct-Access attribute
+;//                 -> An attempt has been made for allowing incomplete linking-
+;//                    blocks in the middle of a link-block chain on Intel READs,
+;//                    but a bug in the implementation prevents this new behaviour
+;//                    from being invoked
+;//                 -> Fixes the last linking-block full bug from v1.3
+;//
 
 
 ;//////////////////////////////////////////////////////////////////////////////
@@ -2971,6 +3055,19 @@ read_type_4_erase_char:
 ;//     Mapfile handling
 ;//
 ;//////////////////////////////////////////////////////////////////////////////
+
+        ;
+        ; Read mapfile and set active mapfile in cache semaphore flag
+        ;
+intel_read_mapfile_with_semaphore:
+        MVI         A,TRUE
+        STA         MAPSEM
+        CALL        intel_read_mapfile_to_cache
+        JC          intel_release_mapfile_semaphore
+        RET
+
+
+;//////////////////////////////////////
 
         ;
         ; Read mapfile from last disk which had a LOCDIR, LINK or LOAD call
@@ -2999,6 +3096,21 @@ intel_read_mapfile_to_cache:
 
 
 ;//////////////////////////////////////////////////////////////////////////////
+
+        ;
+        ; Write mapfile and clear active mapfile in cache semaphore flag
+        ;
+intel_write_mapfile_with_semaphore:
+        CALL        intel_write_mapfile_from_cache
+intel_release_mapfile_semaphore:
+        PUSH        PSW
+        XRA         A
+        STA         MAPSEM
+        POP         PSW
+        RET
+
+
+;//////////////////////////////////////
 
         ;
         ; Write mapfile to last disk which had a LOCDIR, LINK or LOAD call
@@ -3112,7 +3224,7 @@ T_RELBLK:
         ;
         ; Read mapfile from disk, release block, and write updates back to disk
         ;
-        CALL        intel_read_mapfile_to_cache
+        CALL        intel_read_mapfile_with_semaphore
         JC          intel_device_driver_error
         POP         B
         PUSH        B
@@ -3120,7 +3232,7 @@ T_RELBLK:
         ANA         M
         XRA         M
         MOV         M,A
-        CALL        intel_write_mapfile_from_cache
+        CALL        intel_write_mapfile_with_semaphore
         JC          intel_device_driver_error
 intel_mapfile_change_done:
         POP         B
@@ -3162,7 +3274,7 @@ T_RELN:
         ;
         ; Get mapfile from disk
         ;
-        CALL        intel_read_mapfile_to_cache
+        CALL        intel_read_mapfile_with_semaphore
         JC          intel_device_driver_error
 intel_release_next_block:
         ;
@@ -3196,7 +3308,7 @@ intel_release_blocks_done:
         ;
         ; Write changes to mapfile back to disk
         ;
-        CALL        intel_write_mapfile_from_cache
+        CALL        intel_write_mapfile_with_semaphore
         JNC         intel_mapfile_change_done
         JMP         intel_device_driver_error
 
@@ -3356,7 +3468,7 @@ T_GETBLK:
         ;
         ; Read mapfile from disk and reserve next free block
         ;
-        CALL        intel_read_mapfile_to_cache
+        CALL        intel_read_mapfile_with_semaphore
         JC          intel_device_driver_error
         CALL        intel_get_first_free_block
         JC          intel_device_driver_error
@@ -3366,7 +3478,7 @@ T_GETBLK:
         ; Write changes to mapfile back to disk
         ;
         PUSH        D
-        CALL        intel_write_mapfile_from_cache
+        CALL        intel_write_mapfile_with_semaphore
         POP         B
         JC          intel_device_driver_error
         POP         D
@@ -3392,7 +3504,7 @@ T_GETN:
         ;
         ; Read mapfile from disk and reserve next free block
         ;
-        CALL        intel_read_mapfile_to_cache
+        CALL        intel_read_mapfile_with_semaphore
         JC          intel_device_driver_error
         CALL        intel_get_first_free_block
         JC          intel_device_driver_error
@@ -3439,7 +3551,7 @@ intel_reserve_blocks_done:
         ;
         ; Write mapfile changes back to disk
         ;
-        CALL        intel_write_mapfile_from_cache
+        CALL        intel_write_mapfile_with_semaphore
         JC          intel_device_driver_error
         JMP         intel_mapfile_change_done
 
@@ -3551,10 +3663,25 @@ intel_open_input:
 
 intel_file_to_open_found:
         ;
+        ; Get attributes of file entry
+        ;
+        LXI         D,00AH
+        DAD         D
+        MOV         A,M
+        ;
+        ; Check that file is not a direc-access file
+        ;
+        ANI         ATTR_X
+        JZ          intel_normal_file_to_open
+        MVI         A,ERROR_16
+        STC
+        JMP         intel_operation_exception
+
+intel_normal_file_to_open:
+        ;
         ; Get bytecount of last block
         ;
-        LXI         D,00BH
-        DAD         D
+        INX         H
         MOV         A,M
         ;
         ; Get linking block address
@@ -3691,7 +3818,22 @@ intel_file_has_more_data:
         SHLD        current_data_block_address
         MOV         A,D
         ORA         E
+        JNZ         intel_file_next_data_block_valid
+        ;
+        ; This linking-block is only paritally full, try to go to the next
+        ;
+        LHLD        current_linking_block_buffer_ptr
+        INX         H
+        INX         H
+        MOV         E,M
+        INX         H
+        MOV         D,M
         JZ          intel_file_out_of_data
+        MOV         B,D
+        MOV         C,E
+        JMP         intel_file_read_next_linking_block
+
+intel_file_next_data_block_valid:
         ;
         ; Advance linking-block index and check for end of linking block buffer
         ;
@@ -3715,6 +3857,7 @@ intel_file_has_more_data:
         MOV         A,B
         ORA         C
         JZ          intel_read_last_data_block
+intel_file_read_next_linking_block:
         ;
         ; Read next linking block and reset index
         ;
@@ -4215,6 +4358,15 @@ intel_close_data_write_done:
         LHLD        current_fcb_plus_01EH
         INX         H
         MOV         E,M             ; FCB + 01FH, linking block index
+        ;
+        ; Skip rolling back unused blocks if the final linking block is full
+        ;
+        MOV         A,E
+        ANA         A
+        JM          intel_write_final_linking_block
+        ;
+        ; Otherwise continue with the pointers
+        ;
         MVI         D,000H
         INX         H
         MOV         A,M             ; FCB + 020H, linking block buffer pointer
@@ -4256,6 +4408,7 @@ intel_unused_blocks_counted:
         LHLD        intel_file_next_block_in_linking_buffer_ptr
         CALL        T_RELN
         JC          intel_operation_exception
+intel_write_final_linking_block:
         ;
         ; Set up to write final linking block to disk
         ;
@@ -4575,6 +4728,19 @@ T_STIMER:
 ;//                 -> Fills the block data-area in the block data-buffer with
 ;//                    spaces after each time it has been cleared
 ;//
+;//             v1.6:
+;//
+;//                 -> No longer reads the Error-tracks in the ERMAP record
+;//                 -> Proper check for EOF when opening files, also mark files
+;//                    with invalid (negative) file sizes as empty
+;//                 -> Now validates that next block is within the file when the
+;//                    file is opened
+;//                 -> Automatically skips deleted sectors on READs of IBM files,
+;//                    instead of returning status message to application
+;//                 -> Adds a bug that causes the blocks of the same track or
+;//                    sector as the last block in file, to be moved to the error
+;//                    tracks
+;//
 
 
 ;//////////////////////////////////////////////////////////////////////////////
@@ -4867,18 +5033,8 @@ find_ibm_file_index:
         ;
         ; Read in record containint info about bad tracks
         ;
-        LXI         B,DISK_TRACK*0 + DISK_SECTOR*5
-        LXI         H,BUF1
-        CALL        read_ibm_disk_record
-        RC
-        LXI         D,BUF1 + 006H
-        CALL        ascii_decimal_2_digit_to_bin
-        RC
-        STA         ibm_bad_track_list
-        LXI         D,BUF1 + 00AH
-        CALL        ascii_decimal_2_digit_to_bin
-        RC
-        STA         ibm_bad_track_list+1
+        LXI         H,00000H
+        SHLD        ibm_bad_track_list
         ;
         ; Scan through IBM disk file records for a file matching requested name
         ;
@@ -5167,10 +5323,36 @@ ibm_open_prepare_block_loop:
         DCR         B
         JNZ         ibm_open_prepare_block_loop
         ;
-        ; Do final checks on opened file
+        ; Validate track of next block
         ;
-        CALL        ibm_check_for_file_end
-        JMP         ibm_operation_ok
+        LHLD        current_fcb_plus_01EH
+        INX         H
+        MOV         A,M             ; FCB + 01FH, track number of file tail
+        DCX         H
+        DCX         H
+        CMP         M               ; FCB + 01DH, track of next data record
+        JC          ibm_empty_file_opened
+        JNZ         ibm_operation_ok
+        ;
+        ; Validate sector of next block if next block is in last track of file
+        ;
+        INX         H
+        MOV         A,M             ; FCB + 01EH, sector number of file tail
+        DCX         H
+        DCX         H
+        CMP         M               ; FCB + 01CH, sector of next data record
+        JNC         ibm_operation_ok
+ibm_empty_file_opened:
+        ;
+        ; If next block is outside file, set end-of-file flag immediately
+        ;
+        LHLD        CTLBLK
+        INX         H
+        MOV         A,M
+        ORI         FM_EOF
+        MOV         M,A
+        SUB         A
+        JMP         ibm_operation_exception
 
 
 ;//////////////////////////////////////////////////////////////////////////////
@@ -5226,15 +5408,13 @@ ibm_next_data_block_ready:
         MOV         M,B             ; FCB + 01DH, track of next data record
         DCX         H
         MOV         M,C             ; FCB + 01CH, sector of next data record
-        INX         H
-        INX         H
         POP         B
         ;
         ; Check if record is on an error-track
         ;
         INX         H
         INX         H
-        MOV         A,M             ; FCB + 020H, first IBM disk error track
+        MOV         A,M             ; FCB + 01EH, sector number of file tail
         CMP         B
         JNZ         not_first_error_track
         ;
@@ -5245,7 +5425,7 @@ ibm_next_data_block_ready:
 
 not_first_error_track:
         INX         H
-        MOV         A,M             ; FCB + 021H, second IBM disk error track
+        MOV         A,M             ; FCB + 01FH, track number of file tail
         CMP         B
         JNZ         error_track_check_done
         ;
@@ -5317,7 +5497,18 @@ ibm_not_end_of_file:
         ;
         CALL        ibm_advance_to_next_block
         CALL        read_ibm_disk_record
-        JMP         ibm_operation_end
+        JNC         ibm_operation_end
+        ;
+        ; Silently skip deleted sectors
+        ;
+        CPI         ERROR_20
+        JNZ         ibm_operation_exception
+        POP         D
+        POP         B
+        POP         PSW
+        ANA         A
+        LHLD        CTLBLK
+        JMP         ibm_read_input
 
 
 ;//////////////////////////////////////////////////////////////////////////////
@@ -6807,6 +6998,15 @@ T_LOAD:
 ;//                 -> Fixes the invalid filename return bug from v1.5a
 ;//                 -> Fixes the invalid filename overrun check bug from v1.5a
 ;//
+;//             v1.6:
+;//
+;//                 -> Adds the :CP: file to the list of system devices available
+;//                    for use
+;//                 -> PHYSINT now checks for valid file mode before running, valid
+;//                    modes being input and output files.
+;//                 -> Fixes the PHYSINT block device format bug from v1.5a
+;//                 -> Fixes the PHYSINT IBM filename padding bug from v1.5a
+;//
 
 
 ;//////////////////////////////////////////////////////////////////////////////
@@ -6834,6 +7034,8 @@ system_device_list:
         DW          DEV_XM_FCB
         DB          'RC'
         DW          DEV_RC_FCB
+        DB          'CP'
+        DW          DEV_CP_FCB
         DB          NULL
 
 
@@ -7235,6 +7437,16 @@ file_handle_skip_whitespace_loop:
         ; Generate a file control block from a file handle string at HL
         ;
 T_PHYSINT:
+        CPI         2
+        JC          physint_valid_open_mode
+        MVI         A,ERROR_26
+        STC
+        RET
+
+
+;//////////////////////////////////////
+
+physint_valid_open_mode:
         ;
         ; Set up pointers and reset nested file depth
         ;
@@ -7668,6 +7880,10 @@ physint_open_routine_ready:
         INX         H
         SHLD        block_device_params_list_ptr
         STAX        D               ; FCB + FCB_DEVTYP
+        ;
+        ; Get device format
+        ;
+        MOV         A,M
         STA         physint_device_format
         INX         D
         ;
@@ -7851,6 +8067,20 @@ physint_pad_non_ext_filename_loop:
         INX         D
         DCR         B
         JNZ         physint_pad_non_ext_filename_loop
+        ;
+        ; Check if this is an IBM file
+        ;
+        LDA         physint_device_format
+        ANI         002H
+        JZ          physint_filename_ready
+        ;
+        ; If so, only pad out the ninth byte, as IBM files are extensionless
+        ;
+        SUB         A
+        STAX        D
+        INX         D
+        JMP         physint_file_extension_full
+
 physint_filename_ready:
         ;
         ; Pad out remaining characters in file extension
@@ -8109,6 +8339,12 @@ tape_physint_setup:
 ;//                    the file in question will now immediately be unasigned
 ;//                 -> Adds :RE: and :CE: device files for UART and console input
 ;//                    with end-of-file on Ctrl-C
+;//
+;//             v1.6:
+;//
+;//                 -> Adds :CE: device file for buffered line-based console input
+;//                    with echo to both the console output and printer UART
+;//                 -> Fixes the autoscroll bug from v1.3
 ;//
 
 
@@ -8724,10 +8960,14 @@ DEV_CO_routine:
         ;
         CALL        TTO
         ;
-        ; Make sure to pay extra attention to linefeeds
+        ; Make sure to pay extra attention to linefeeds and cursor movment
         ;
         CPI         LF
         JZ          co_emulate_autoscroll
+        CPI         CURH
+        JZ          co_cursor_home
+        CPI         ERPAG
+        JZ          co_cursor_home
         ANA         A
         RET
 
@@ -8748,6 +8988,21 @@ co_emulate_autoscroll:
         ; Otherwise increase row number
         ;
         INR         A
+        STA         ROLLSW
+        JMP         co_autoscroll_done
+
+co_cursor_home:
+        ;
+        ; Check if autoscroll is enabled in hardware
+        ;
+        PUSH        PSW
+        LDA         ROLLSW
+        ANA         A
+        JZ          co_autoscroll_done
+        ;
+        ; If so, reset row number
+        ;
+        MVI         A,'A'
         STA         ROLLSW
         JMP         co_autoscroll_done
 
@@ -8870,6 +9125,30 @@ not_end_of_text:
 DEV_CI_buffer:
         DB          LF,LF
         DS          126
+
+
+;//////////////////////////////////////////////////////////////////////////////
+
+        ;
+        ; Console buffered line input, with echo on console and printer output
+        ;
+DEV_CP_FCB:
+        DB          3
+        DB          FM_NO_CLOSE + FM_INPUT
+        DW          DEV_CI_FCB_buffered_echo
+        DW          DEV_CP_FCB_output
+
+
+;//////////////////////////////////////
+
+        ;
+        ; Console with printer UART copy output
+        ;
+DEV_CP_FCB_output:
+        DB          6
+        DB          FM_NO_CLOSE + FM_OUTPUT
+        DW          DEV_CO_FCB
+        DW          DEV_LP_FCB
 
 
 ;//////////////////////////////////////////////////////////////////////////////
@@ -9261,6 +9540,14 @@ AL_FCB:
 ;//                 -> Program loader will only accept one line-continuation with
 ;//                    the / character at the end of the commnand filename
 ;//
+;//             v1.6:
+;//
+;//                 -> Empty input to the command line now brings up a new prompt
+;//                    instead of just being ignored
+;//                 -> Cursor-home and clear-screen control characters can now be
+;//                    used when entering a command at the command line prompt
+;//                    without voiding the input
+;//
 
 
 ;//////////////////////////////////////////////////////////////////////////////
@@ -9300,6 +9587,10 @@ skip_cli_whitespace:
         CPI         ' '
         JZ          skip_cli_whitespace
         CPI         CR
+        RZ
+        CPI         CURH
+        JZ          skip_cli_whitespace
+        CPI         ERPAG
         JZ          skip_cli_whitespace
         ;
         ; Check if a drive designator is provided, otherwise assume default
