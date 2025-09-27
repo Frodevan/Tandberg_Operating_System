@@ -22,6 +22,10 @@
 ;//
 ;//                 -> Sets flag used to enable batch-file execution on TOS v1.5+
 ;//
+;//             1.6: Entry at 0xC000
+;//
+;//                 -> Version ID written to 0x2700
+;//
 
 
 ;//////////////////////////////////////////////////////////////////////////////
@@ -36,8 +40,14 @@
 TRUE        EQU     -1          ; Boolean True
 
 ;
+; ASCII control characters
+;
+NULL        EQU     000H        ; Null character
+
+;
 ; XMON and TOS system data
 ;
+SIGNATURE   EQU     02700H      ; Program signature
 EXSW        EQU     027B2H      ; TOS EXEC batch-file assigned switch
 
 ;
@@ -49,6 +59,17 @@ SL_FCB      EQU     0FF08H      ; Standard line-printer output abstract file FCB
 AI_FCB      EQU     0FF0AH      ; Auxilliary input abstract file FCB pointer
 AO_FCB      EQU     0FF0CH      ; Auxilliary output abstract file FCB pointer
 AL_FCB      EQU     0FF0EH      ; Auxilliary line-printer output abstract file FCB pointer
+
+
+;//////////////////////////////////////////////////////////////////////////////
+;//
+;//     Signature
+;//
+;//////////////////////////////////////////////////////////////////////////////
+
+        ORG         SIGNATURE
+        DB          'EXEC',NULL,NULL
+        DB          '106'
 
 
 ;//////////////////////////////////////////////////////////////////////////////

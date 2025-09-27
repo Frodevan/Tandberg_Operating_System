@@ -27,6 +27,10 @@
 ;//                 -> Accepts uppercase letters at the prompt
 ;//                 -> Will never raise tape-mark-detected at the end of dump
 ;//
+;//             1.6: Entry at 0xC05D
+;//
+;//                 -> Version ID written to 0x2700
+;//
 
 
 ;//////////////////////////////////////////////////////////////////////////////
@@ -38,6 +42,7 @@
 ;
 ; ASCII control characters
 ;
+NULL        EQU     000H        ; Null character
 LF          EQU     00AH        ; Line Feed
 CR          EQU     00DH        ; Cartridge Return
 
@@ -53,16 +58,21 @@ CUN         EQU     000A6H      ; Rewind and unload tape cartridge
 CBWRW       EQU     000B2H      ; Write data to tape cartridge
 CBTMW       EQU     000B8H      ; Write tape mark to tape cartridge
 
+;
+; XMON and TOS system data
+;
+SIGNATURE   EQU     02700H      ; Program signature
+
 
 ;//////////////////////////////////////////////////////////////////////////////
 ;//
-;//     Program entry
+;//     Signature
 ;//
 ;//////////////////////////////////////////////////////////////////////////////
 
-        ORG         0C000H
-start:
-        JMP         main_program
+        ORG         SIGNATURE
+        DB          'DDUMC',NULL
+        DB          '106'
 
 
 ;//////////////////////////////////////////////////////////////////////////////
@@ -71,13 +81,14 @@ start:
 ;//
 ;//////////////////////////////////////////////////////////////////////////////
 
-current_track_nr:
-        DS          1
-
+        ORG         0C000H
 welcome_prompt_str:
         DB          'DUMP FROM DISKETTE 0 TO CARTRIDGE 0 TRK 0  TYPE Y TO START',CR
 dump_done_str:
         DB          'END OF DUMP',CR
+
+current_track_nr:
+        DS          1
 
 
 ;//////////////////////////////////////////////////////////////////////////////
@@ -112,7 +123,7 @@ print_str_loop:
 ;//
 ;//////////////////////////////////////////////////////////////////////////////
 
-main_program:
+start:
         ;
         ; Print user prompt and expect a 'Y' to continue
         ;
