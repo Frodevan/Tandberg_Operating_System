@@ -11,8 +11,10 @@
 ;//
 ;//                 Drive type T:
 ;//                     A       Floppy (IBM 3740, ASCII)
+;//                     B       Floppy (IBM 3740, ASCII)
 ;//                     F       Floppy (Intel ISIS)
 ;//                     I       Floppy (IBM 3740, EBCDIC)
+;//                     J       Floppy (IBM 3740, EBCDIC)
 ;//                     M       Tape
 ;//
 ;//                 Drive number n:
@@ -71,6 +73,10 @@
 ;//                 -> Fixes the two tape-track summary print issues from v1.3
 ;//                 -> Fixes tape-track 2-4 summary bug from v1.3
 ;//                 -> Fixes file-size bug of empty intel-files
+;//
+;//             1.5b: Entry at 0xC293
+;//
+;//                 -> Recognizes B and J as valid drive types
 ;//
 
 
@@ -161,11 +167,10 @@ FCB_DRVNR   EQU     011H        ; Drive number
 
 ;//////////////////////////////////////////////////////////////////////////////
 ;//
-;//     Program entry
+;//     Legacy program entry
 ;//
 ;//////////////////////////////////////////////////////////////////////////////
 
-start:
         ORG         0C000H
         JMP         beginning
 
@@ -296,6 +301,7 @@ to_uppercase:
 
 ;//////////////////////////////////////////////////////////////////////////////
 
+start:
 beginning:
         ;
         ; Save stack pointer for easy breaking out of program from subroutines
@@ -827,6 +833,14 @@ decimal_magnitude_list:
 parse_drive_type:
         CPI         'M'
         JZ          use_tape_format
+        CPI         'J'
+        JNZ         ibm_type_j_check_done
+        DCR         A
+ibm_type_j_check_done:
+        CPI         'B'
+        JNZ         ibm_type_b_check_done
+        DCR         A
+ibm_type_b_check_done:
         CPI         'I'
         JZ          use_ibm_edbdic_format
         CPI         'A'

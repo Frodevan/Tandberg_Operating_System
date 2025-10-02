@@ -71,6 +71,10 @@
 ;//                 -> Completely rewritten to be more general purpose, replacing
 ;//                    the earlier more specialized HEXLST, TYPE and COPY tools
 ;//
+;//             1.5b: Entry at 0x2000
+;//
+;//                 -> Handles END-OF-BLOCK status for IBM file types :Bn: and :Jn:
+;//
 
 
 ;//////////////////////////////////////////////////////////////////////////////
@@ -415,6 +419,11 @@ error_reading_input:
         ;
         ORA         A
         JZ          end_of_input
+        ;
+        ; Check for end-of-block for IBM file type B and J
+        ;
+        CPI         05CH
+        JZ          read_next_input_byte
         STC
         JMP         cleanup_and_quit
 
