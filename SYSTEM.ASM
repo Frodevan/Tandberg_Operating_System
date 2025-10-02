@@ -71,6 +71,10 @@
 ;//                 -> Adds a few new bugs, in particular for certain uses of the
 ;//                    new PHYSINT functionality
 ;//
+;//             v1.5b: Entry at 0xDC00
+;//
+;//                 -> Adds a handfull of bugfixes
+;//
 
 
 ;//////////////////////////////////////////////////////////////////////////////
@@ -1596,6 +1600,12 @@ getbin_exception:
 ;//                 -> Adds handling of the BLOCKLINE flag, where the current block
 ;//                    is completed and written to disk immediately on newline
 ;//
+;//             v1.5b:
+;//
+;//                 -> Ignores linefeed and NULL characters when writing output to
+;//                    BLOCKLINE devices, to reflect the GET module behaviour on
+;//                    this matter
+;//
 
 
 ;//////////////////////////////////////////////////////////////////////////////
@@ -1667,6 +1677,10 @@ outchar_valid_file_mode:
 
 ;//////////////////////////////////////
 
+outchar_blockline_end:
+        NOP
+        POP         H
+        POP         PSW
 outchar_type_5_end:
         ANA         A
 outchar_return:
@@ -1724,12 +1738,16 @@ outchar_type_5:
         ANI         DF_BLKLINE
         JZ          outchar_normal_type_5
         ;
-        ; If so, check for end of line
+        ; If so, check for ignored characters or end of line
         ;
         POP         H
         POP         PSW
         PUSH        PSW
         PUSH        H
+        ANA         A
+        JZ          outchar_blockline_end
+        CPI         LF
+        JZ          outchar_blockline_end
         CPI         CR
         JNZ         outchar_normal_type_5
         ;
@@ -4552,6 +4570,11 @@ T_STIMER:
 ;//                 -> Fixes the EOE/EOD sector off-by-one bug from v1.3
 ;//                 -> Fixes the EOF flag bug from v1.4
 ;//
+;//             v1.5b:
+;//
+;//                 -> Fills the block data-area in the block data-buffer with
+;//                    spaces after each time it has been cleared
+;//
 
 
 ;//////////////////////////////////////////////////////////////////////////////
@@ -4790,6 +4813,13 @@ ibm_write_prepare_buffer:
         MOV         E,M             ; FCB + FCB_BUFPTR
         INX         H
         MOV         D,M
+        DCX         H
+        ;
+        ; Get file block length
+        ;
+        DCX         H
+        DCX         H
+        MOV         H,M             ; FCB + FCB_BUFLEN
         XCHG
         ;
         ; Clear IBM entire output buffer
@@ -4800,6 +4830,18 @@ ibm_write_clear_buffer_loop:
         INX         H
         DCR         E
         JNZ         ibm_write_clear_buffer_loop
+        PUSH        D
+        LXI         D,-128
+        DAD         D
+        POP         D
+        ;
+        ; Ready the portion of IBM output buffer used by block
+        ;
+ibm_write_prepare_block_loop:
+        MVI         M,' '
+        INX         H
+        DCR         D
+        JNZ         ibm_write_prepare_block_loop
         ;
         ; Recover registers
         ;
@@ -5093,6 +5135,13 @@ ibm_open_file_tail_ready:
         MOV         E,M             ; FCB + FCB_BUFPTR
         INX         H
         MOV         D,M
+        DCX         H
+        ;
+        ; Get file block length
+        ;
+        DCX         H
+        DCX         H
+        MOV         B,M             ; FCB + FCB_BUFLEN
         ;
         ; Clear IBM block buffer
         ;
@@ -5103,6 +5152,20 @@ ibm_open_clear_buffer_loop:
         INX         D
         DCR         C
         JNZ         ibm_open_clear_buffer_loop
+        PUSH        H
+        LXI         H,-128
+        DAD         D
+        XCHG
+        POP         H
+        ;
+        ; Ready the portion of IBM output buffer used by block
+        ;
+        MVI         A,' '
+ibm_open_prepare_block_loop:
+        STAX        D
+        INX         D
+        DCR         B
+        JNZ         ibm_open_prepare_block_loop
         ;
         ; Do final checks on opened file
         ;
@@ -6735,6 +6798,15 @@ T_LOAD:
 ;//                    will not check the right character if the filename uses the
 ;//                    full available filename length
 ;//
+;//             v1.5b:
+;//
+;//                 -> Forces the file-mode of a generated echo file to be input
+;//                 -> Now checks and asserts on empty filenames
+;//                 -> Introduces a bug in PHYSINT where an empty filename for an
+;//                    IBM file will not be reported correctly
+;//                 -> Fixes the invalid filename return bug from v1.5a
+;//                 -> Fixes the invalid filename overrun check bug from v1.5a
+;//
 
 
 ;//////////////////////////////////////////////////////////////////////////////
@@ -7309,6 +7381,12 @@ assemble_linked_file_fcb:
         MVI         B,6
         CPI         ','
         JZ          linked_file_fcb_type_ready
+        ;
+        ; Force echo file mode to input
+        ;
+        INX         H               ; FCB + FCB_MODE
+        MVI         M,FM_INPUT + FM_ASSIGNED
+        DCX         H
         MVI         B,3
 linked_file_fcb_type_ready:
         MOV         M,B
@@ -7641,6 +7719,7 @@ check_filename_char:
         CPI         'z'+1
         JC          physint_valid_filename_char
 physint_invalid_filename:
+        POP         H
         JMP         physint_exception_after_alloc
 
 physint_valid_filename_char:
@@ -7663,13 +7742,17 @@ physint_main_filename_full:
         ;
         LDA         physint_device_format
         ANI         002H
-        JNZ         physint_no_filename_ext
+        JNZ         physint_ibm_filename_full
         ;
         ; If so, check if a filename extension is specified in the file handle
         ;
         CALL        get_next_filehandle_char
         CPI         '.'
         JZ          physint_check_file_extension_char
+        JMP         physint_no_filename_ext
+
+physint_ibm_filename_full:
+        CALL        get_next_filehandle_char
 physint_no_filename_ext:
         ;
         ; Verify proper file handle syntax after filename
@@ -7686,6 +7769,12 @@ physint_no_filename_ext:
 
 physint_main_filename_ready:
         ;
+        ; Validate that a main filename has been entered at all
+        ;
+        MOV         A,B
+        CPI         6
+        JZ          physint_invalid_filename
+        ;
         ; Pad out remaining characters in main part of filename
         ;
 physint_pad_filename_loop:
@@ -7694,6 +7783,12 @@ physint_pad_filename_loop:
         INX         D
         DCR         B
         JNZ         physint_pad_filename_loop
+        ;
+        ; Check if a filename extension is expected
+        ;
+        LDA         physint_device_format
+        ANI         002H
+        JNZ         physint_invalid_filename
         ;
         ; Parse and validate filename extension
         ;
@@ -7740,6 +7835,13 @@ physint_valid_file_ext_char:
         JMP         physint_file_extension_full
 
 physint_non_ext_filename_ready:
+        ;
+        ; Validate that a filename has been entered at all
+        ;
+        MOV         A,B
+        ADD         C
+        CPI         9
+        JZ          physint_invalid_filename
         ;
         ; Pad out remaining characters in extensionless filename
         ;

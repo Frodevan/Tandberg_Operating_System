@@ -72,6 +72,11 @@
 ;//
 ;//             1.5b: Entry at 0xC261
 ;//
+;//                 -> Based on v1.5a
+;//                 -> Adds a message-entry in ISIS.ERR related to B and J files.
+;//                    However, this remains in the unused portion of the template,
+;//                    and is as such never actually written to disk.
+;//
 
 
 ;//////////////////////////////////////////////////////////////////////////////
@@ -1573,10 +1578,10 @@ errorfile_data:
         DB          085H,'CARTRIDGE NOT SUPPORTED        '
         DB          085H,'CARTRIDGE EXTRA BLOCKS IN FILE '
         DB          085H,'CARTRIDGE CONT. HDR MISSING    '
-        DB          085H,'-----UNUSED-----------59H------'
-        DB          085H,'-----UNUSED-----------5AH------'
-        DB          085H,'-----UNUSED-----------5BH------'
-        DB          085H,'-----UNUSED-----------5CH------'
+        DB          085H,'INCORRECT BLOCK TYPE IN HEADER '
+        DB          085H,'INCORRECT NAME IN HEADER BLOCK '
+        DB          085H,'INAPPROPRIATE BLK SIZE LOAD    '
+        DB          085H,'END-OF-BLOCK (B AND J FILES)   '
         DB          085H,'-----UNUSED-----------5DH------'
         DB          085H,'-----UNUSED-----------5EH------'
         DB          085H,'-----UNUSED-----------5FH------'
