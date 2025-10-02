@@ -11,6 +11,7 @@
 ;//                 Drive type T:
 ;//                     F       Floppy (Interlaced)
 ;//                     I       Floppy (Non-interlaced)
+;//                     J       Floppy (Non-interlaced)
 ;//
 ;//                 Drive number n:
 ;//                     0-3
@@ -78,6 +79,10 @@
 ;//                    done if drive 0 was used
 ;//                 -> Flushes excess input if invalid parameters
 ;//                 -> Fixes the software-autoscroll bug from v1.3
+;//
+;//             Early-c: Entry at 0x8000
+;//
+;//                 -> Recognizes new drive type J
 ;//
 
 
@@ -207,6 +212,10 @@ prune_initial_spaces_loop:
         CALL        INCHAR
         RC
         CALL        to_uppercase
+        CPI         'J'
+        JNZ         ibm_type_j_check_done
+        DCR         A
+ibm_type_j_check_done:
         CPI         'F'
         JZ          sector_layout_set
         LXI         D,noninterlaced_sector_order

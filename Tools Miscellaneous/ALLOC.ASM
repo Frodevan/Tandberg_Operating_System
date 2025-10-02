@@ -11,7 +11,9 @@
 ;//
 ;//                 Drive type T:
 ;//                     A       Floppy (IBM 3740, ASCII)
+;//                     B       Floppy (IBM 3740, ASCII)
 ;//                     I       Floppy (IBM 3740, EBCDIC)
+;//                     J       Floppy (IBM 3740, EBCDIC)
 ;//
 ;//                 Drive number n:
 ;//                     0-3
@@ -104,6 +106,12 @@
 ;//                 -> Accepts lowercase drive-type and input on prompts
 ;//                 -> Fixes software-autoscroll bug from v1.3
 ;//
+;//             1.5b: Entry at 0xC000
+;//
+;//                 -> Recognizes B and J as valid drive types
+;//                 -> Introduces a bug where drive types B and J are reported to
+;//                    the user as type A and I respectively
+;//
 
 
 ;//////////////////////////////////////////////////////////////////////////////
@@ -195,6 +203,14 @@ start:
         INX         D
         LDAX        D
         CALL        to_uppercase
+        CPI         'J'
+        JNZ         ibm_type_j_check_done
+        DCR         A
+ibm_type_j_check_done:
+        CPI         'B'
+        JNZ         ibm_type_b_check_done
+        DCR         A
+ibm_type_b_check_done:
         CPI         'I'
         JZ          is_ibm_drive
         CPI         'A'

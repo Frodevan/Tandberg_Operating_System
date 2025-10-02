@@ -74,6 +74,10 @@
 ;//                 -> Has a bug where a symbol name in an expression may in some
 ;//                    edge-cases corrupt the current external symbol number
 ;//
+;//             v2.2b: Entry at 0xBC00
+;//
+;//                 -> Fixes the dw external reference bug from v2.2a
+;//
 
 ;//////////////////////////////////////////////////////////////////////////////
 ;//
@@ -417,7 +421,7 @@ expr_symb_name_buffer:
 
 current_ext_symb_nr:
         DS          2
-first_val_ext_symb_nr:
+last_val_ext_symb_nr:
         DS          2
 symbol_class_bitmap:
         DS          1
@@ -2154,7 +2158,7 @@ dw_first_val_done:
         ;
         STA         current_error_nr
         LHLD        current_ext_symb_nr
-        SHLD        first_val_ext_symb_nr
+        SHLD        last_val_ext_symb_nr
         MVI         A,2
         STA         current_line_bin_data_len
         ;
@@ -2186,6 +2190,15 @@ dw_first_val_done:
         ;
         MVI         A,4
         STA         current_line_bin_data_len
+        ;
+        ; Swap external symbol number slots for the two word expressions
+        ;
+        LHLD        current_ext_symb_nr
+        PUSH        H
+        LHLD        last_val_ext_symb_nr
+        SHLD        current_ext_symb_nr
+        POP         H
+        SHLD        last_val_ext_symb_nr
         ;
         ; Raise error if any of the two expressions were invalid
         ;
@@ -3974,8 +3987,8 @@ refs_chk_advance_bin_index:
         LDA         current_line_bin_data_index
         CPI         2
         JNZ         check_bin_index_for_refs
-        LHLD        current_ext_symb_nr
-        SHLD        first_val_ext_symb_nr
+        LHLD        last_val_ext_symb_nr
+        SHLD        current_ext_symb_nr
         JMP         check_bin_index_for_refs
 
 no_ref_at_index:
@@ -4083,14 +4096,7 @@ ext_ref_rec_type_ready:
         ;
         ; Add appropriate previously saved external reference number to record
         ;
-        CPI         2
-        JNZ         ext_ref_is_second_val
-        LHLD        first_val_ext_symb_nr
-        JMP         ext_ref_nr_ready
-
-ext_ref_is_second_val:
         LHLD        current_ext_symb_nr
-ext_ref_nr_ready:
         SHLD        output_file_record_data + 5
         ;
         ; Point to reference offset data in assembled binary data of current line
