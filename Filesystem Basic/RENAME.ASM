@@ -12,8 +12,10 @@
 ;//
 ;//                 Drive type T:
 ;//                     A       Floppy (IBM 3740, ASCII)
+;//                     B       Floppy (IBM 3740, ASCII)
 ;//                     F       Floppy (Intel ISIS)
 ;//                     I       Floppy (IBM 3740, EBCDIC)
+;//                     J       Floppy (IBM 3740, EBCDIC)
 ;//                     M       Tape
 ;//
 ;//                 Drive number n:
@@ -44,6 +46,12 @@
 ;//                 -> Flushes excess command line argument input on exit
 ;//                 -> Only prints file extension deliminer if filename has an
 ;//                    extension
+;//
+;//             1.5b: Entry at 0xC104
+;//
+;//                 -> Recognizes B and J as valid drive types
+;//                 -> Introduces a bug where drive types B and J are reported to
+;//                    the user as type A and I respectively
 ;//
 
 
@@ -119,12 +127,11 @@ ATTR_F      EQU     080H        ; Format file
 
 ;//////////////////////////////////////////////////////////////////////////////
 ;//
-;//     Program entry
+;//     Legacy program entry
 ;//
 ;//////////////////////////////////////////////////////////////////////////////
 
         ORG         0C000H
-start:
         JMP         beginning
 
 
@@ -190,6 +197,7 @@ to_uppercase:
 
 ;//////////////////////////////////////////////////////////////////////////////
 
+start:
 beginning:
         ;
         ; Scan for first character of mandatory command line argument
@@ -216,6 +224,15 @@ scan_for_first_char:
         CPI         CR
         JZ          invalid_drive
         CALL        to_uppercase
+        CPI         'J'
+        JNZ         ibm_type_j_check_done
+        DCR         A
+ibm_type_j_check_done:
+        CPI         'B'
+        JNZ         ibm_type_b_check_done
+        DCR         A
+ibm_type_b_check_done:
+        STA         input_char
         STA         drive_designator_str + 1
         CALL        INCHAR
         RC
