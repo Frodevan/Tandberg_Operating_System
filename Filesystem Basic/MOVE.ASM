@@ -73,6 +73,10 @@
 ;//                 -> Has a bug where the wrong error code is reported if the user
 ;//                    has specified an invalid argument for the custom EOF
 ;//
+;//             1.5b: Entry at 0x2000
+;//
+;//                 -> Handles END-OF-BLOCK status for IBM file types :Bn: and :Jn:
+;//
 
 
 ;//////////////////////////////////////////////////////////////////////////////
@@ -138,6 +142,7 @@ SL_FCB      EQU     0FF08H      ; Standard line-printer output abstract file FCB
 ;
 ERROR_0F    EQU     00FH        ; DISKETTE MAP MISSING
 ERROR_19    EQU     019H        ; UNASSIGNED DEVICE
+ERROR_5C    EQU     05CH        ; END-OF-BLOCK (B AND J FILES)
 
 ;
 ; TOS File Control Block, block device variables
@@ -429,6 +434,11 @@ error_reading_input:
         ;
         ORA         A
         JZ          end_of_input
+        ;
+        ; Check for end-of-block for IBM file type B and J
+        ;
+        CPI         ERROR_5C
+        JZ          read_next_input_byte
         STC
         JMP         cleanup_and_quit
 
