@@ -70,6 +70,13 @@
 ;//                 -> Has a bug where the drive-requirements for the S argument
 ;//                    is only being checked if a floppy disk is being formatted
 ;//
+;//             1.5b: Entry at 0xC261
+;//
+;//                 -> Based on v1.5a
+;//                 -> Adds a message-entry in ISIS.ERR related to B and J files.
+;//                    However, this remains in the unused portion of the template,
+;//                    and is as such never actually written to disk.
+;//
 
 
 ;//////////////////////////////////////////////////////////////////////////////
@@ -204,41 +211,19 @@ scratchpad_ram:
 
 ;//////////////////////////////////////////////////////////////////////////////
 ;//
-;//     Program entry
+;//     Legacy program entry
 ;//
 ;//////////////////////////////////////////////////////////////////////////////
 
         ORG         0C000H
-start:
         JMP         beginning
 
 
 ;//////////////////////////////////////////////////////////////////////////////
 ;//
-;//     Strings and data
+;//     Data
 ;//
 ;//////////////////////////////////////////////////////////////////////////////
-
-rewrite_filesys_prompt_str:
-        DB          'REINITIALIZATION DESIRED (Y/N) ',CR
-non_sys_disk_str:
-        DB          'NON - SYSTEM DISKETTE',CR
-format_sys_disk_ok_str:
-        DB          'SYSTEM DISKETTE CREATED',CR
-invalid_drive_str:
-        DB          'IMPROPER UNIT SPECIFICATION',CR
-invalid_cli_args_str:
-        DB          'IMPROPER PARAMETER LIST',CR
-same_sys_disk_str:
-        DB          'SYSTEM DISKETTE FORMATTING UNIT 0 NOT ALLOWED',CR
-format_non_sys_tape_ok_str:
-        DB          'NON - SYSTEM CARTRIDGE',CR
-format_sys_tape_ok_str:
-        DB          'SYSTEM CARTRIDGE CREATED',CR
-copying_system_str:
-        DB          'COPYING SYSTEM FILES',CR
-same_sys_tape_str:
-        DB          'SYSTEM CARTRIDGE FORMATTING UNIT 0 NOT ALLOWED',CR
 
 input_char:
         DB          NULL
@@ -490,6 +475,7 @@ quit_program:
 
 ;//////////////////////////////////////
 
+start:
 beginning:
         ;
         ; Set default disk drive to drive :F0:
@@ -1452,6 +1438,34 @@ clear_next_byte:
 
 ;//////////////////////////////////////////////////////////////////////////////
 ;//
+;//     Strings
+;//
+;//////////////////////////////////////////////////////////////////////////////
+
+rewrite_filesys_prompt_str:
+        DB          'REINITIALIZATION DESIRED (Y/N) ',CR
+non_sys_disk_str:
+        DB          'NON - SYSTEM DISKETTE',CR
+format_sys_disk_ok_str:
+        DB          'SYSTEM DISKETTE CREATED',CR
+invalid_drive_str:
+        DB          'IMPROPER UNIT SPECIFICATION',CR
+invalid_cli_args_str:
+        DB          'IMPROPER PARAMETER LIST',CR
+same_sys_disk_str:
+        DB          'SYSTEM DISKETTE FORMATTING UNIT 0 NOT ALLOWED',CR
+format_non_sys_tape_ok_str:
+        DB          'NON - SYSTEM CARTRIDGE',CR
+format_sys_tape_ok_str:
+        DB          'SYSTEM CARTRIDGE CREATED',CR
+copying_system_str:
+        DB          'COPYING SYSTEM FILES',CR
+same_sys_tape_str:
+        DB          'SYSTEM CARTRIDGE FORMATTING UNIT 0 NOT ALLOWED',CR
+
+
+;//////////////////////////////////////////////////////////////////////////////
+;//
 ;//     ISIS.ERR data
 ;//
 ;//////////////////////////////////////////////////////////////////////////////
@@ -1546,10 +1560,10 @@ errorfile_data:
         DB          085H,'CARTRIDGE NOT SUPPORTED        '
         DB          085H,'CARTRIDGE EXTRA BLOCKS IN FILE '
         DB          085H,'CARTRIDGE CONT. HDR MISSING    '
-        DB          085H,'-----UNUSED-----------59H------'
-        DB          085H,'-----UNUSED-----------5AH------'
-        DB          085H,'-----UNUSED-----------5BH------'
-        DB          085H,'-----UNUSED-----------5CH------'
+        DB          085H,'INCORRECT BLOCK TYPE IN HEADER '
+        DB          085H,'INCORRECT NAME IN HEADER BLOCK '
+        DB          085H,'INAPPROPRIATE BLK SIZE LOAD    '
+        DB          085H,'END-OF-BLOCK (B AND J FILES)   '
         DB          085H,'-----UNUSED-----------5DH------'
         DB          085H,'-----UNUSED-----------5EH------'
         DB          085H,'-----UNUSED-----------5FH------'
