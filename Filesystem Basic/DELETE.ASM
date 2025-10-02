@@ -11,8 +11,10 @@
 ;//
 ;//                 Drive type T:
 ;//                     A       Floppy (IBM 3740, ASCII)
+;//                     B       Floppy (IBM 3740, ASCII)
 ;//                     F       Floppy (Intel ISIS)
 ;//                     I       Floppy (IBM 3740, EBCDIC)
+;//                     J       Floppy (IBM 3740, EBCDIC)
 ;//                     M       Tape
 ;//
 ;//                 Drive number n:
@@ -49,6 +51,10 @@
 ;//                 -> Flushes excess input on exit
 ;//
 ;//             1.5b: Entry at 0xC111
+;//
+;//                 -> Recognizes B and J as valid drive types
+;//                 -> Introduces a bug where drive types B and J are reported to
+;//                    the user as type A and I respectively
 ;//
 
 
@@ -242,6 +248,14 @@ beginning:
         CALL        INCHAR
         RC
         CALL        to_uppercase
+        CPI         'B'
+        JNZ         ibm_type_b_check_done
+        DCR         A
+ibm_type_b_check_done:
+        CPI         'J'
+        JNZ         ibm_type_j_check_done
+        DCR         A
+ibm_type_j_check_done:
         STA         input_char
         CPI         'F'
         JZ          valid_drive_type
