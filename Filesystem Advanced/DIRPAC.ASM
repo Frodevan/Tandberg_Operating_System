@@ -34,6 +34,10 @@
 ;//
 ;//                 -> Version ID written to 0x2700
 ;//
+;//             1.7: Entry at 0xC10B
+;//
+;//                 -> Flushes excess input characters from the extra parameters
+;//
 
 
 ;//////////////////////////////////////////////////////////////////////////////
@@ -76,7 +80,7 @@ CO_FCB      EQU     0FF02H      ; Console output abstract file FCB pointer
 
         ORG         SIGNATURE
         DB          'DIRPAC'
-        DB          '106'
+        DB          '107'
 
 
 ;//////////////////////////////////////////////////////////////////////////////
@@ -155,6 +159,14 @@ beginning:
         RC
         CPI         ':'
         JNZ         invalid_drive
+        ;
+        ; Flush any remaining input chars
+        ;
+flush_next_input_char:
+        CALL        INCHAR
+        RC
+        CPI         CR
+        JNZ         flush_next_input_char
 
 
 ;//////////////////////////////////////
