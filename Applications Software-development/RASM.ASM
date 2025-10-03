@@ -52,10 +52,9 @@
 ;//             $DB             Include all data in listing for DB expressions
 ;//
 ;//
-;//         NOTE: This program will determine the start of user-RAM in a way that
-;//               is not compatible with systems having 54KB or more RAM. If this
-;//               were to be run on a systeme like this, the TOS and XMON data area
-;//               would be overwritten by the defined symbols table.
+;//         NOTE: This program uses TOS to determine the start of User-RAM. This
+;//               feature was not, however, available before TOS version 1.7. As
+;//               such, TOS v1.7 or more recent is required to run this.
 ;//
 ;//
 ;//         Changelog:
@@ -80,6 +79,9 @@
 ;//                 -> Asserts on long-line cases for DB instructions
 ;//
 ;//             v2.4: Entry at 0xB800
+;//
+;//                 -> Uses TOS start of user-RAM constant for default buffer start
+;//                 -> Fixes the $E bug from v2.2a
 ;//
 
 ;//////////////////////////////////////////////////////////////////////////////
@@ -135,6 +137,7 @@ EDWH        EQU     0FD2DH      ; Convert word to 4-character ASCII hexadecimal
 ; TOS constants
 ;
 DEV_BB_PTR  EQU     0FDF2H      ; Reference to byte-bucket (void) device file
+RAMST       EQU     0FDFCH      ; Address to start of user-RAM
 
 ;
 ; TOS standard files
@@ -437,13 +440,6 @@ name_nr_in_line_count:
         DS          1
 
 
-;//////////////////////////////////////
-
-emergency_buffer_start:
-        DS          611
-emergency_buffer_end:
-
-
 ;//////////////////////////////////////////////////////////////////////////////
 ;//
 ;//     Signature
@@ -452,7 +448,7 @@ emergency_buffer_end:
 
         ORG         SIGNATURE
         DB          'RASM',NULL,NULL
-        DB          '203'
+        DB          '204'
 
 
 ;//////////////////////////////////////////////////////////////////////////////
@@ -671,33 +667,9 @@ initial_page_size_ready:
         LXI         H,beginning
         SHLD        symbol_buffer_end_ptr
         ;
-        ; Check if there is any extra user-RAM available at all
+        ; Set start of buffer to start of user RAM
         ;
-        MVI         L,000H
-        DCR         H
-        MOV         A,M
-        INR         M
-        CMP         M
-        JNZ         find_start_of_mem_loop
-        ;
-        ; If not, reserve a bit of system-RAM instead
-        ;
-        LXI         H,emergency_buffer_end
-        SHLD        symbol_buffer_end_ptr
-        LXI         H,emergency_buffer_start
-        JMP         dynamic_buffer_bounds_ready
-
-        ;
-        ; Find start of user-RAM to use as dynamic buffer start
-        ;
-find_start_of_mem_loop:
-        DCR         H
-        MOV         A,M
-        INR         M
-        CMP         M
-        JNZ         find_start_of_mem_loop
-        INR         H
-dynamic_buffer_bounds_ready:
+        LHLD        RAMST
         SHLD        symbol_buffer_start_ptr
         MVI         M,NULL
         ;
@@ -2094,11 +2066,14 @@ p2_layout_check_other_cmds:
         ;
         ; Check if this is the E command, eject and start a new page if so
         ;
-        CPI         'E'
         PUSH        PSW
         CALL        finalize_and_print_listing_line
         POP         PSW
-        CZ          listing_start_new_page
+        CPI         'E'
+        JNZ         second_pass_main
+        LDA         primary_listing_dev_flag
+        ANA         A
+        CNZ         listing_start_new_page
         JMP         second_pass_main
 
 
@@ -7026,7 +7001,7 @@ final_err_report_str:
 end_error_str:
         DB          '      ****ERROR**** END MISSING',CR,NULL
 rasm_title_str:
-        DB          'TDV 2100 ASSEMBLER V.2.3',NULL,CR
+        DB          'TDV 2100 ASSEMBLER V.2.4',NULL,CR
 error_str:
         DB          '****ERROR****: 00',CR,NULL
         DB          NULL

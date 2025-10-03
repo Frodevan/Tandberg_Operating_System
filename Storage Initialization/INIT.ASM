@@ -11,6 +11,7 @@
 ;//                 Drive type T:
 ;//                     F       Floppy (Interlaced)
 ;//                     I       Floppy (Non-interlaced)
+;//                     J       Floppy (Non-interlaced)
 ;//
 ;//                 Drive number n:
 ;//                     0-3
@@ -93,6 +94,16 @@
 ;//                 -> Introduces a bug causing the 'Operation Aborted' status
 ;//                    message to never print
 ;//
+;//             v1.8: Entry at 0x8000
+;//
+;//                 -> Re-introduces drive type J
+;//                 -> Uses CI device file instead of XMON API for input at the
+;//                    initial prompt, as well as any input other than Y aborts
+;//                 -> Does a full boot when reloading system, not just a forced
+;//                    return to TOS using the TOS API
+;//                 -> Prints status message before reloading system on exit
+;//                 -> Fixes the label-record bug from the Early versions
+;//
 
 
 ;//////////////////////////////////////////////////////////////////////////////
@@ -166,7 +177,7 @@ CO_FCB      EQU     0FF02H      ; Console output abstract file FCB pointer
 
         ORG         SIGNATURE
         DB          'INIT',NULL,NULL
-        DB          '107'
+        DB          '108'
 
 
 ;//////////////////////////////////////////////////////////////////////////////
@@ -237,6 +248,8 @@ prune_initial_spaces_loop:
         JZ          sector_layout_set
         LXI         D,noninterlaced_sector_order
         CPI         'I'
+        JZ          sector_layout_set
+        CPI         'J'
         JNZ         invalid_drive
 sector_layout_set:
         CALL        INCHAR
@@ -270,29 +283,16 @@ drive_set:
         LHLD        CO_FCB
         CALL        PUTSTR
         RC
-get_next_prompt_input:
-        CALL        TTI
-        CALL        to_uppercase
+        LHLD        CI_FCB
+        CALL        INCHAR
+        RC
         ;
         ; Validate prompt input
         ;
         CPI         'Y'
-        JZ          parse_prompt_input
-        CPI         'N'
-        JNZ         get_next_prompt_input
-parse_prompt_input:
-        ;
-        ; Exit if No was chosen
-        ;
-        MOV         C,A
-        CALL        TTO
-        LXI         D,newline_str
-        LHLD        CO_FCB
-        CALL        PUT
-        RC
-        MOV         A,C
-        CPI         'N'
-        JZ          operation_interrupted
+        JZ          format_first_track
+        CPI         'y'
+        JNZ         operation_interrupted
 
 
 ;//////////////////////////////////////
@@ -948,7 +948,7 @@ label_record_pattern:
         DB            1, 0FFH, 040H
         DB            1, 0FFH, 040H
         DB           69, 0FFH, 040H
-        DB            1, 0FFH, 0E3H
+        DB            1, 0FFH, 0E6H
         DB           48, 0FFH, 000H
         DB            2, 0FFH, 000H
         DB           27, 0FFH, 0FFH
@@ -1194,6 +1194,8 @@ system_disk_prompt_done:
         LXI         D,newline_str
         CALL        print_str
 reload_system_and_exit:
+        LXI         D,reload_str
+        CALL        print_str
         ;
         ; Make sure to reload TOS before quitting program
         ;
@@ -1201,7 +1203,7 @@ reload_system_and_exit:
         LXI         H,system_filename_str
         CALL        LOADD
         JC          ERR
-        JMP         MON
+        PCHL
 
 
 ;//////////////////////////////////////
@@ -1343,6 +1345,8 @@ operation_completed_str:
         DB          'OPERATION COMPLETED, MORE? (Y/N): ',ETX
 sys_disk_prompt_str:
         DB          'INSERT SYSTEM DISKETTE IN DRIVE 0, TYPE "C" TO CONTINUE: ',BEL,ETX
+reload_str:
+        DB          'RE-LOAD OF OPERATING SYSTEM',CR,ETX
 
 
 ;//////////////////////////////////////////////////////////////////////////////
