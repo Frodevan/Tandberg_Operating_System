@@ -82,12 +82,9 @@
 ;//                   both passes. Not that this is much useful for most of these.
 ;//
 ;//
-;//         NOTE: This program will determine the start of user-RAM in a way that
-;//               is not compatible with systems having 54KB or more RAM. If this
-;//               were to be run on a systeme like this, the TOS and XMON data area
-;//               would be overwritten by the defined symbols table, unless the
-;//               bounds for the symbol-tables are manually changed using the .I
-;//               control code.
+;//         NOTE: This program uses TOS to determine the start of User-RAM. This
+;//               feature was not, however, available before TOS version 1.7. As
+;//               such, TOS v1.7 or more recent is required to run this.
 ;//
 ;//         NOTE: This program takes keyboard input directly from the XMON API, and
 ;//               as such a batch-file can't be used with CI to emulate keyboard-
@@ -150,6 +147,8 @@
 ;//                 -> Version ID written to 0x2700
 ;//
 ;//             1.7: Entry at 0xB803
+;//
+;//                 -> Uses TOS start of user-RAM constant for default buffer start
 ;//
 
 
@@ -216,6 +215,7 @@ EDWH        EQU     0FD2DH      ; Convert word to 4-character ASCII hexadecimal
 ; TOS constants
 ;
 DEV_BB_PTR  EQU     0FDF2H      ; Reference to byte-bucket (void) device file
+RAMST       EQU     0FDFCH      ; Address to start of user-RAM
 
 ;
 ; TOS standard files
@@ -432,7 +432,7 @@ hexfile_str_buffer:
 
         ORG         SIGNATURE
         DB          'ASM',NULL,NULL,NULL
-        DB          '106'
+        DB          '107'
 
 
 ;//////////////////////////////////////////////////////////////////////////////
@@ -442,7 +442,6 @@ hexfile_str_buffer:
 ;//////////////////////////////////////////////////////////////////////////////
 
         ORG         0B800H
-symbol_buffers:
 symbol_buffers_end:
         ;
         ; Manual re-entry from debugger
@@ -656,18 +655,7 @@ page_length_mode_ready:
         ;
         LXI         H,symbol_buffers_end-1
         SHLD        symbol_buffers_last_byte_ptr
-        LXI         H,symbol_buffers
-memory_test_loop:
-        ;
-        ; Check next memory page
-        ;
-        DCR         H
-        MOV         A,M
-        CMA
-        MOV         M,A
-        CMP         M
-        JZ          memory_test_loop
-        INR         H
+        LHLD        RAMST
         ;
         ; Save pointer to start of RAM
         ;
@@ -6141,7 +6129,7 @@ flush_listing_output_loop:
 title_str:
         DB          title_str_line_end - title_str_line_start
 title_str_line_start:
-        DB          'TANDBERG TDV 2100 ASSEMBLER V.1.6.',CR,LF
+        DB          'TANDBERG TDV 2100 ASSEMBLER V.1.7.',CR,LF
 title_str_line_end:
 build_errors_report_str:
         DB          19

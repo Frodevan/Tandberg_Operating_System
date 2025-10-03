@@ -2,6 +2,13 @@
 ;//
 ;//     DDUMC - Backup floppy image to tape
 ;//
+;//         Extra parameters:
+;//
+;//             [$Y]
+;//
+;//                 Y       Immediately start the conversion
+;//
+;//
 ;//         Transfers all data from floppy-disk unit 0 to tape 0 track 0. Data is
 ;//         oriented sequentially, starting with sector 1-13 and 14-26 of track 0,
 ;//         immediately followed by track 1 etc.. all the way to track 76.
@@ -9,9 +16,7 @@
 ;//         This tool is meant to be used to create a backup that can be recovered
 ;//         using the DRSTC tool later.
 ;//
-;//         NOTE: Uses XMON API calls for all operations, including text I/O, and
-;//               as such any device-file assignements will be ignored. Disk and
-;//               tape operations are handled through the XMON API in all versions,
+;//         NOTE: Tape operations are handled through the XMON API in all versions,
 ;//               so care should still be taken since the tape portion of this API
 ;//               is missing on some versions of the computer.
 ;//
@@ -31,6 +36,12 @@
 ;//
 ;//                 -> Version ID written to 0x2700
 ;//
+;//             1.7: Entry at 0xC04A
+;//
+;//                 -> Uses TOS device-files for text I/O, instead of XMON API
+;//                 -> Flushes excess input characters from the extra parameters
+;//                 -> Prints final status after the dump completes
+;//
 
 
 ;//////////////////////////////////////////////////////////////////////////////
@@ -49,8 +60,6 @@ CR          EQU     00DH        ; Cartridge Return
 ;
 ; XMON system calls
 ;
-TTI         EQU     00040H      ; Console input
-TTO         EQU     00043H      ; Console output
 DCALW       EQU     00070H      ; Reset disk drive with wait
 DSRDW       EQU     00073H      ; Read from disk with wait
 CCAL        EQU     00091H      ; Reset tape cartridge
@@ -62,6 +71,19 @@ CBTMW       EQU     000B8H      ; Write tape mark to tape cartridge with wait
 ; XMON and TOS system data
 ;
 SIGNATURE   EQU     02700H      ; Program signature
+
+;
+; TOS system calls
+;
+INCHAR      EQU     0FD09H      ; Input single character
+PUT         EQU     0FD12H      ; Output string of characters, inclusive CR
+PUTSTR      EQU     0FD15H      ; Output string of characters, exclusive CR
+
+;
+; TOS standard files
+;
+CI_FCB      EQU     0FF00H      ; Console input abstract file FCB pointer
+CO_FCB      EQU     0FF02H      ; Console output abstract file FCB pointer
 
 ;
 ; TOS Errors
@@ -77,7 +99,7 @@ ERROR_48    EQU     048H        ; TAPE MARK DETECTED
 
         ORG         SIGNATURE
         DB          'DDUMC',NULL
-        DB          '106'
+        DB          '107'
 
 
 ;//////////////////////////////////////////////////////////////////////////////
@@ -88,38 +110,12 @@ ERROR_48    EQU     048H        ; TAPE MARK DETECTED
 
         ORG         0C000H
 welcome_prompt_str:
-        DB          'DUMP FROM DISKETTE 0 TO CARTRIDGE 0 TRK 0  TYPE Y TO START',CR
+        DB          'DUMP FROM DISKETTE 0 TO CARTRIDGE 0 TRK 0  TYPE Y TO START: ',CR
 dump_done_str:
         DB          'END OF DUMP',CR
 
 current_track_nr:
         DS          1
-
-
-;//////////////////////////////////////////////////////////////////////////////
-;//
-;//     Subroutines
-;//
-;//////////////////////////////////////////////////////////////////////////////
-
-        ;
-        ; Print string pointed to by HL, incl. cartridge return and new line
-        ;
-print_str:
-        PUSH        PSW
-        PUSH        H
-print_str_loop:
-        MOV         A,M
-        CALL        TTO
-        INX         H
-        CPI         CR
-        JNZ         print_str_loop
-        MVI         A,LF
-        CALL        TTO
-        POP         H
-        POP         PSW
-        ANA         A
-        RET
 
 
 ;//////////////////////////////////////////////////////////////////////////////
@@ -132,24 +128,30 @@ start:
         ;
         ; Print user prompt and expect a 'Y' to continue
         ;
-        LXI         H,welcome_prompt_str
-        CALL        print_str
-        CALL        TTI
+        LXI         D,welcome_prompt_str
+        LHLD        CO_FCB
+        CALL        PUTSTR
+        RC
+        LHLD        CI_FCB
+        CALL        INCHAR
+        RC
+        CPI         CR
+        RZ
         CALL        to_uppercase
+        MOV         C,A
+flush_extra_input:
+        LHLD        CI_FCB
+        CALL        INCHAR
+        RC
+        CPI         CR
+        JNZ         flush_extra_input
+        MOV         A,C
         CPI         'Y'
         JZ          start_disk_dump
         ANA         A
         RET
 
 start_disk_dump:
-        ;
-        ; Echo input and advance cursor to the next line
-        ;
-        CALL        TTO
-        MVI         A,CR
-        CALL        TTO
-        MVI         A,LF
-        CALL        TTO
         ;
         ; Get everything ready for copying
         ;
@@ -244,12 +246,22 @@ dump_next_sector_last_half_track:
         RET
 
 tape_mark_written:
+        ;
+        ; Print status and quit
+        ;
+        LXI         D,dump_done_str
+        LHLD        CO_FCB
+        CALL        PUT
         RC
         SUB         A
         CALL        CUN
         RET
 
 
+;//////////////////////////////////////////////////////////////////////////////
+;//
+;//     Subroutines
+;//
 ;//////////////////////////////////////////////////////////////////////////////
 
         ;

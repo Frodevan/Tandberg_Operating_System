@@ -2,16 +2,20 @@
 ;//
 ;//     MDUP - Duplicate tape
 ;//
+;//         Extra parameters:
+;//
+;//             [$Y]
+;//
+;//                 Y       Immediately start the copy
+;//
 ;//
 ;//         Copy the entirety of tape in unit 0 onto the tape in unit 1. All
 ;//         records on all of the four tracks will be copied over as-is, making an
 ;//         exact copy.
 ;//
-;//         NOTE: Uses XMON API calls for tape and everything. This enables this
-;//               program to be loaded directly from the XMON debugger, with no
-;//               dependency on TOS. Otherwise, the tape API calls were an optional
-;//               addition to XMON, so some care should be taken to check for
-;//               compatibility before running this program.
+;//         NOTE: Uses XMON API calls for tape. These tape API calls were an
+;//               optional addition to XMON, so some care should be taken to check
+;//               for compatibility before running this program.
 ;//
 ;//
 ;//         Changelog:
@@ -28,6 +32,11 @@
 ;//
 ;//                 -> Version ID written to 0x2700
 ;//
+;//             1.7: Entry at 0xC057
+;//
+;//                 -> Uses TOS device-files for text I/O, instead of XMON API
+;//                 -> Flushes excess input characters from the extra parameters
+;//
 
 
 ;//////////////////////////////////////////////////////////////////////////////
@@ -40,14 +49,11 @@
 ; ASCII control characters
 ;
 NULL        EQU     000H        ; Null character
-LF          EQU     00AH        ; Line Feed
 CR          EQU     00DH        ; Cartridge Return
 
 ;
 ; XMON system calls
 ;
-TTI         EQU     00040H      ; Console input
-TTO         EQU     00043H      ; Console output
 CCAL        EQU     00091H      ; Reset tape cartridge
 CBBS        EQU     0009AH      ; Backspace one block on tape cartridge with wait
 CUN         EQU     000A6H      ; Rewind and unload tape cartridge
@@ -60,6 +66,19 @@ CBTMW       EQU     000B8H      ; Write tape mark to tape cartridge with wait
 ; XMON and TOS system data
 ;
 SIGNATURE   EQU     02700H      ; Program signature
+
+;
+; TOS system calls
+;
+INCHAR      EQU     0FD09H      ; Input single character
+PUT         EQU     0FD12H      ; Output string of characters, inclusive CR
+PUTSTR      EQU     0FD15H      ; Output string of characters, exclusive CR
+
+;
+; TOS standard files
+;
+CI_FCB      EQU     0FF00H      ; Console input abstract file FCB pointer
+CO_FCB      EQU     0FF02H      ; Console output abstract file FCB pointer
 
 ;
 ; TOS Errors
@@ -76,7 +95,7 @@ ERROR_48    EQU     048H        ; TAPE MARK DETECTED
 
         ORG         SIGNATURE
         DB          'MDUP',NULL,NULL
-        DB          '106'
+        DB          '107'
 
 
 ;//////////////////////////////////////////////////////////////////////////////
@@ -87,7 +106,7 @@ ERROR_48    EQU     048H        ; TAPE MARK DETECTED
 
         ORG         0C000H
 welcome_prompt_str:
-        DB          'CARTRIDGE COPY FROM 0 TO 1 REPLY Y TO START',CR
+        DB          'CARTRIDGE COPY FROM 0 TO 1 REPLY Y TO START: ',CR
 copy_ok_str:
         DB          'COPY SUCCESSFULLY COMPLETED',CR
 copy_aborted_str:
@@ -120,28 +139,6 @@ preliminary_data_end_ptr:
 ;//
 ;//     Subroutines
 ;//
-;//////////////////////////////////////////////////////////////////////////////
-
-        ;
-        ; Print string pointed to by HL
-        ;
-print_str:
-        PUSH        PSW
-        PUSH        H
-print_next_char:
-        MOV         A,M
-        CALL        TTO
-        INX         H
-        CPI         CR
-        JNZ         print_next_char
-        MVI         A,LF
-        CALL        TTO
-        POP         H
-        POP         PSW
-        ANA         A
-        RET
-
-
 ;//////////////////////////////////////////////////////////////////////////////
 
         ;
@@ -201,37 +198,37 @@ beginning:
         ;
         ; Prompt user to continue before starting to copy
         ;
-        LXI         H,welcome_prompt_str
-        CALL        print_str
-        CALL        TTI
+        LXI         D,welcome_prompt_str
+        LHLD        CO_FCB
+        CALL        PUTSTR
+        RC
+        LHLD        CI_FCB
+        CALL        INCHAR
+        RC
+        CPI         CR
+        JZ          abort_copy
         CALL        to_uppercase
+        ;
+        ; Prune remaining input, other than the first character
+        ;
+        MOV         C,A
+flush_extra_input:
+        LHLD        CI_FCB
+        CALL        INCHAR
+        RC
+        CPI         CR
+        JNZ         flush_extra_input
+        MOV         A,C
         CPI         'Y'
-        JZ          user_affirmative
-        CALL        TTO
+        JZ          start_copy
         ;
         ; Print copy aborted status and quit program
         ;
 abort_copy:
-        MVI         A,CR
-        CALL        TTO
-        MVI         A,LF
-        CALL        TTO
-        LXI         H,copy_aborted_str
-        CALL        print_str
+        LXI         D,copy_aborted_str
+        LHLD        CO_FCB
+        CALL        PUT
         RET
-
-user_affirmative:
-        ;
-        ; Verify that only Y was entered, and nothing more
-        ;
-        CALL        TTO
-        CALL        TTI
-        CPI         CR
-        JNZ         abort_copy
-        MVI         A,CR
-        CALL        TTO
-        MVI         A,LF
-        CALL        TTO
 
 
 ;//////////////////////////////////////
@@ -239,6 +236,7 @@ user_affirmative:
         ;
         ; Prepare to start copy
         ;
+start_copy:
         SUB         A
         STA         current_track
 copy_next_track:
@@ -373,8 +371,9 @@ check_for_end_of_track:
         CALL        CUN
         MVI         A,1
         CALL        CUN
-        LXI         H,copy_ok_str
-        CALL        print_str
+        LXI         D,copy_ok_str
+        LHLD        CO_FCB
+        CALL        PUT
         RET
 
 

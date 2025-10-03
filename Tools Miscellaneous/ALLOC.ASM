@@ -125,6 +125,11 @@
 ;//                 -> Checks that EOD is not after EOE+1
 ;//                 -> Default EOD = BOE for new files
 ;//
+;//             1.7: Entry at 0xC000
+;//
+;//                 -> Use TOS CO file instead of XMON API to print Ctrl-characters
+;//                 -> Updates the no-autoscroll line counter when cursor is moved
+;//
 
 
 ;//////////////////////////////////////////////////////////////////////////////
@@ -171,12 +176,14 @@ KEYBUF      EQU     02780H      ; Console input buffer
 ;
 ; TOS system calls
 ;
+OUTCHAR     EQU     0FD0CH      ; Output single character
 GET         EQU     0FD0FH      ; Input string, inclusive CR
 
 ;
 ; TOS standard files
 ;
 CI_FCB      EQU     0FF00H      ; Console input abstract file FCB pointer
+CO_FCB      EQU     0FF02H      ; Console output abstract file FCB pointer
 
 ;
 ; TOS Errors
@@ -194,7 +201,7 @@ ERROR_20    EQU     020H        ; DELETED DATA RECORD
 
         ORG         SIGNATURE
         DB          'ALLOC',NULL
-        DB          '106'
+        DB          '107'
 
 
 ;//////////////////////////////////////////////////////////////////////////////
@@ -1120,13 +1127,24 @@ file_not_found_error:
 ;//////////////////////////////////////////////////////////////////////////////
 
         ;
+        ; Exit program from any call level
+        ;
+fatal_error:
+        LHLD        sp_backup
+        SPHL
+        RET
+
+
+;//////////////////////////////////////////////////////////////////////////////
+
+        ;
         ; Print ETX-terminated string
         ;
 print_str:
         LDAX        D
         CPI         ETX
         RZ
-        CALL        TTO
+        CALL        print_char
         INX         D
         JMP         print_str
 
@@ -1143,12 +1161,41 @@ print_ibm_filename_loop:
         LDAX        D
         CPI         ' '
         JZ          print_ibm_filename_end
-        CALL        TTO
+        CALL        print_char
         INX         D
         DCR         B
         JNZ         print_ibm_filename_loop
 print_ibm_filename_end:
         POP         B
+        RET
+
+
+;//////////////////////////////////////////////////////////////////////////////
+
+        ;
+        ; Print a single character to console
+        ;
+print_char:
+        ;
+        ; Use XMON API for text and TOS API for control characters
+        ;
+        CPI         ' '
+        JC          print_char_tos
+        CALL        TTO
+        RET
+
+
+;//////////////////////////////////////
+
+        ;
+        ; Print a single characters to console using TOS
+        ;
+print_char_tos:
+        PUSH        H
+        LHLD        CO_FCB
+        CALL        OUTCHAR
+        JC          fatal_error
+        POP         H
         RET
 
 
@@ -1585,6 +1632,18 @@ move_cursor_to_next_location:
         SHLD        cursor_location_ptr
         XCHG
         CALL        CURSOR
+        PUSH        PSW
+        ;
+        ; Set TOS autoscroll to new line if hardware autoscroll is disabled
+        ;
+        LDA         ROLLSW
+        ANA         A
+        JZ          autoscroll_updated
+        MOV         A,H
+        ADI         'A'
+        STA         ROLLSW
+autoscroll_updated:
+        POP         PSW
         POP         D
         POP         H
         RET

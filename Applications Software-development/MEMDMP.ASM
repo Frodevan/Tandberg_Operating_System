@@ -73,6 +73,10 @@
 ;//
 ;//                 -> Version ID written to 0x2700
 ;//
+;//             1.7: Entry at 0x2000
+;//
+;//                 -> Uses TOS device-files for text output, instead of XMON API
+;//
 
 
 ;//////////////////////////////////////////////////////////////////////////////
@@ -112,6 +116,7 @@ PUTBIN      EQU     0FD1BH      ; Output a given number of raw bytes
 ; TOS standard files
 ;
 CI_FCB      EQU     0FF00H      ; Console input abstract file FCB pointer
+CO_FCB      EQU     0FF02H      ; Console output abstract file FCB pointer
 SO_FCB      EQU     0FF06H      ; Standard output abstract file FCB pointer
 
 ;
@@ -375,7 +380,11 @@ print_str:
         MOV         A,M
         ANA         A
         RZ
-        CALL        TTO
+        PUSH        H
+        LHLD        CO_FCB
+        CALL        OUTCHAR
+        JC          break_quit_program
+        POP         H
         INX         H
         JMP         print_str
 
@@ -689,4 +698,4 @@ data_buffer:
 
         ORG         SIGNATURE
         DB          'MEMDMP'
-        DB          '106'
+        DB          '107'
