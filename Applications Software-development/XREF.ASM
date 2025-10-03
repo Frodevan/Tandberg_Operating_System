@@ -29,11 +29,11 @@
 ;//               source code actually correctly assembles in ASM/RASM before
 ;//               running it through XREF.
 ;//
-;//         NOTE: This versions will try to use memory starting at 0x4000, 0x8000,
-;//               or 0xC000. Should there be memory at 0x4000, the algorithm will
-;//               allow for a gap if there is no memory at 0x8000 to 0xBFFF. This
-;//               version does not break with 54KB of user RAM, but it will not
-;//               utilize more than what a 48KB system can provide.
+;//         NOTE: This versions will use the TOS start of memory constant to set
+;//               the start of the free memory pool. As this constant was first
+;//               introduced with TOS v1.7, this version is incompatible with any
+;//               older versions of TOS. On the other hand, it will take use of the
+;//               full 54KB in machines equipped with this.
 ;//
 ;//
 ;//         Changelog:
@@ -77,6 +77,12 @@
 ;//                 -> Fixes the PL extra-argument bug from v1.5
 ;//                 -> Fixes the opcode identification bug from v1.2
 ;//
+;//             1.6: Entry at 0xC800
+;//
+;//                 -> Uses TOS start-of-memory instead of local algorithm
+;//                 -> Adds a bug where the page number will overshoot the page-
+;//                    width by two characters, due to the new program title string
+;//
 
 
 ;//////////////////////////////////////////////////////////////////////////////
@@ -116,6 +122,11 @@ PUT         EQU     0FD12H      ; Output string of characters, inclusive CR
 PUTSTR      EQU     0FD15H      ; Output string of characters, exclusive CR
 
 ;
+; TOS constants
+;
+RAMST       EQU     0FDFCH      ; Address to start of user-RAM
+
+;
 ; TOS standard files
 ;
 CI_FCB      EQU     0FF00H      ; Console input abstract file FCB pointer
@@ -138,7 +149,7 @@ ERROR_2E    EQU     02EH        ; IMPROPER ASSIGNMENT FORMAT
 
         ORG         SIGNATURE
         DB          'XREF',NULL,NULL
-        DB          '105'
+        DB          '106'
 
 
 ;//////////////////////////////////////////////////////////////////////////////
@@ -157,78 +168,17 @@ program_origin:
         MVI         A,variables_memory_end - variables_memory
         CALL        clear_memory
         ;
-        ; Set end of free RAM of last memory pool to where program starts
-        ;
-        LXI         H,program_origin
-        DCR         H
-        MOV         A,H
-        STA         free_mem_last_addr_msb
-        ;
         ; Print program title
         ;
         LXI         D,program_title_str
         LHLD        CO_FCB
         CALL        PUT
         RC
-
-
-;//////////////////////////////////////
-
         ;
-        ; Test memory at 4000H, set free-memory start if RAM found
+        ; Set start of free ram pool
         ;
-        LXI         H,04000H
-        CALL        test_memory
-        JNZ         check_ram_from_8000
+        LHLD        RAMST
         SHLD        free_mem_start_addr
-        ;
-        ; Memory at 4000H, test memory at 8000H
-        ;
-        LXI         H,08000H
-        CALL        test_memory
-        JNZ         ram_to_7fff
-        ;
-        ; Memory at both 4000H & 8000H, continous ram pool from 4000H
-        ;
-ram_to_end:
-        ;
-        ; Set free memory end to last possible address
-        ;
-        LDA         free_mem_last_addr_msb
-set_primary_ram_pool_end:
-        STA         free_mem_end_addr_msb
-        JMP         verify_files
-
-check_ram_from_8000:
-        ;
-        ; No memory at 4000H, test memory at 8000H
-        ;
-        LXI         H,08000H
-        CALL        test_memory
-        JNZ         ram_from_c000
-        ;
-        ; Memory at 8000H only, continous ram pool from 8000H
-        ;
-        JMP         set_continous_ram_pool
-
-ram_to_7fff:
-        ;
-        ; Memory at 4000H only; First part of split ram pool at 4000H to 7FFFH
-        ;
-        MVI         A,07FH
-        JMP         set_primary_ram_pool_end
-
-ram_from_c000:
-        ;
-        ; No extra memory, so only ram pool available is from C000H
-        ;
-        LXI         H,0C000H
-set_continous_ram_pool:
-        ;
-        ; Use one continous block as ram pool, ending at last possible address
-        ;
-        SHLD        free_mem_start_addr
-        JMP         ram_to_end
 
 
 ;//////////////////////////////////////
@@ -1100,59 +1050,43 @@ quit:
         ;
 allocate_memory:
         PUSH        D
-allocate_in_current_block:
         PUSH        PSW
         ;
-        ; Get end address if we were to reserve the memory
+        ; Try to shrink window of free memory according to the reservation
         ;
         MOV         E,B
         MVI         D,000H
         LHLD        free_mem_start_addr
         XCHG
         DAD         D
-        ;
-        ; Check that the whole block to be reserved stays within free memory
-        ;
-        LDA         free_mem_end_addr_msb
-        CMP         H
-        JC          available_mem_block_full
-        ;
-        ; If so, shrink window of free memory according to the reservation
-        ;
         SHLD        free_mem_start_addr
-        XCHG
+        ;
+        ; Use subtraction to get (negative) number of bytes free in pool
+        ;
+        PUSH        D
+        LXI         D,program_origin
+        MOV         A,E
+        CMA
+        MOV         E,A
+        MOV         A,D
+        CMA
+        MOV         D,A
+        INX         D
+        DAD         D
+        POP         H
+        ;
+        ; NOTE: Inverted carry due to subtraction from adding 2s compliment.
+        ;       Double-negation means that carry is normal in terms of positive
+        ;       number of bytes free in memory pool.
+        ;
+        JC          completely_out_of_memory
         POP         PSW
         POP         D
         ANA         A
         RET
 
-
-;//////////////////////////////////////
-
-        ;
-        ; Swap available memory window if first one has filled completely up
-        ;
-available_mem_block_full:
-        ;
-        ; Check if available memory is continous or split
-        ;
-        MOV         E,A
-        LDA         free_mem_last_addr_msb
-        CMP         E
-        JZ          completely_out_of_memory
-        ;
-        ; If split, forget about first block and start using second block
-        ;
-        LXI         H,0C000H
-        SHLD        free_mem_start_addr
-        LDA         free_mem_last_addr_msb
-        STA         free_mem_end_addr_msb
-        POP         PSW
-        JMP         allocate_in_current_block
-
 completely_out_of_memory:
         POP         PSW
-        XCHG
         POP         D
         STC
         RET
@@ -1506,10 +1440,10 @@ print_page_header:
         CALL        print_str
         RC
         ;
-        ; Right-align page number, pad out to give 9 characters room
+        ; Right-align page number, pad out to give 5 characters room
         ;
         LDA         page_width
-        SUI         9 + program_title_str_end - program_title_str
+        SUI         5 + program_title_str_end - program_title_str
         MOV         B,A
 pad_spaces_before_page_nr_loop:
         MVI         A,' '
@@ -1666,28 +1600,6 @@ bcd_digit_converted:
 ;//////////////////////////////////////////////////////////////////////////////
 
         ;
-        ; Verify that memory at HL is writable
-        ;
-test_memory:
-        ;
-        ; Test writing 00H
-        ;
-        XRA         A
-        MOV         M,A
-        CMP         M
-        RNZ
-        ;
-        ; Test writing FFH
-        ;
-        DCR         A
-        MOV         M,A
-        CMP         M
-        RET
-
-
-;//////////////////////////////////////////////////////////////////////////////
-
-        ;
         ; Clear A bytes starting at HL
         ;
 clear_memory:
@@ -1775,10 +1687,6 @@ first_label_db_item_addr:
         DS          2
 line_counter_bcd_nr:
         DS          2
-free_mem_end_addr_msb:
-        DS          1
-free_mem_last_addr_msb:
-        DS          1
 is_label_def_flag:
         DS          1
 first_bcd_digit_found_flag:
@@ -1930,13 +1838,13 @@ header_str:
 four_newline_str:
         DB          LF,LF,LF,LF,CR
 program_title_str:
-        DB          'TOS21 SYMBOL CROSS REFERENCE, V1.5'
+        DB          'TDV 2100 SYMBOL CROSS REFERENCE, V.1.6'
 program_title_str_end:
         DB          CR
 page_number_str:
         DB          'PAGE 00',CR
 out_of_ram_str:
-        DB          'INSUFFICIENT RAM AREA AVAILABLE',CR
+        DB          'INSUFFICIENT MEMORY',CR
 operation_aborted_str:
         DB          'OPERATION ABORTED',CR
 seven_space_str:

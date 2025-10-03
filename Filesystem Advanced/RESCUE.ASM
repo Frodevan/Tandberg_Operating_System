@@ -10,7 +10,11 @@
 ;//                 filename    File to undelete
 ;//
 ;//                 Drive type T:
+;//                     A       Floppy (IBM 3740, ASCII), v1.7
+;//                     B       Floppy (IBM 3740, ASCII), v1.7
 ;//                     F       Floppy (Intel ISIS)
+;//                     I       Floppy (IBM 3740, EBCDIC), v1.7
+;//                     J       Floppy (IBM 3740, EBCDIC), v1.7
 ;//
 ;//                 Drive number n:
 ;//                     0-3
@@ -35,6 +39,13 @@
 ;//               been written to afterwards. File content should be verified by
 ;//               other means even in the case this tool reports a success.
 ;//
+;//         NOTE: If a file on an IBM-formatted floppy is recovered, no additional
+;//               checks are done except for checking for the deleted status when
+;//               reading the index record and then matching the filename. No
+;//               further checks are done, and if a new data set has re-used parts
+;//               of the deleted file's records, you may potentially end up with
+;//               two active data-sets containing overlapping records.
+;//
 ;//
 ;//         Changelog:
 ;//
@@ -54,6 +65,11 @@
 ;//
 ;//                 -> Version ID written to 0x2700
 ;//
+;//             1.7: Entry at 0xC000
+;//
+;//                 -> Adds support for IBM formats
+;//                 -> More general error reported if invalid drive type
+;//
 
 
 ;//////////////////////////////////////////////////////////////////////////////
@@ -63,21 +79,35 @@
 ;//////////////////////////////////////////////////////////////////////////////
 
 ;
+; Flag values
+;
+TRUE        EQU     -1          ; Boolean True
+
+;
 ; ASCII control characters
 ;
 NULL        EQU     000H        ; Null character
 CR          EQU     00DH        ; Cartridge Return
 
 ;
+; XMON constants
+;
+DISK_TRACK  EQU     00100H      ; Multiplier for floppy disk track
+DISK_SECTOR EQU     00001H      ; Multiplier for floppy disk sector
+
+;
 ; XMON system calls
 ;
 DSRDW       EQU     00073H      ; Read from disk with wait
 DSWRW       EQU     00076H      ; Write to disk with wait
+DSRAW       EQU     0007CH      ; Read from disk with wait and translate EBCDIC to ASCII
+DSWAW       EQU     0007FH      ; Translate ASCII to EBCDIC and write to disk with wait
 
 ;
 ; XMON and TOS system data
 ;
 SIGNATURE   EQU     02700H      ; Program signature
+ASCI        EQU     0277EH      ; EBCDIC to ASCII translation table reference
 
 ;
 ; TOS system calls
@@ -88,6 +118,7 @@ PUT         EQU     0FD12H      ; Output string of characters, inclusive CR
 PUTSTR      EQU     0FD15H      ; Output string of characters, exclusive CR
 LOCDIR      EQU     0FD85H      ; Look up filetable entry of filename on disk
 FILENAME    EQU     0FDCDH      ; Input TOS filename
+IBFIL       EQU     0FDD0H      ; Input IBM-3740 filename
 
 ;
 ; TOS standard files
@@ -101,7 +132,6 @@ CO_FCB      EQU     0FF02H      ; Console output abstract file FCB pointer
 ERROR_10    EQU     010H        ; NON-VALID DISKETTE COMMAND
 ERROR_11    EQU     011H        ; IMPROPER UNIT SPECIFICATION
 ERROR_13    EQU     013H        ; DRIVE NUMBER NOT 0-3
-ERROR_1D    EQU     01DH        ; COMMAND UNIT NOT :FN: OR :MN:
 ERROR_35    EQU     035H        ; TRACK NUMBER > 76
 ERROR_36    EQU     036H        ; SECTOR NUMBER = 0 OR > 26
 
@@ -114,7 +144,7 @@ ERROR_36    EQU     036H        ; SECTOR NUMBER = 0 OR > 26
 
         ORG         SIGNATURE
         DB          'RESCUE'
-        DB          '106'
+        DB          '107'
 
 
 ;//////////////////////////////////////////////////////////////////////////////
@@ -130,18 +160,18 @@ start:
         ;
         CALL        get_next_char
         RC
+        STA         input_char
         CPI         CR
         JZ          wrong_number_of_args
         ;
         ; Check and parse filename to rescue, with drive designator if provided
         ;
         CPI         ':'
-        JNZ         drive_set
+        JNZ         intel_drive_set
         CALL        get_next_char
         RC
         CALL        to_uppercase
-        CPI         'F'
-        JNZ         invalid_drive_type
+        STA         drive_type
         CALL        get_next_char
         RC
         SUI         '0'
@@ -159,7 +189,25 @@ start:
         RC
         CPI         CR
         JZ          wrong_number_of_args
-drive_set:
+        STA         input_char
+        ;
+        ; Verify drive type
+        ;
+        LDA         drive_type
+        CPI         'F'
+        JZ          intel_drive_set
+        CPI         'I'
+        JZ          ibm_ebcdic_drive_set
+        CPI         'J'
+        JZ          ibm_ebcdic_drive_set
+        CPI         'A'
+        JZ          ibm_ascii_drive_set
+        CPI         'B'
+        JZ          ibm_ascii_drive_set
+        JMP         invalid_args
+
+intel_drive_set:
+        LDA         input_char
         LXI         D,filename_str
         CALL        FILENAME
         RC
@@ -441,6 +489,105 @@ reserve_next_linking_block:
 
 ;//////////////////////////////////////////////////////////////////////////////
 
+ibm_ebcdic_drive_set:
+        ;
+        ; Set up for EBCDIC disk API
+        ;
+        LXI         H,DSRAW
+        SHLD        ibm_read_routine
+        LXI         H,DSWAW
+        MVI         A,TRUE
+        JMP         ibm_mode_set
+
+ibm_ascii_drive_set:
+        ;
+        ; Set up for regular (ASCII) disk API
+        ;
+        LXI         H,DSRDW
+        SHLD        ibm_read_routine
+        LXI         H,DSWRW
+        XRA         A
+ibm_mode_set:
+        SHLD        ibm_write_routine
+        STA         ebcdic_format_flag
+        ;
+        ; Get name of IBM file to recover, and verify no more arguments
+        ;
+        LDA         input_char
+        LXI         D,filename_str
+        CALL        IBFIL
+        RC
+        CPI         CR
+        JNZ         wrong_number_of_args
+        ;
+        ; Start scanning through at start of directory table
+        ;
+        LXI         B,0*DISK_TRACK + 8*DISK_SECTOR
+check_ibm_directory_record:
+        ;
+        ; Get file entry
+        ;
+        CALL        read_from_ibm_disk
+        RC
+        JZ          check_next_ibm_directory_record
+        ;
+        ; Compare file entry filename with filename of file to rescue
+        ;
+        LXI         D,filename_str
+        LXI         H,dir_data_buffer + 5
+        PUSH        B
+        MVI         C,8
+compare_next_ibm_filename_char:
+        LDAX        D
+        CMP         M
+        JNZ         ibm_file_not_match
+        INX         H
+        INX         D
+        DCR         C
+        JNZ         compare_next_ibm_filename_char
+        ;
+        ; File found, undelete it right away
+        ;
+        LXI         H,dir_data_buffer
+        MVI         M,'H'
+        INX         H
+        MVI         M,'D'
+        INX         H
+        MVI         M,'R'
+        INX         H
+        MVI         M,'1'
+        POP         B
+        ;
+        ; Write changes to disk, and print status
+        ;
+        CALL        write_to_ibm_disk
+        RC
+        CALL        print_ibm_filename
+        RC
+        LXI         D,reclaimed_str
+        JMP         print_and_quit
+
+ibm_file_not_match:
+        POP         B
+check_next_ibm_directory_record:
+        ;
+        ; Check for end of directory, and advance to next record
+        ;
+        MOV         A,C
+        CPI         26
+        JNC         ibm_file_not_found
+        INR         C
+        JMP         check_ibm_directory_record
+
+ibm_file_not_found:
+        CALL        print_ibm_filename
+        RC
+        LXI         D,not_found_str
+        JMP         print_and_quit
+
+
+;//////////////////////////////////////////////////////////////////////////////
+
         ;
         ; Read linking block of file with filename pointed to by DE into buffer
         ;
@@ -484,6 +631,77 @@ write_to_disk:
         XCHG
         LDA         drive_number
         CALL        DSWRW
+        RET
+
+
+;//////////////////////////////////////////////////////////////////////////////
+
+        ;
+        ; Read record from IBM disk, using previously selected read API call
+        ;
+read_from_ibm_disk:
+        LHLD        ibm_read_routine
+        CALL        do_ibm_disk_operation
+        JC          check_ibm_read_status
+        XRA         A
+        RET
+
+check_ibm_read_status:
+        ;
+        ; Check for deleted record status
+        ;
+        CPI         020H
+        STC
+        RNZ
+        ;
+        ; Check if deleted sector needs to be converted from EBCDIC to ASCII
+        ;
+        LDA         ebcdic_format_flag
+        ANA         A
+        JZ          ibm_deleted_sector_ready
+        ;
+        ; Locally translate deleted sector to ASCII if EBCDIC-format is assumed
+        ;
+        PUSH        B
+        PUSH        D
+        PUSH        H
+        LXI         H,dir_data_buffer
+        MVI         B,128
+        MVI         D,000H
+convert_deleted_sector:
+        MOV         E,M
+        PUSH        H
+        LHLD        ASCI
+        DAD         D
+        MOV         A,M
+        POP         H
+        MOV         M,A
+        INX         H
+        DCR         B
+        JNZ         convert_deleted_sector
+        POP         H
+        POP         D
+        POP         B
+        ;
+        ; Data of deleted sector ready
+        ;
+ibm_deleted_sector_ready:
+        MVI         A,020H
+        ANA         A
+        RET
+
+
+;//////////////////////////////////////
+
+        ;
+        ; Write record to IBM disk, using previously selected write API call
+        ;
+write_to_ibm_disk:
+        LHLD        ibm_write_routine
+do_ibm_disk_operation:
+        LDA         drive_number
+        PUSH        H
+        LXI         H,dir_data_buffer
         RET
 
 
@@ -669,6 +887,76 @@ to_uppercase:
 
 ;//////////////////////////////////////////////////////////////////////////////
 
+        ;
+        ; Print the name of file to be rescued, with its drive designator
+        ;
+print_filename:
+        ;
+        ; Set and print drive designator of file to use
+        ;
+        LDA         drive_number
+        ADI         '0'
+        STA         drive_designator_str + 2
+        LHLD        CO_FCB
+        LXI         D,drive_designator_str
+        CALL        PUTSTR
+        ;
+        ; Prepare filename for printing as string, and check for file extension
+        ;
+        MVI         A,CR
+        STA         filename_str + 9
+        LXI         H,filename_str + 6
+        XRA         A
+        ORA         M
+        LXI         D,filename_str
+        JZ          filename_print_last_part
+        ;
+        ; Filename has an extension, so print name and ext deliminator first
+        ;
+        MOV         C,M
+        MVI         M,CR
+        PUSH        H
+        LHLD        CO_FCB
+        CALL        PUTSTR
+        POP         H
+        MVI         A,'.'
+        CALL        print_char
+        RC
+        MOV         M,C
+        ;
+        ; Then print file extension
+        ;
+        XCHG
+filename_print_last_part:
+        LHLD        CO_FCB
+        CALL        PUTSTR
+        RET
+
+
+;//////////////////////////////////////////////////////////////////////////////
+
+print_ibm_filename:
+        ;
+        ; Set and print drive designator of file
+        ;
+        MVI         A,CR
+        STA         filename_str + 8
+        LDA         drive_type
+        STA         drive_designator_str + 1
+        LDA         drive_number
+        ADI         '0'
+        STA         drive_designator_str + 2
+        LXI         D,drive_designator_str
+        LHLD        CO_FCB
+        CALL        PUTSTR
+        RC
+        LXI         D,filename_str
+        CALL        PUTSTR
+        RET
+
+
+;//////////////////////////////////////////////////////////////////////////////
+
 invalid_drive_number:
         MVI         B,ERROR_13
         JMP         quit_with_error
@@ -678,13 +966,6 @@ invalid_drive_number:
 
 invalid_args:
         MVI         B,ERROR_11
-        JMP         quit_with_error
-
-
-;//////////////////////////////////////
-
-invalid_drive_type:
-        MVI         B,ERROR_1D
         JMP         quit_with_error
 
 
@@ -748,54 +1029,6 @@ print_and_quit:
 
 
 ;//////////////////////////////////////////////////////////////////////////////
-
-        ;
-        ; Print the name of file to be rescued, with its drive designator
-        ;
-print_filename:
-        ;
-        ; Set and print drive designator of file to use
-        ;
-        LDA         drive_number
-        ADI         '0'
-        STA         drive_designator_str + 2
-        LHLD        CO_FCB
-        LXI         D,drive_designator_str
-        CALL        PUTSTR
-        ;
-        ; Prepare filename for printing as string, and check for file extension
-        ;
-        MVI         A,CR
-        STA         filename_str + 9
-        LXI         H,filename_str + 6
-        XRA         A
-        ORA         M
-        LXI         D,filename_str
-        JZ          filename_print_last_part
-        ;
-        ; Filename has an extension, so print name and ext deliminator first
-        ;
-        MOV         C,M
-        MVI         M,CR
-        PUSH        H
-        LHLD        CO_FCB
-        CALL        PUTSTR
-        POP         H
-        MVI         A,'.'
-        CALL        print_char
-        RC
-        MOV         M,C
-        ;
-        ; Then print file extension
-        ;
-        XCHG
-filename_print_last_part:
-        LHLD        CO_FCB
-        CALL        PUTSTR
-        RET
-
-
-;//////////////////////////////////////////////////////////////////////////////
 ;//
 ;//     Strings and data
 ;//
@@ -830,6 +1063,19 @@ file_entry_nr_in_dir_block:
         DS          1
 
         DS          2
+
+drive_type:
+        DS          1
+input_char:
+        DS          1
+ibm_read_routine:
+        DS          2
+ibm_write_routine:
+        DS          2
+ebcdic_format_flag:
+        DS          1
+
+        DS          1
 
 dir_filename:
         DB          'ISIS',NULL,NULL

@@ -2,35 +2,36 @@
 ;//
 ;//     DCOPY - Duplicate floppy
 ;//
+;//         Extra parameters:
+;//
+;//             [$<option>]
+;//
+;//                 option      User option
+;//
+;//                 Options:
+;//                     I       Copy up to track 75, from drive 0 to drive 1
+;//                     N       Abort copy
+;//                     S       Copy using drive 0 only
+;//                     Y       Copy from drive 0 to drive 1
+;//
 ;//         Duplicates an entire floppy-disk, track by track. Each track on the
 ;//         source disk is attempted to be read up to 20 times in the case of read-
 ;//         issues, while each track is only attempted re-written twice should
 ;//         there be write issues.
 ;//
-;//         If the S option is used, the user will be prompted to swap disk every
-;//         once in a while. This prompt will take any keypress to continue.
+;//         Input selection will be prompted for at program start, unless extra
+;//         parameters are supported and provided. Not all versions of this tool
+;//         supports the extra parameters feature.
 ;//
-;//         NOTE: This program derives the size of user-memory on its own, and the
-;//               code used expects a gap between start of user-memory and XMON-
-;//               memory. This is true for machines with 48k RAM or less, but not
-;//               for systems with the full 54k of user RAM. Running the wrong
-;//               version of this program on a 54k machine will cause the computer
-;//               to crash, since the whole XMON working-RAM block (where the
-;//               program itself resides) will be overwritten with floppy-data.
+;//         If the S option is used, the user will be prompted to swap disk every
+;//         once in a while. This prompt will take any keypress to continue, except
+;//         for 'Q' which will immediately abort the copy and end the program.
+;//
+;//         NOTE: This version of the program uses TOS to find the start of RAM, and
+;//               supports 54KB user memory. However, this in turn requires at least
+;//               TOS v1.7 to run properly.
 ;//
 ;//         NOTE: The minor verification bug from v1.6 was never fixed.
-;//
-;//
-;//         User choice prompt input:
-;//
-;//             <option>
-;//
-;//                 option      User option
-;//
-;//                 Options:
-;//                     N       Abort copy
-;//                     S       Copy using drive 0 only
-;//                     Y       Copy from drive 0 to drive 1
 ;//
 ;//
 ;//         Changelog:
@@ -65,6 +66,15 @@
 ;//                    be properly verified, neither will the sector type of the
 ;//                    very last sector in each track
 ;//
+;//             1.7: Entry at 0x2000
+;//
+;//                 -> Uses TOS start-of-RAM variable instead of finding it using a
+;//                    local algorithm. This adds support for 54k user memory.
+;//                 -> Flushes excess extra parameters after first option
+;//                 -> Uses TOS device-files for text I/O, instead of XMON API
+;//                 -> Adds the I option
+;//                 -> Typing Q at any prompt during the copy aborts the operation
+;//
 
 
 ;//////////////////////////////////////////////////////////////////////////////
@@ -79,17 +89,13 @@
 NULL        EQU     000H        ; Null character
 ERLIN       EQU     004H        ; Erase current line
 BEL         EQU     007H        ; Bell short beep
-LF          EQU     00AH        ; Line Feed
-ROLUP       EQU     00CH        ; Roll text upwards one line
 CR          EQU     00DH        ; Cartridge Return
-CURUP       EQU     01CH        ; Move cursor up one line
 
 ;
 ; XMON system calls
 ;
 TTI         EQU     00040H      ; Console input
 TTO         EQU     00043H      ; Console output
-INDISP      EQU     0006AH      ; Get character at console cursor
 DCALW       EQU     00070H      ; Reset disk drive with wait
 DSRDW       EQU     00073H      ; Read from disk with wait
 DSWRW       EQU     00076H      ; Write to disk with wait
@@ -101,6 +107,24 @@ DSDLW       EQU     00079H      ; Write deleted to disk with wait
 SIGNATURE   EQU     02700H      ; Program signature
 BUFLIM      EQU     0272EH      ; Lowest address of current TOS buffers
 KEYBUF      EQU     02780H      ; Console input buffer
+
+;
+; TOS system calls
+;
+INCHAR      EQU     0FD09H      ; Input single character
+PUT         EQU     0FD12H      ; Output string of characters, inclusive CR
+PUTSTR      EQU     0FD15H      ; Output string of characters, exclusive CR
+
+;
+; TOS constants
+;
+RAMST       EQU     0FDFCH      ; Address to start of user-RAM
+
+;
+; TOS standard files
+;
+CI_FCB      EQU     0FF00H      ; Console input abstract file FCB pointer
+CO_FCB      EQU     0FF02H      ; Console output abstract file FCB pointer
 
 ;
 ; TOS Errors
@@ -116,7 +140,7 @@ ERROR_20    EQU     020H        ; DELETED DATA RECORD
 
         ORG         SIGNATURE
         DB          'DCOPY',NULL
-        DB          '106'
+        DB          '107'
 
 
 ;//////////////////////////////////////////////////////////////////////////////
@@ -136,8 +160,10 @@ start:
         ;
         ; Print welcome prompt string
         ;
-        LXI         H,welcome_prompt_str
-        CALL        print_str
+        LXI         D,welcome_prompt_str
+        LHLD        CO_FCB
+        CALL        PUTSTR
+        RC
         ;
         ; Get highest possible start address of a track data buffer
         ;
@@ -150,14 +176,7 @@ start:
         ;
         ; Scan for start of user-RAM to get start address of first track buffer
         ;
-        LXI         H,0C000H
-ram_test_loop:
-        DCR         H
-        MOV         A,M
-        INR         M
-        CMP         M
-        JNZ         ram_test_loop
-        INR         H
+        LHLD        RAMST
         SHLD        track_buffer_list
         ;
         ; Prepare to set up a list of pointers to individual track data buffers
@@ -191,9 +210,23 @@ buffer_end_check_instr:
 
 parse_prompt_input:
         ;
-        ; Get prompt input and convert to uppercase
+        ; Get prompt input
         ;
-        CALL        TTI
+        CALL        get_input_char
+        MOV         C,A
+        CPI         CR
+        JZ          quit_program
+        ;
+        ; Flush remaining input chars
+        ;
+flush_user_input_prompt:
+        CALL        get_input_char
+        CPI         CR
+        JNZ         flush_user_input_prompt
+        MOV         A,C
+        ;
+        ; Convert input choice to uppercase
+        ;
         CPI         'a'-1
         JC          char_is_uppercase
         SUI         'a'-'A'
@@ -203,17 +236,15 @@ char_is_uppercase:
         ;
         CPI         'Y'
         JZ          prepare_to_copy
-        CPI         'N'
-        JZ          quit_program
+        CPI         'I'
+        JZ          prepare_to_copy
         CPI         'S'
-        JNZ         parse_prompt_input
+        JNZ         quit_program
 prepare_to_copy:
         ;
-        ; Echo and save prompt selection, and prepare to start copy
+        ; Save prompt selection, and prepare to start copy
         ;
-        CALL        TTO
         STA         prompt_choice
-        CALL        print_clean_new_line
         ;
         ; Reset source disk drive
         ;
@@ -221,9 +252,8 @@ reset_source_drive:
         XRA         A
         CALL        DCALW
         JNC         source_drive_ready
-        LXI         H,drive_not_ready_str
-        CALL        print_str
-        CALL        TTI
+        LXI         D,drive_not_ready_str
+        CALL        prompt_user
         JMP         reset_source_drive
 
 source_drive_ready:
@@ -237,9 +267,8 @@ reset_target_drive:
         MVI         A,1
         CALL        DCALW
         JNC         target_drive_ready
-        LXI         H,drive_not_ready_str
-        CALL        print_str
-        CALL        TTI
+        LXI         D,drive_not_ready_str
+        CALL        prompt_user
         JMP         reset_target_drive
 
 
@@ -291,8 +320,8 @@ read_current_track:
         STA         retry_counter
         CPI         20
         JC          read_current_track
-        LXI         H,read_error_str
-        JMP         print_str_and_quit
+        LXI         D,read_error_str
+        JMP         print_and_quit
 
 track_read_success:
         ;
@@ -301,8 +330,25 @@ track_read_success:
         LDA         current_track_nr
         INR         A
         STA         current_track_nr
+        ;
+        ; Check prompt for IBM disk, and end reading after track 74 if so
+        ;
+        LDA         prompt_choice
+        CPI         'I'
+        JNZ         advance_read_buffer
+        LDA         current_track_nr
+        CPI         75
+        JNC         read_chunk_done
+advance_read_buffer:
+        ;
+        ; End reading after track 76 for a normal disk
+        ;
+        LDA         current_track_nr
         CPI         77
         JNC         read_chunk_done
+        ;
+        ; Point to next track data buffer
+        ;
         LDA         current_track_buffer_nr
         INR         A
         STA         current_track_buffer_nr
@@ -318,22 +364,10 @@ read_chunk_done:
         LDA         prompt_choice
         CPI         'Y'
         JZ          write_next_chunk_dual_drive
-        LXI         H,change_to_copy_str
-        CALL        print_str
-        CALL        print_clean_new_line
-        ;
-        ; Flush keyboard input buffer and wait for new keystroke
-        ;
-        XRA         A
-        STA         KEYBUF
-        CALL        TTI
-        ;
-        ; Clear prompt text
-        ;
-        MVI         A,CURUP
-        CALL        TTO
-        MVI         A,ERLIN
-        CALL        TTO
+        CPI         'I'
+        JZ          write_next_chunk_dual_drive
+        LXI         D,change_to_copy_str
+        CALL        prompt_user
         ;
         ; Reset disk drive after disk change
         ;
@@ -341,9 +375,8 @@ reset_drive_after_read:
         XRA         A
         CALL        DCALW
         JNC         write_next_chunk
-        LXI         H,drive_not_ready_str
-        CALL        print_str
-        CALL        TTI
+        LXI         D,drive_not_ready_str
+        CALL        prompt_user
         JMP         reset_drive_after_read
 
 
@@ -395,8 +428,8 @@ retry_writing_track:
         STA         retry_counter
         CPI         2
         JC          write_current_track
-        LXI         H,write_error_str
-        JMP         print_str_and_quit
+        LXI         D,write_error_str
+        JMP         print_and_quit
 
 verify_current_track:
         ;
@@ -428,6 +461,20 @@ verify_next_byte:
         LDA         current_track_nr
         INR         A
         STA         current_track_nr
+        ;
+        ; Check prompt for IBM disk, and end writing after track 74 if so
+        ;
+        LDA         prompt_choice
+        CPI         'I'
+        JNZ         advance_write_buffer
+        LDA         current_track_nr
+        CPI         75
+        JNC         copy_successful
+advance_write_buffer:
+        ;
+        ; End writing after track 76 for a normal disk
+        ;
+        LDA         current_track_nr
         CPI         77
         JNC         copy_successful
         LDA         current_track_buffer_nr
@@ -446,22 +493,10 @@ verify_next_byte:
         LDA         prompt_choice
         CPI         'Y'
         JZ          prepare_to_copy_next_chunk
-        LXI         H,change_to_original_str
-        CALL        print_str
-        CALL        print_clean_new_line
-        ;
-        ; Flush keyboard input buffer and wait for new keystroke
-        ;
-        XRA         A
-        STA         KEYBUF
-        CALL        TTI
-        ;
-        ; Clear prompt text
-        ;
-        MVI         A,CURUP
-        CALL        TTO
-        MVI         A,ERLIN
-        CALL        TTO
+        CPI         'I'
+        JZ          prepare_to_copy_next_chunk
+        LXI         D,change_to_original_str
+        CALL        prompt_user
         ;
         ; Reset disk drive after disk change
         ;
@@ -469,9 +504,8 @@ reset_drive_after_write:
         XRA         A
         CALL        DCALW
         JNC         prepare_to_copy_next_chunk
-        LXI         H,drive_not_ready_str
-        CALL        print_str
-        CALL        TTI
+        LXI         D,drive_not_ready_str
+        CALL        prompt_user
         JMP         reset_drive_after_write
 
 prepare_to_copy_next_chunk:
@@ -497,21 +531,25 @@ copy_successful:
         ;
         ; Print status and take a new user choice
         ;
-        LXI         H,verification_ok_str
-        CALL        print_str
+        LXI         D,verification_ok_str
+        LHLD        CO_FCB
+        CALL        PUTSTR
+        JC          quit_with_error_code
         JMP         parse_prompt_input
 
 
 ;//////////////////////////////////////
 
-print_str_and_quit:
-        CALL        print_str
+print_and_quit:
+        LHLD        CO_FCB
+        CALL        PUT
+        JC          quit_with_error_code
 quit_program:
         ;
         ; Cleanup and quit program
         ;
-        CALL        print_clean_new_line
         XRA         A
+quit_with_error_code:
         LHLD        saved_stack_ptr
         SPHL
         RET
@@ -524,15 +562,47 @@ quit_program:
 ;//////////////////////////////////////////////////////////////////////////////
 
         ;
-        ; Print string pointed to by HL
+        ; Run a prompt after printing the string pointed to by DE
         ;
-print_str:
-        MOV         A,M
-        ORA         A
-        RZ
+prompt_user:
+        LHLD        CO_FCB
+        CALL        PUTSTR
+        JC          quit_with_error_code
+        ;
+        ; Flush input and wait for user choice
+        ;
+        XRA         A
+        STA         KEYBUF
+        CALL        TTI
+        ;
+        ; Clear prompt after choice has been made
+        ;
+        PUSH        PSW
+        MVI         A,ERLIN
         CALL        TTO
-        INX         H
-        JMP         print_str
+        POP         PSW
+        ;
+        ; Answering Q to the prompt will end the program immediately
+        ;
+        CPI         'Q'
+        JZ          quit_with_error_code
+        CPI         'q'
+        JZ          quit_with_error_code
+        RET
+
+
+;//////////////////////////////////////////////////////////////////////////////
+
+        ;
+        ; Input a single character to A
+        ;
+get_input_char:
+        PUSH        H
+        LHLD        CI_FCB
+        CALL        INCHAR
+        JC          quit_with_error_code
+        POP         H
+        RET
 
 
 ;//////////////////////////////////////////////////////////////////////////////
@@ -634,24 +704,6 @@ write_deleted_sector:
 
 
 ;//////////////////////////////////////////////////////////////////////////////
-
-print_clean_new_line:
-        MVI         A,CR
-        CALL        TTO
-        MVI         A,LF
-        CALL        TTO
-        CALL        INDISP
-        ORA         A
-        JZ          line_already_clear
-        MVI         A,ROLUP
-        CALL        TTO
-line_already_clear:
-        MVI         A,CR
-        CALL        TTO
-        RET
-
-
-;//////////////////////////////////////////////////////////////////////////////
 ;//
 ;//     Strings and data
 ;//
@@ -682,16 +734,16 @@ retry_counter:
         DB          000H
 
 welcome_prompt_str:
-        DB          'Copy from 0 to 1 - Type Y to start : ',NULL
+        DB          'Copy from 0 to 0 - type S, from 0 to 1 - type Y: ',CR
 verification_ok_str:
-        DB          'EQUAL. More ? ',NULL
+        DB          'EQUAL. More ? (S/Y): ',CR
 change_to_copy_str:
-        DB          'Change to copy diskette',BEL,NULL
+        DB          'Change to output diskette: ',BEL,CR
 change_to_original_str:
-        DB          'Change to original diskette',BEL,NULL
+        DB          'Change to input diskette: ',BEL,CR
 drive_not_ready_str:
-        DB          'Drive not ready. ',BEL,NULL
+        DB          'Drive not ready: ',BEL,CR
 read_error_str:
-        DB          'Read error',BEL,NULL
+        DB          'Read error',BEL,CR
 write_error_str:
-        DB          'Write error',BEL,NULL
+        DB          'Write error',BEL,CR

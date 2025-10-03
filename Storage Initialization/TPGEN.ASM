@@ -32,6 +32,10 @@
 ;//
 ;//                 -> Version ID written to 0x2700
 ;//
+;//            1.7: Entry at 0xC28C
+;//
+;//                -> Flushes excess keypresses after the start-transfer prompt
+;//
 
 
 ;//////////////////////////////////////////////////////////////////////////////
@@ -57,6 +61,7 @@ SIGNATURE   EQU     02700H      ; Program signature
 INCHAR      EQU     0FD09H      ; Input single character
 OUTCHAR     EQU     0FD0CH      ; Output single character
 PUT         EQU     0FD12H      ; Output string of characters, inclusive CR
+PUTSTR      EQU     0FD15H      ; Output string of characters, exclusive CR
 GETBIN      EQU     0FD18H      ; Input a given number of raw bytes
 OPEN        EQU     0FD1EH      ; Open block device
 READ        EQU     0FD21H      ; Read from block device
@@ -113,7 +118,7 @@ FM_BINARY   EQU     004H        ; Binary flag
 
         ORG         SIGNATURE
         DB          'TPGEN',NULL
-        DB          '106'
+        DB          '107'
 
 
 ;//////////////////////////////////////////////////////////////////////////////
@@ -228,15 +233,28 @@ flush_outlet:
 start:
 beginning:
         ;
-        ; Print welcome prompt and check response
+        ; Print welcome prompt and get response
         ;
         LXI         D,welcome_prompt_str
         LHLD        CO_FCB
-        CALL        PUT
+        CALL        PUTSTR
         RC
         LHLD        CI_FCB
         CALL        INCHAR
         RC
+        ;
+        ; Flush additional pending input before checking response
+        ;
+        CPI         CR
+        RZ
+        MOV         C,A
+flush_next_char:
+        LHLD        CI_FCB
+        CALL        INCHAR
+        RC
+        CPI         CR
+        JNZ         flush_next_char
+        MOV         A,C
         CPI         'Y'
         JZ          start_copying
         CPI         'y'
@@ -475,7 +493,7 @@ copying_done:
 ;//////////////////////////////////////////////////////////////////////////////
 
 welcome_prompt_str:
-        DB          'DATASET COPY FROM DISKETTE 0 TO CARTRIDGE 0 - TYPE Y TO START',CR
+        DB          'DATASET COPY FROM DISKETTE 0 TO CARTRIDGE 0 - TYPE Y TO START: ',CR
 not_copied_str:
         DB          ' NOT'
 copied_ok_str:
