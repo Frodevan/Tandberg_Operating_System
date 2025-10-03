@@ -55,9 +55,9 @@
 ;//         NOTE: If SO is not assigned, SL is used. If neither SO or SL are
 ;//               assigned, then CO is chosen as output as a last-resort.
 ;//
-;//         NOTE: This version expects a gap of RAM between the XMON working area
-;//               and TOS user RAM. As such, it will not work on machines equipped
-;//               with the full 54KB of RAM.
+;//         NOTE: This version takes the start of user-RAM from TOS, a feature that
+;//               was first introduced with TOS v1.7. Due to this, this version of
+;//               MOVE will not work with older versions of TOS.
 ;//
 ;//
 ;//         Changelog:
@@ -85,6 +85,16 @@
 ;//
 ;//                 -> Adds newline on END-OF-BLOCK status in paged modes
 ;//
+;//             1.7: Entry at 0xC000
+;//
+;//                 -> Uses new TOS start-of-ram constant
+;//                 -> Properly closes SI at the end of single-floppy diskswap mode
+;//                 -> Wipes line after prompts are done, instead of echoing choice
+;//                 -> Quits if error status when printing/reading a prompt
+;//                 -> Introduces a bug where the Q option won't be recognized at
+;//                    the page mode ASCII prompt, behaving like option A instead
+;//                 -> Ctrl-characters are output using TOS when SO is CO, not XMON
+;//
 
 
 ;//////////////////////////////////////////////////////////////////////////////
@@ -104,6 +114,7 @@ TRUE        EQU     1           ; Boolean True
 ;
 NULL        EQU     000H        ; Null character
 ETX         EQU     003H        ; End of text
+ERLIN       EQU     004H        ; Erase current line
 BEL         EQU     007H        ; Bell (short beep)
 LF          EQU     00AH        ; Line Feed
 CR          EQU     00DH        ; Cartridge Return
@@ -133,9 +144,15 @@ GET         EQU     0FD0FH      ; Input string, inclusive CR
 PUT         EQU     0FD12H      ; Output string of characters, inclusive CR
 PUTSTR      EQU     0FD15H      ; Output string of characters, exclusive CR
 OPEN        EQU     0FD1EH      ; Open block device
+CLOSE       EQU     0FD27H      ; Close block device
 EDBH        EQU     0FD2AH      ; Convert byte to 2-character ASCII hexadecimal
 EDHB        EQU     0FD30H      ; Convert 2-character ASCII hexadecimal to byte
 PHYSINT     EQU     0FDDFH      ; Initialize FCB from full file designator
+
+;
+; TOS constants
+;
+RAMST       EQU     0FDFCH      ; Address to start of user-RAM
 
 ;
 ; TOS standard files
@@ -204,7 +221,9 @@ initial_page_margin_done:
         ORA         A
         JZ          main_move_loop
         MVI         A,ERPAG
-        CALL        TTO
+        LHLD        CO_FCB
+        CALL        OUTCHAR
+        JC          cleanup_and_quit
         ;
         ; Move all data from input to output file
         ;
@@ -242,6 +261,10 @@ cleanup_and_quit:
         LDA         f0_diskswap_filecopy_flag
         ORA         A
         JZ          unassignements_done
+        POP         PSW
+        LHLD        SI_FCB
+        CALL        CLOSE
+        PUSH        PSW
         LXI         H,00000H
         SHLD        SI_FCB
         JMP         restore_keyboard_buffer
@@ -566,6 +589,7 @@ hex_or_ascii_prompt:
         LXI         D,hex_or_ascii_prompt_str
         LHLD        CO_FCB
         CALL        PUTSTR
+        JC          cleanup_and_quit
 parse_hex_or_ascii_choice:
         ;
         ; Get choice and convert to uppercase
@@ -578,10 +602,8 @@ hex_or_ascii_choice_is_uppercase:
         ;
         ; Verify choice against possible options
         ;
-        LXI         D,option_a_str
         CPI         'A'
         JZ          hex_or_ascii_prompt_end
-        LXI         D,option_q_str
         CPI         'Q'
         JZ          hex_or_ascii_prompt_end
         CPI         'H'
@@ -591,14 +613,13 @@ hex_or_ascii_choice_is_uppercase:
         ;
         MVI         A,TRUE
         STA         hex_output_mode_flag
-        LXI         D,option_h_str
 hex_or_ascii_prompt_end:
         ;
-        ; Print choice and check if user decided to abort move early
+        ; Clear prompt and check if user decided to abort move early
         ;
-        PUSH        PSW
-        CALL        PUT
-        POP         PSW
+        MVI         A,ERLIN
+        CALL        TTO
+        MOV         A,C
         CPI         'Q'
         RNZ
         LDA         console_paged_output_flag
@@ -629,29 +650,30 @@ diskswap_prompt:
         ;
         XRA         A
         STA         KEYBUF
-parse_diskswap_choice:
         ;
         ; Get prompt input and verify choice
         ;
         CALL        TTI
         CPI         'Q'
-        JZ          cleanup_and_quit
+        JZ          diskswap_cleanup_and_quit
         CPI         'q'
-        JZ          cleanup_and_quit
-        CPI         'C'
-        JZ          diskswap_choice_continue
-        CPI         'c'
-        JNZ         parse_diskswap_choice
-diskswap_choice_continue:
+        JZ          diskswap_cleanup_and_quit
         ;
-        ; Print continue choice and reset disk
+        ; Clear prompt and reset disk
         ;
-        LXI         D,option_c_str
-        LHLD        CO_FCB
-        CALL        PUT
+        MVI         A,ERLIN
+        CALL        TTO
         XRA         A
         CALL        DCALW
         RET
+
+        ;
+        ; Clear prompt and quit program
+        ;
+diskswap_cleanup_and_quit:
+        MVI         A,ERLIN
+        CALL        TTO
+        JMP         cleanup_and_quit
 
 
 ;//////////////////////////////////////////////////////////////////////////////
@@ -875,7 +897,22 @@ write_byte_to_file:
         ORA         A
         JZ          write_byte_using_tos
         POP         PSW
+        ;
+        ; But only if not an ASCII control character
+        ;
+        CPI         ' '
+        JC          write_console_control_char
         CALL        TTO
+        RET
+
+write_console_control_char:
+        ;
+        ; Control characters are written to console using TOS API still
+        ;
+        PUSH        H
+        LHLD        CO_FCB
+        CALL        OUTCHAR
+        POP         H
         JC          cleanup_and_quit
         RET
 
@@ -942,7 +979,7 @@ setup_next_console_page:
         ; Clear screen before starting to display next page
         ;
         MVI         A,ERPAG
-        CALL        TTO
+        CALL        write_byte_to_file
         RET
 
 check_printer_page_end:
@@ -1073,7 +1110,7 @@ output_disk_str:
 insert_disk_str:
         DB          'Insert ',CR
 continue_prompt_str:
-        DB          ' diskette, type C: ',BEL,CR
+        DB          ' diskette: ',BEL,CR
 option_a_str:
         DB          'A',CR
 option_c_str:
@@ -1088,9 +1125,9 @@ hex_or_ascii_prompt_str:
 eof_arg_str:
         DB          'EOF=',NULL
 input_file_prompt_str:
-        DB          'Input file ?',CR
+        DB          'Input file: ',CR
 page_ength_prompt_str:
-        DB          'Page length ?',CR
+        DB          'Page length: ',CR
 
 
 ;//////////////////////////////////////////////////////////////////////////////
@@ -1101,7 +1138,7 @@ page_ength_prompt_str:
 
         ORG         SIGNATURE
         DB          'MOVE',NULL,NULL
-        DB          '106'
+        DB          '107'
 
 
 ;//////////////////////////////////////////////////////////////////////////////
@@ -1111,7 +1148,6 @@ page_ength_prompt_str:
 ;//////////////////////////////////////////////////////////////////////////////
 
         ORG         0C000H
-default_data_buffer:
         ;
         ; This code is run once on program start, and is later overwritten
         ;
@@ -1203,7 +1239,7 @@ use_small_buffer:
         ;
         ; Only reserve 1000 bytes for the main buffer
         ;
-        LXI         H,default_data_buffer
+        LHLD        RAMST
         SHLD        data_buffer_ptr
         LXI         H,1000
         SHLD        data_buffer_size
@@ -1213,14 +1249,7 @@ use_big_buffer:
         ;
         ; Find start of user-memory to use as buffer address
         ;
-        LXI         H,default_data_buffer
-start_of_memory_scan:
-        DCR         H
-        MOV         A,M
-        INR         M
-        CMP         M
-        JNZ         start_of_memory_scan
-        INR         H
+        LHLD        RAMST
         SHLD        data_buffer_ptr
         ;
         ; Find size by subtracting buffer start from start of TOS buffers
@@ -1598,10 +1627,12 @@ parse_diskswap_filecopy_mode_args:
 prompt_for_input_file:
         LXI         D,input_file_prompt_str
         LHLD        CO_FCB
-        CALL        PUT
+        CALL        PUTSTR
+        JC          cleanup_and_quit
         LXI         D,console_input_buffer
         LHLD        CI_FCB
         CALL        GET
+        JC          cleanup_and_quit
         JMP         parse_diskswap_filecopy_mode_args
 
 
@@ -1801,8 +1832,10 @@ valid_page_length:
 prompt_for_page_length:
         LXI         D,page_ength_prompt_str
         LHLD        CO_FCB
-        CALL        PUT
+        CALL        PUTSTR
+        JC          cleanup_and_quit
         LXI         D,console_input_buffer
         LHLD        CI_FCB
         CALL        GET
+        JC          cleanup_and_quit
         JMP         parse_printer_mode_arg_str

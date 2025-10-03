@@ -10,12 +10,18 @@
 ;//
 ;//                 Switch sw:
 ;//
+;//                     C       Don't abort EXEC sequence on system error
 ;//                     S       Disable write-protection feature
 ;//
 ;//
 ;//         Sets or clears the system switch for TOS. This switch is used to change
 ;//         the behaviour of different functionality in TOS, allthough the switch
 ;//         may only be set to one unique setting at any time.
+;//
+;//         NOTE: The switch is not actually verified to be within A-Z, so other
+;//               values can be set as well. TOS will likely ignore invalid settings.
+;//               Any value above uppercase Z will be adjusted for lower-to-uppercase,
+;//               and this does include some characters before actual lowercase a.
 ;//
 ;//
 ;//         Changelog:
@@ -32,6 +38,11 @@
 ;//
 ;//                 -> Version ID written to 0x2700
 ;//
+;//             1.7: Entry at 0xC000
+;//
+;//                 -> System switch input generalized to values A-Z
+;//                 -> Flushes excess input characters from the extra parameters
+;//
 
 
 ;//////////////////////////////////////////////////////////////////////////////
@@ -44,6 +55,7 @@
 ; ASCII control characters
 ;
 NULL        EQU     000H        ; Null character
+CR          EQU     00DH        ; Cartridge Return
 
 ;
 ; XMON and TOS system data
@@ -70,7 +82,7 @@ CI_FCB      EQU     0FF00H      ; Console input abstract file FCB pointer
 
         ORG         SIGNATURE
         DB          'SYS',NULL,NULL,NULL
-        DB          '106'
+        DB          '107'
 
 
 ;//////////////////////////////////////////////////////////////////////////////
@@ -87,10 +99,11 @@ start:
         LHLD        CI_FCB
         CALL        INCHAR
         RC
-        CPI         'S'
-        JZ          valid_system_flag
-        CPI         's'
-        JNZ         clear_system_flag
+        MOV         C,A
+        CPI         CR
+        JZ          clear_system_flag
+        CPI         'Z' + 1
+        JC          valid_system_flag
         SUI         'a' - 'A'
         JMP         valid_system_flag
 
@@ -101,8 +114,14 @@ clear_system_flag:
         SUB         A
 valid_system_flag:
         ;
-        ; Update TOS system flag
+        ; Update TOS system flag and flush excess input arguments
         ;
         STA         SSWITCH
-        ANA         A
-        RET
+        MOV         A,C
+flush_next_char:
+        CPI         CR
+        RZ
+        LHLD        CI_FCB
+        CALL        INCHAR
+        RC
+        JMP         flush_next_char

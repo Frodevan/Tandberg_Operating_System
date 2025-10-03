@@ -88,6 +88,13 @@
 ;//                 -> PHYSINT and file assigning stable
 ;//                 -> Adds a handfull of bugfixes
 ;//
+;//             v1.7: Entry at 0xD814
+;//
+;//                 -> Adds file access mode for extending/appending data to
+;//                    existing files
+;//                 -> Identifies and exposes a reference to the start of User-RAM
+;//                 -> Minor tweaks and fixes
+;//
 
 
 ;//////////////////////////////////////////////////////////////////////////////
@@ -99,7 +106,9 @@
 ;
 ; Flag values
 ;
+FALSE       EQU     0           ; Boolean False
 TRUE        EQU     1           ; Boolean True
+TRUE_ALT    EQU     -1          ; Boolean True
 
 ;
 ; ASCII control characters
@@ -193,6 +202,7 @@ COSAVE      EQU     0271DH      ; Pending TOS CO file assignement
 ROLLSW      EQU     0271FH      ; Cursor line number if no hardware autoscroll
 PSTART      EQU     02720H      ; Current program entry pointer
 PRGNAM      EQU     02722H      ; TOS current program filename
+SSWITCH     EQU     0272CH      ; TOS system switch
 DEBUG       EQU     0272DH      ; TOS debug flag
 BUFLIM      EQU     0272EH      ; Lowest address of current TOS buffers
 UNIT        EQU     02730H      ; Unit of last filesystem operation
@@ -216,6 +226,7 @@ ERROR_0B    EQU     00BH        ; PROGRAM NAME NOT FOUND
 ERROR_0C    EQU     00CH        ; ILLEGAL DIRECTORY ENTRY
 ERROR_0F    EQU     00FH        ; DISKETTE MAP MISSING
 ERROR_11    EQU     011H        ; IMPROPER UNIT SPECIFICATION
+ERROR_14    EQU     014H        ; FILE PROTECTED
 ERROR_15    EQU     015H        ; DE-EDIT NONHEX DIGIT (0-9,A-F)
 ERROR_16    EQU     016H        ; INPUT FROM NON-INPUT FILE
 ERROR_17    EQU     017H        ; READ AFTER END-OF-FILE
@@ -255,6 +266,7 @@ ERROR_48    EQU     048H        ; TAPE MARK DETECTED
 ERROR_57    EQU     057H        ; CARTRIDGE EXTRA BLOCKS IN FILE
 ERROR_5A    EQU     05AH        ; INCORRECT NAME IN HEADER BLOCK
 ERROR_5C    EQU     05CH        ; END-OF-BLOCK (B AND J FILES)
+ERROR_5E    EQU     05EH        ; Extend mode file missing
 
 ;
 ; TOS file attributes
@@ -263,10 +275,12 @@ ATTR_I      EQU     001H        ; Invisible file
 ATTR_S      EQU     002H        ; System file
 ATTR_W      EQU     004H        ; Write-protected file
 ATTR_X      EQU     040H        ; Direct-access file
+ATTR_F      EQU     080H        ; Format file
 
 ;
 ; TOS File Control Block, block device variables
 ;
+FCB_MODE    EQU     001H        ; File mode
 FCB_BUFLEN  EQU     004H        ; Length of block/buffered-device data buffer
 FCB_BUFPTR  EQU     006H        ; Pointer to block/buffered-device data buffer
 FCB_READ    EQU     008H        ; Device-driver Read API call
@@ -277,6 +291,7 @@ FCB_DRVNR   EQU     011H        ; Drive number
 FCB_FNAME   EQU     012H        ; Filename string
 FCB_DRVFMT  EQU     01BH        ; Media format
 FCB_OVRPTR  EQU     01CH        ; Pointer to tape block-device buffer overrun bytes
+FCB_LNKIDX  EQU     01FH        ; Floppy block-device linking block buffer index
 FCB_LNKPTR  EQU     020H        ; Pointer to floppy block-device linking block buffer
 
 ;
@@ -285,6 +300,7 @@ FCB_LNKPTR  EQU     020H        ; Pointer to floppy block-device linking block b
 FM_NONE     EQU     000H        ; No file mode set, typically closed file
 FM_INPUT    EQU     001H        ; File open for reading flag
 FM_OUTPUT   EQU     002H        ; File open for writing flag
+FM_EXTEND   EQU     004H        ; File open for appending flag
 FM_BINARY   EQU     004H        ; Binary flag
 FM_EXEC_CI  EQU     008H        ; Internal file CI used by EXEC flag
 FM_EOF_NEXT EQU     010H        ; Force End of File on next read flag
@@ -353,6 +369,14 @@ TAB_CLOSE   EQU     00CH        ; Device driver close routines
 ;//                    command at the command line prompt
 ;//                 -> Fixes the TOSINIT API routine vs buffers bug from v1.5a
 ;//
+;//             v1.7:
+;//
+;//                 -> Start-of-RAM constant added, detecting up to 54KB user RAM
+;//                 -> Resets buffers when the command line prompt is invoked
+;//                 -> Batch files abort by default if a TOS error is encountered
+;//                 -> New system switch C to disable the automatic batch file
+;//                    abort-on-error feature
+;//
 
 
 ;//////////////////////////////////////////////////////////////////////////////
@@ -362,6 +386,8 @@ TAB_CLOSE   EQU     00CH        ; Device driver close routines
 ;//////////////////////////////////////////////////////////////////////////////
 
         ORG         0D800H
+
+program_origo:
 buffer_list_next_ptr:
         DW          00000H
 buffer_list_tail:
@@ -498,6 +524,15 @@ clear_signature_loop:
         ANI         FM_EXEC_CI
         JNZ         parse_command_line_prompt
         ;
+        ; Force-reset the list of buffers, releasing any orphaned ones
+        ;
+        LXI         H,00000H
+        SHLD        buffer_list_next_ptr
+        MVI         A,BUFLST_HEAD
+        STA         buffer_list_tail
+        LXI         H,buffer_list_next_ptr
+        SHLD        BUFLIM
+        ;
         ; Print title string and command line prompt to console
         ;
         LHLD        CO_FCB
@@ -515,7 +550,7 @@ parse_command_line_prompt:
         CALL        command_line_interpreter
         JNC         cli_prompt_cleanup
         ANA         A
-        JNZ         cli_prompt_error
+        JNZ         cli_check_for_batchfile_error
         ;
         ; Verify end of file flag for CI
         ;
@@ -530,11 +565,12 @@ parse_command_line_prompt:
         MOV         A,M             ; FCB + FCB_MODE
         ANI         FM_EXEC_CI
         JZ          cli_restore_console_input
+cli_stop_batch_file:
         ;
-        ; If so, force the flag back off since the fcb structure may get reused
+        ; Force end of file off, since the fcb structure may get reused
         ;
         MOV         A,M             ; FCB + FCB_MODE
-        XRI         FM_EOF
+        ANI         0FFH-(FM_EOF)
         MOV         M,A
         ;
         ; Set up to close nested input file of batch file
@@ -551,6 +587,38 @@ cli_restore_console_input:
         SHLD        CI_FCB
         CALL        reset_file_buffer
         JMP         cli_prompt_cleanup
+
+
+;//////////////////////////////////////
+
+cli_check_for_batchfile_error:
+        ;
+        ; Check if a batchfile was running when the exception was raised
+        ;
+        MOV         C,A
+        LHLD        CI_FCB
+        INX         H
+        MOV         A,M             ; FCB + FCB_MODE
+        ANI         FM_EXEC_CI
+        MOV         A,C
+        JZ          cli_prompt_error
+        ;
+        ; If so, raise error and check system switch for continue option
+        ;
+        CALL        T_ERROR
+        LDA         SSWITCH
+        CPI         'C'
+        JZ          cli_force_cleanup
+        ;
+        ; If continue option not set, print status and abort batch-file
+        ;
+        LXI         D,batch_file_aborted_str
+        LHLD        CO_FCB
+        CALL        PUT
+        CC          error_tos_print_problem
+        LHLD        CI_FCB
+        INX         H
+        JMP         cli_stop_batch_file
 
 
 ;//////////////////////////////////////
@@ -668,8 +736,11 @@ T_TOSINIT:
         LXI         H,00000H
         SHLD        TIMEAD
         ;
-        ; Set lower memory boundary of TOS
+        ; Reset the list of buffers and set lower memory boundary of TOS
         ;
+        SHLD        buffer_list_next_ptr
+        MVI         A,BUFLST_HEAD
+        STA         buffer_list_tail
         LXI         H,buffer_list_next_ptr
         SHLD        BUFLIM
         ;
@@ -704,6 +775,40 @@ scroll_mode_found:
         ;
         XRA         A
         STA         EXSW
+        ;
+        ; Scan memory for start of User-RAM
+        ;
+        LXI         H,program_origo
+        DCR         H
+        MVI         L,000H
+memory_test_loop:
+        ;
+        ; Check if we have passed the beginning of User-RAM
+        ;
+        LXI         D,-02800H
+        XCHG
+        DAD         D
+        XCHG
+        JNC         memory_start_found
+        ;
+        ; Check start of next 256-byte page
+        ;
+        DI
+        DCR         H
+        MOV         A,M
+        CMA
+        MOV         M,A
+        CMP         M
+        CMA
+        MOV         M,A
+        EI
+        JZ          memory_test_loop
+memory_start_found:
+        ;
+        ; Set start of RAM constant
+        ;
+        INR         H
+        SHLD        RAMST
         RET
 
 
@@ -856,12 +961,14 @@ error_print_str_loop:
 
 ;//////////////////////////////////////////////////////////////////////////////
 
+batch_file_aborted_str:
+        DB          'BATCH JOB EXECUTION ABORTED',CR
 error_str:
         DB          'ERROR ',NULL,NULL
 newline_str:
         DB          CR
 title_str:
-        DB          'TOS21 VER. 1.61',CR
+        DB          'TOS21 VER. 1.7',CR
 
 
 ;//////////////////////////////////////////////////////////////////////////////
@@ -2031,6 +2138,13 @@ T_PUT:
 ;//
 ;//                 -> Fixes the line-buffered file OPEN bug from v1.3
 ;//
+;//             v1.7:
+;//
+;//                 -> Validates OPEN file mode
+;//                 -> Introduces a bug where the EXTEND output mode will always
+;//                    set the binary mode flag of the generated file in addition
+;//                    to the expected output file mode flag
+;//
 
 
 ;//////////////////////////////////////////////////////////////////////////////
@@ -2050,9 +2164,20 @@ open_mode:
         ;
 T_OPEN:
         ;
-        ; Save file IO mode
+        ; Save and validate file IO mode
         ;
         STA         open_mode
+        CPI         FM_INPUT
+        JZ          open_valid_mode
+        CPI         FM_OUTPUT
+        JZ          open_valid_mode
+        CPI         FM_EXTEND
+        JZ          open_valid_mode
+        MVI         A,ERROR_26
+        STC
+        RET
+
+open_valid_mode:
         PUSH        PSW
         ;
         ; Verify that file is valid, and not already open
@@ -2682,6 +2807,10 @@ close_file_error:
 ;//                 -> IBM READs will set the buffer length to the first linebreak
 ;//                    in data if not BLOCKLINE and the detect-EOF mode flag is set
 ;//
+;//             v1.7:
+;//
+;//                 -> Additions from v1.61 moved to IBM device driver module
+;//
 
 
 ;//////////////////////////////////////////////////////////////////////////////
@@ -2704,111 +2833,11 @@ T_READ:
         JM          read_wrong_file_type
         JZ          read_from_type_4
         ;
-        ; Set up stack for return from block device read
-        ;
-        PUSH        H
-        PUSH        H
-        LXI         H,read_type_5_return
-        XTHL
-        ;
         ; Read next block from block-device
         ;
         PUSH        D
         LXI         D,FCB_READ
         JMP         read_write_type_5_driver_call
-
-
-;//////////////////////////////////////
-
-read_type_5_return:
-        POP         H
-        RC
-        ;
-        ; Save registers
-        ;
-        PUSH        PSW
-        PUSH        B
-        PUSH        D
-        PUSH        H
-        ;
-        ; Check pending end of file flag
-        ;
-        INX         H
-        MOV         A,M             ; FCB + FCB_MODE
-        ANI         FM_EOF_NEXT
-        JZ          read_type_5_cleanup_done
-        ;
-        ; If so, check for IBM format
-        ;
-        POP         H
-        PUSH        H
-        LXI         D,FCB_DRVFMT
-        DAD         D
-        MOV         A,M             ; FCB + FCB_DRVFMT
-        ANI         002H
-        JZ          read_type_5_cleanup_done
-        ;
-        ; If so, check for BLOCKLINE mode
-        ;
-        MOV         A,M             ; FCB + FCB_DRVFMT
-        ANI         DF_BLKLINE
-        JNZ         read_type_5_cleanup_done
-        ;
-        ; Get pointer to last character in block buffer
-        ;
-        POP         H
-        PUSH        H
-        LXI         D,FCB_BUFLEN
-        DAD         D
-        MOV         C,M             ; FCB + FCB_BUFLEN
-        INX         H
-        MOV         B,M
-        INX         H
-        MOV         E,M             ; FCB + FCB_BUFPTR
-        INX         H
-        MOV         D,M
-        XCHG
-        DAD         B
-        DCX         H
-        ;
-        ; Scan for last newline in last block of IBM non-BLOCKLINE file
-        ;
-read_type_5_scan_for_line_end_loop:
-        MOV         A,M
-        CPI         LF
-        JZ          read_type_5_end_of_line_found
-        CPI         CR
-        JZ          read_type_5_end_of_line_found
-        ;
-        ; Advance one character backward and check for end of line
-        ;
-        DCX         H
-        DCX         B
-        MOV         A,C
-        ORA         B
-        JNZ         read_type_5_scan_for_line_end_loop
-        JMP         read_type_5_cleanup_done
-
-read_type_5_end_of_line_found:
-        ;
-        ; Turncate last block of file to final newline
-        ;
-        POP         H
-        PUSH        H
-        LXI         D,FCB_BUFLEN
-        DAD         D
-        MOV         M,C
-        INX         H
-        MOV         M,B
-read_type_5_cleanup_done:
-        ;
-        ; Restore registers
-        ;
-        POP         H
-        POP         D
-        POP         B
-        POP         PSW
-        RET
 
 
 ;//////////////////////////////////////
@@ -3197,6 +3226,12 @@ read_write_return:
 ;//                    but a bug in the implementation prevents this new behaviour
 ;//                    from being invoked
 ;//                 -> Fixes the last linking-block full bug from v1.3
+;//
+;//             v1.7:
+;//
+;//                 -> EXTEND open output mode added, to append data to the end of
+;//                    existing files
+;//                 -> Fixes the partally full linking-block handling bug from v1.6
 ;//
 
 
@@ -3764,6 +3799,20 @@ intel_set_up_for_file:
 
 ;//////////////////////////////////////////////////////////////////////////////
 
+intel_operation_ok:
+        ;
+        ; Restore registers
+        ;
+        POP         D
+        POP         B
+        POP         PSW
+        LHLD        CTLBLK
+        ANA         A
+        RET
+
+
+;//////////////////////////////////////
+
 intel_operation_end:
         JNC         intel_operation_ok
 intel_operation_exception:
@@ -3829,6 +3878,29 @@ intel_file_to_open_found:
 
 intel_normal_file_to_open:
         ;
+        ; Check if extend-file mode is selected
+        ;
+        LDA         open_mode
+        CPI         FM_EXTEND
+        JNZ         intel_clear_to_open_for_input
+        ;
+        ; If so, verify that attributes allow for modification of the file
+        ;
+        MOV         A,M
+        ANI         ATTR_S + ATTR_W + ATTR_F
+        JZ          intel_clear_to_open_for_input
+        ;
+        ; If the file is a system-file or write-protected, check override flag
+        ;
+        LDA         SSWITCH
+        CPI         'S'
+        JZ          intel_clear_to_open_for_input
+        MVI         A,ERROR_14
+        STC
+        JMP         intel_operation_exception
+
+intel_clear_to_open_for_input:
+        ;
         ; Get bytecount of last block
         ;
         INX         H
@@ -3842,6 +3914,12 @@ intel_normal_file_to_open:
         MOV         C,M
         INX         H
         MOV         B,M
+        ;
+        ; Save it in case of extend-file open mode
+        ;
+        MOV         H,B
+        MOV         L,C
+        SHLD        intel_input_first_linking_block_addr
         ;
         ; Store last block bytecount in file control block
         ;
@@ -3883,16 +3961,14 @@ intel_normal_file_to_open:
         MOV         M,D
         DCX         H
         MOV         M,E             ; FCB + FCB_BUFIDX
-intel_operation_ok:
         ;
-        ; Restore registers
+        ; Check if file is to be opened for extension
         ;
-        POP         D
-        POP         B
-        POP         PSW
-        LHLD        CTLBLK
-        ANA         A
-        RET
+        LDA         open_mode
+        CPI         FM_EXTEND
+        JZ          intel_open_extended
+        JMP         intel_operation_ok
+
 
 
 ;//////////////////////////////////////////////////////////////////////////////
@@ -3978,6 +4054,8 @@ intel_file_has_more_data:
         MOV         E,M
         INX         H
         MOV         D,M
+        MOV         A,E
+        ORA         D
         JZ          intel_file_out_of_data
         MOV         B,D
         MOV         C,E
@@ -4230,6 +4308,185 @@ intel_clear_linking_block_buffer_loop:
 
 ;//////////////////////////////////////////////////////////////////////////////
 
+intel_input_first_linking_block_addr:
+        DW          DISK_TRACK*0 + DISK_SECTOR*0
+
+
+;//////////////////////////////////////
+
+        ;
+        ; Prepare file for extension,
+        ;
+intel_open_extended:
+        ;
+        ; Get the pointer to the linking block buffer of the file
+        ;
+        LHLD        CTLBLK
+        LXI         D,FCB_LNKPTR
+        DAD         D
+        MOV         E,M             ; FCB + FCB_LNKPTR
+        INX         H
+        MOV         D,M
+        XCHG
+        ;
+        ; Scan through linking-block chain to find last linking-block of file
+        ;
+        SHLD        current_linking_block_buffer_ptr
+intel_get_last_linking_block_loop:
+        ;
+        ; Get forwards reference to next linking block and check if it is set
+        ;
+        INX         H
+        INX         H
+        MOV         C,M
+        INX         H
+        MOV         B,M
+        MOV         A,C
+        ORA         B
+        JZ          intel_last_linking_block_found
+        ;
+        ; If so, read next linking block in chain to check that
+        ;
+        MOV         H,B
+        MOV         L,C
+        SHLD        intel_input_first_linking_block_addr
+        LHLD        current_linking_block_buffer_ptr
+        LDA         UNIT
+        CALL        DSRDW
+        JC          intel_operation_exception
+        JMP         intel_get_last_linking_block_loop
+
+intel_last_linking_block_found:
+        ;
+        ; Scan through last linking-block to find the last data-block of file
+        ;
+        INX         H
+        MVI         D,62
+intel_get_last_data_block_loop:
+        ;
+        ; Advance to next data-block address and check for end of linking block
+        ;
+        INX         H
+        INX         H
+        DCR         D
+        JZ          intel_last_data_block_found
+        ;
+        ; Check if the data-block reference in the linking block has been set
+        ;
+        MOV         A,M
+        ANA         A
+        JNZ         intel_get_last_data_block_loop
+        ;
+        ; If not, the previous data-block reference slot is the last in file
+        ;
+intel_last_data_block_found:
+        ;
+        ; Get last data-block address of the file
+        ;
+        PUSH        H
+        PUSH        D
+        DCX         H
+        MOV         B,M
+        DCX         H
+        MOV         C,M
+        ;
+        ; Read the last data-block into the file's data-buffer
+        ;
+        LHLD        CTLBLK
+        LXI         D,FCB_BUFPTR
+        DAD         D
+        MOV         E,M             ; FCB + FCB_BUFPTR
+        INX         H
+        MOV         D,M
+        XCHG
+        LDA         UNIT
+        CALL        DSRDW
+        JNC         intel_last_data_block_ready
+        POP         D
+        POP         H
+        JMP         intel_operation_exception
+
+intel_last_data_block_ready:
+        ;
+        ; Force file mode to output
+        ;
+        LHLD        CTLBLK
+        INX         H
+        MOV         A,M             ; FCB + FCB_MODE
+        ANI         -1-(FM_INPUT)
+        ORI         FM_OUTPUT
+        MOV         M,A
+        ;
+        ; Reserve the remaining unused data-block references of linking block
+        ;
+        POP         D
+        POP         H
+        MOV         A,D
+        ANA         A
+        CNZ         T_GETN
+        JC          intel_operation_exception
+        ;
+        ; Set index for next data block reference of linking block in fcb
+        ;
+        ADD         D
+        MOV         D,A
+        MVI         A,128 - 2*1
+        SUB         D
+        LHLD        CTLBLK
+        LXI         D,FCB_LNKIDX
+        DAD         D
+        MOV         M,A             ; FCB + FCB_LNKIDX
+        ;
+        ; Get number of bytes in the last data-block
+        ;
+        DCX         H
+        MOV         A,M             ; FCB + 01EH, bytes used in last data block
+        ;
+        ; Set address of current linking block in file
+        ;
+        DCX         H
+        XCHG
+        LHLD        intel_input_first_linking_block_addr
+        XCHG
+        MOV         M,D
+        DCX         H
+        MOV         M,E
+        ;
+        ; Set index for current data-buffer to the end of the current file data
+        ;
+        LHLD        CTLBLK
+        INX         H
+        INX         H
+        MOV         M,A
+        INX         H
+        MVI         M,000H
+        ;
+        ; Ensure that the file has proper output-related device-driver calls
+        ;
+        LHLD        TABIN
+        LXI         D,TAB_WRITE_O
+        DAD         D
+        PUSH        H
+        LHLD        CTLBLK
+        LXI         D,FCB_CLOSE
+        DAD         D
+        LXI         D,intel_close_extend_with_semaphore
+        MOV         M,E             ; FCB + FCB_CLOSE
+        INX         H
+        MOV         M,D
+        LHLD        CTLBLK
+        LXI         D,FCB_WRITE
+        DAD         D
+        POP         D
+        MOV         M,E             ; FCB + FCB_WRITE
+        INX         H
+        MOV         M,D
+        ANA         A
+        JMP         intel_operation_ok
+
+
+;//////////////////////////////////////////////////////////////////////////////
+
         ;
         ; Write current block to intel file at HL
         ;
@@ -4398,6 +4655,8 @@ intel_file_total_block_count:
         DW          00000H
 intel_file_first_linking_block_addr:
         DW          00000H
+intel_close_extend_flag:
+        DB          FALSE
 
 
 ;//////////////////////////////////////
@@ -4419,16 +4678,58 @@ intel_close_output_with_semaphore:
         ;
 intel_close_output:
         ;
-        ; Check if file already exists
+        ; Prepare environment and check if file already exists
         ;
         CALL        intel_set_up_for_file
         RC
         PUSH        PSW
         PUSH        B
         PUSH        D
+        XRA         A
+        STA         intel_close_extend_flag
         MOV         A,M
         ANA         A
         JZ          intel_output_file_already_exists
+        JMP         intel_clear_to_close_output
+
+;//////////////////////////////////////
+
+        ;
+        ; Close Intel extended file at HL, setting the map semaphore in advance
+        ;
+intel_close_extend_with_semaphore:
+        MVI         A,TRUE
+        STA         MAPSEM
+        CALL        intel_close_extend
+        JMP         intel_release_mapfile_semaphore
+
+;//////////////////////////////////////
+
+        ;
+        ; Close Intel output file at HL
+        ;
+intel_close_extend:
+        ;
+        ; Prepare environment and check if file already exists
+        ;
+        CALL        intel_set_up_for_file
+        RC
+        PUSH        PSW
+        PUSH        B
+        PUSH        D
+        MVI         A,TRUE_ALT
+        STA         intel_close_extend_flag
+        MOV         A,M
+        ANA         A
+        JZ          intel_clear_to_close_output
+        MVI         A,ERROR_5E
+        STC
+        JMP         intel_operation_exception
+
+
+;//////////////////////////////////////
+
+intel_clear_to_close_output:
         SHLD        intel_output_file_dir_entry_ptr
         ;
         ; Abort silently if OPEN failed and linking block address is invalid
@@ -4690,6 +4991,17 @@ intel_copy_next_filename_char:
 intel_close_output_no_attr:
         SUB         A
 intel_close_output_update_attr:
+        ;
+        ; Make sure to preserve old attributes if the file is in extend mode
+        ;
+        MOV         C,A
+        LDA         intel_close_extend_flag
+        ANA         A
+        MOV         A,C
+        JZ          intel_close_output_attr_ready
+        LDAX        D
+        ORA         C
+intel_close_output_attr_ready:
         STAX        D
         INX         D
         ;
@@ -4872,6 +5184,12 @@ intel_mapfile_name:
 ;//
 ;//                 -> Fixes error track bug from v1.6
 ;//
+;//             v1.7:
+;//
+;//                 -> EXTEND open output mode added, to append data to the end of
+;//                    existing files
+;//                 -> Additions from v1.61 READ module has been moved here
+;//
 
 
 ;//////////////////////////////////////////////////////////////////////////////
@@ -4880,6 +5198,10 @@ intel_mapfile_name:
 ;//
 ;//////////////////////////////////////////////////////////////////////////////
 
+ibm_file_eod:
+        DW          DISK_TRACK*0 + DISK_SECTOR*0
+ibm_file_block_length:
+        DW          0
 ibm_current_file_sector:
         DB          000H
 ibm_bad_track_list:
@@ -5268,24 +5590,6 @@ ibm_check_for_file_end:
 
 ;//////////////////////////////////////////////////////////////////////////////
 
-        ;
-        ; Ready IBM file for IO operations
-        ;
-ibm_set_up_for_file:
-        ;
-        ; Set up file control block and save registers
-        ;
-        CALL        device_driver_set_up_for_file
-        RC
-        PUSH        PSW
-        PUSH        B
-        PUSH        D
-        ;
-        ; Locate file on disk
-        ;
-        MOV         A,M             ; FCB + FCB_UNIT
-        INX         H
-        CALL        find_ibm_file_index
 ibm_operation_end:
         JC          ibm_operation_exception
 ibm_operation_ok:
@@ -5332,13 +5636,20 @@ ibm_open_file:
         ;
         ; Set up file control block and save registers
         ;
-        CALL        ibm_set_up_for_file
+        CALL        device_driver_set_up_for_file
         RC
         PUSH        PSW
         PUSH        B
         PUSH        D
         ;
-        ; Get buffer length from file record
+        ; Locate file on disk
+        ;
+        MOV         A,M             ; FCB + FCB_UNIT
+        INX         H
+        CALL        find_ibm_file_index
+        JC          ibm_operation_exception
+        ;
+        ; Get and save buffer length from file record
         ;
         LXI         D,BUF1 + 018H
         CALL        ascii_decimal_3_digit_to_bin
@@ -5349,6 +5660,8 @@ ibm_open_file:
         MOV         M,E
         INX         H
         MOV         M,D
+        XCHG
+        SHLD        ibm_file_block_length
         ;
         ; Get block address of next data-block in file record in
         ;
@@ -5363,25 +5676,12 @@ ibm_open_file:
         CALL        ascii_decimal_2_digit_to_bin
         JC          ibm_operation_exception
         MOV         M,A             ; FCB + 01CH, sector of next data record
-        INX         H
-        INX         H
-        INX         H
         ;
-        ; Get tailing file data block address, EOE for input, EOD for output
+        ; Set EOD as tailing file data block in fcb
         ;
-        LXI         D,BUF1 + 04AH
-        PUSH        H
-        LHLD        CTLBLK
+        LHLD        current_fcb_plus_01EH
         INX         H
-        MOV         A,M             ; FCB + FCB_MODE
-        POP         H
-        ANI         FM_INPUT
-        JNZ         ibm_open_set_file_tail
         LXI         D,BUF1 + 022H
-ibm_open_set_file_tail:
-        ;
-        ; Set selected field as tailing file data block in fcb
-        ;
         CALL        ascii_decimal_2_digit_to_bin
         JC          ibm_operation_exception
         MOV         M,A             ; FCB + 01FH, track number of file tail
@@ -5390,6 +5690,38 @@ ibm_open_set_file_tail:
         CALL        ascii_decimal_2_digit_to_bin
         JC          ibm_operation_exception
         MOV         M,A             ; FCB + 01EH, sector number of file tail
+        ;
+        ; Save EOD for later
+        ;
+        MOV         E,M             ; FCB + 01EH, sector number of file tail
+        INX         H
+        MOV         D,M             ; FCB + 01FH, track number of file tail
+        DCX         H
+        XCHG
+        SHLD        ibm_file_eod
+        ;
+        ; Check file mode
+        ;
+        LHLD        CTLBLK
+        INX         H
+        MOV         A,M             ; FCB + FCB_MODE
+        XCHG
+        ANI         FM_INPUT
+        JZ          ibm_open_file_tail_selected
+        ;
+        ; Change tailing file data block address from EOD to EOE if output mode
+        ;
+        INX         H
+        LXI         D,BUF1 + 04AH
+        CALL        ascii_decimal_2_digit_to_bin
+        JC          ibm_operation_exception
+        MOV         M,A             ; FCB + 01FH, track number of file tail
+        DCX         H
+        INX         D
+        CALL        ascii_decimal_2_digit_to_bin
+        JC          ibm_operation_exception
+        MOV         M,A             ; FCB + 01EH, sector number of file tail
+ibm_open_file_tail_selected:
         ;
         ; Use block before tailing block since fcb tailing block is inclusvie
         ;
@@ -5467,7 +5799,7 @@ ibm_open_prepare_block_loop:
         DCX         H
         CMP         M               ; FCB + 01DH, track of next data record
         JC          ibm_empty_file_opened
-        JNZ         ibm_operation_ok
+        JNZ         ibm_check_for_open_extend
         ;
         ; Validate sector of next block if next block is in last track of file
         ;
@@ -5476,10 +5808,16 @@ ibm_open_prepare_block_loop:
         DCX         H
         DCX         H
         CMP         M               ; FCB + 01CH, sector of next data record
-        JNC         ibm_operation_ok
+        JNC         ibm_check_for_open_extend
 ibm_empty_file_opened:
         ;
-        ; If next block is outside file, set end-of-file flag immediately
+        ; Handle empty extend mode files separately
+        ;
+        LDA         open_mode
+        CPI         FM_EXTEND
+        JZ          ibm_open_extend
+        ;
+        ; Else, if next block is outside file, set end-of-file flag immediately
         ;
         LHLD        CTLBLK
         INX         H
@@ -5488,6 +5826,18 @@ ibm_empty_file_opened:
         MOV         M,A
         SUB         A
         JMP         ibm_operation_exception
+
+
+;//////////////////////////////////////
+
+ibm_check_for_open_extend:
+        ;
+        ; More work needs to be done if the file is opened in extend file mode
+        ;
+        LDA         open_mode
+        CPI         FM_EXTEND
+        JZ          ibm_open_extend
+        JMP         ibm_operation_ok
 
 
 ;//////////////////////////////////////////////////////////////////////////////
@@ -5499,25 +5849,128 @@ ibm_open_output:
         CALL        ibm_open_file
         RC
         ;
-        ; Increase file tailing block nr, as this is exclusive for output files
+        ; Force file tailing block to be EOD
         ;
         PUSH        H
         PUSH        D
         PUSH        PSW
-        LXI         D,01EH
-        DAD         D
-        INR         M               ; FCB + 01EH, sector number of file tail
-        MOV         A,M
-        CPI         27
-        JC          ibm_open_next_block_ready
-        MVI         M,1
+        LHLD        ibm_file_eod
+        XCHG
+        LHLD        current_fcb_plus_01EH
+        MOV         M,E             ; FCB + 01EH, sector number of file tail
         INX         H
-        INR         M               ; FCB + 01FH, track number of file tail
-ibm_open_next_block_ready:
+        MOV         M,D             ; FCB + 01FH, track number of file tail
         POP         PSW
         POP         D
         POP         H
         RET
+
+
+;//////////////////////////////////////////////////////////////////////////////
+
+        ;
+        ; Open IBM file in extend file mode
+        ;
+ibm_open_extend:
+        ;
+        ; Set next data-block to final block in file (EOD)
+        ;
+        LHLD        CTLBLK
+        LXI         D,01CH
+        DAD         D
+        PUSH        H
+        INX         H
+        INX         H
+        MOV         E,M             ; FCB + 01EH, sector number of file tail
+        INX         H
+        MOV         D,M             ; FCB + 01FH, track number of file tail
+        POP         H
+        MOV         M,E             ; FCB + 01CH, sector of next data record
+        INX         H
+        MOV         M,D             ; FCB + 01DH, track of next data record
+        ;
+        ; Read final block of file into data-buffer
+        ;
+        LHLD        CTLBLK
+        CALL        READ
+        JC          ibm_operation_exception
+        ;
+        ; Point next data-block back to last data-block of file
+        ;
+        LHLD        CTLBLK
+        LXI         D,01CH
+        DAD         D
+        DCR         M               ; FCB + 01CH, sector of next data record
+        JNZ         ibm_open_extend_track_ready
+        MVI         M,26
+        INX         H
+        DCR         M               ; FCB + 01DH, track of next data record
+ibm_open_extend_track_ready:
+        ;
+        ; Force file mode to output
+        ;
+        LHLD        CTLBLK
+        INX         H
+        MOV         A,M             ; FCB + FCB_MODE
+        ANI         -1-(FM_INPUT)
+        ANI         -1-(FM_EOF_NEXT)
+        ORI         FM_OUTPUT
+        MOV         M,A
+        ;
+        ; Prepare block buffer to accept data after last byte in EOD block
+        ;
+        INX         H
+        INX         H
+        INX         H
+        MOV         C,M             ; FCB + FCB_BUFLEN
+        INX         H
+        MOV         B,M
+        XCHG
+        LHLD        ibm_file_block_length
+        XCHG
+        MOV         M,D
+        DCX         H
+        MOV         M,E
+        DCX         H
+        MOV         M,B             ; FCB + FCB_BUFIDX
+        DCX         H
+        MOV         M,C
+        ;
+        ; Update device driver calls of file to reflect output mode
+        ;
+        LHLD        TABIB
+        LXI         D,003H
+        DAD         D
+        DAD         D
+        DAD         D
+        PUSH        H
+        DAD         D
+        DAD         D
+        PUSH        H
+        LHLD        CTLBLK
+        LXI         D,FCB_CLOSE
+        DAD         D
+        POP         D
+        MOV         M,E             ; FCB + FCB_CLOSE
+        INX         H
+        MOV         M,D
+        LHLD        CTLBLK
+        LXI         D,FCB_WRITE
+        DAD         D
+        POP         D
+        MOV         M,E             ; FCB + FCB_WRITE
+        INX         H
+        MOV         M,D
+        ;
+        ; Change file tailing block from EOE to EOD
+        ;
+        LHLD        ibm_file_eod
+        XCHG
+        LHLD        current_fcb_plus_01EH
+        MOV         M,E             ; FCB + 01EH, sector number of file tail
+        INX         H
+        MOV         M,D             ; FCB + 01FH, track number of file tail
+        JMP         ibm_operation_ok
 
 
 ;//////////////////////////////////////////////////////////////////////////////
@@ -5608,7 +6061,7 @@ ibm_not_end_of_file:
         ;
         CALL        ibm_advance_to_next_block
         CALL        read_ibm_disk_record
-        JNC         ibm_operation_end
+        JNC         ibm_read_input_truncate_final_block
         ;
         ; Silently skip deleted sectors
         ;
@@ -5620,6 +6073,88 @@ ibm_not_end_of_file:
         ANA         A
         LHLD        CTLBLK
         JMP         ibm_read_input
+
+
+;//////////////////////////////////////
+
+ibm_read_input_truncate_final_block:
+        ;
+        ; Save registers
+        ;
+        PUSH        PSW
+        PUSH        B
+        PUSH        D
+        PUSH        H
+        ;
+        ; Check pending end of file flag
+        ;
+        LHLD        CTLBLK
+        INX         H
+        MOV         A,M             ; FCB + FCB_MODE
+        ANI         FM_EOF_NEXT
+        JZ          ibm_read_final_block_ready
+        ;
+        ; If so, check for BLOCKLINE mode
+        ;
+        LXI         D,FCB_DRVFMT - FCB_MODE
+        DAD         D
+        MOV         A,M             ; FCB + FCB_DRVFMT
+        ANI         DF_BLKLINE
+        JNZ         ibm_read_final_block_ready
+        ;
+        ; Get pointer to last character in block buffer
+        ;
+        LHLD        CTLBLK
+        LXI         D,FCB_BUFLEN
+        DAD         D
+        MOV         C,M             ; FCB + FCB_BUFLEN
+        INX         H
+        MOV         B,M
+        INX         H
+        MOV         E,M             ; FCB + FCB_BUFPTR
+        INX         H
+        MOV         D,M
+        XCHG
+        DAD         B
+        DCX         H
+        ;
+        ; Scan for last newline in last block of IBM non-BLOCKLINE file
+        ;
+ibm_read_final_scan_for_line_end_loop:
+        MOV         A,M
+        CPI         LF
+        JZ          ibm_read_final_end_of_line_found
+        CPI         CR
+        JZ          ibm_read_final_end_of_line_found
+        ;
+        ; Advance one character backward and check for end of line
+        ;
+        DCX         H
+        DCX         B
+        MOV         A,C
+        ORA         B
+        JNZ         ibm_read_final_scan_for_line_end_loop
+        JMP         ibm_read_final_block_ready
+
+ibm_read_final_end_of_line_found:
+        ;
+        ; Turncate last block of file to final newline
+        ;
+        LHLD        CTLBLK
+        LXI         D,FCB_BUFLEN
+        DAD         D
+        MOV         M,C
+        INX         H
+        MOV         M,B
+ibm_read_final_block_ready:
+        ;
+        ; Restore registers
+        ;
+        POP         H
+        POP         D
+        POP         B
+        POP         PSW
+        JMP         ibm_operation_end
 
 
 ;//////////////////////////////////////////////////////////////////////////////
@@ -7122,6 +7657,11 @@ T_LOAD:
 ;//
 ;//                 -> Fixes the PHYSINT empty IBM filename bug from v1.5b
 ;//
+;//             v1.7:
+;//
+;//                 -> The file-handle buffer for PHYS has been increased in size
+;//                    from 80 to 130 characters
+;//
 
 
 ;//////////////////////////////////////////////////////////////////////////////
@@ -7320,7 +7860,7 @@ deallocate_linked_files:
 phys_file_nesting_layer_nr:
         DS          1
 phys_file_handle_str:
-        DS          80
+        DS          130
 phys_current_char:
         DS          1
 phys_fcb_ptr:
@@ -9393,6 +9933,12 @@ ebcdic_to_ascii_table:
 ;//                 -> New PHYSINT API-call for creating FCB from file handle
 ;//                 -> New API-call added for clean restart of TOS
 ;//
+;//             v1.7:
+;//
+;//                 -> RAMST constant added, which TOS sets to start of User-RAM
+;//                 -> TOSENTR constant added, referencing the RAM entry-point for
+;//                    the TOS executable SYSTEM file
+;//
 
 
 ;//////////////////////////////////////////////////////////////////////////////
@@ -9593,6 +10139,10 @@ DEV_XM:
         DW          DEV_XM_FCB
 DEV_RC:
         DW          DEV_RC_FCB
+RAMST:
+        DW          08000H
+TOSENTR:
+        DW          start
 
 
 ;//////////////////////////////////////////////////////////////////////////////

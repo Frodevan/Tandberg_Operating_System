@@ -63,12 +63,9 @@
 ;//               labels that were missed by the first pass, and these will
 ;//               generate a "Symbol not found in pass 2" error.
 ;//
-;//         NOTE: This program will identify start of User-RAM on it's own, and
-;//               assumes a gap in the memory between the system-memory and the
-;//               user-memory. This is true for systems configured with 48KB or
-;//               less, but not for systems with the full 54KB of user-memory.
-;//               As a result, this program will break on later systems with the
-;//               full 54KB of User-RAM.
+;//         NOTE: This program uses TOS to determine the start of User-RAM. This
+;//               feature was not, however, available before TOS version 1.7. As
+;//               such, TOS v1.7 or more recent is required to run this.
 ;//
 ;//
 ;//         Object-file format:
@@ -145,6 +142,11 @@
 ;//
 ;//             1.2: Entry at 0xC000
 ;//
+;//                 -> Uses TOS start of User-RAM constant instead of finding it
+;//                    using an algorithm
+;//                 -> Uses CO standard file for string output to console, instead
+;//                    of XMON calls directly
+;//
 
 
 ;//////////////////////////////////////////////////////////////////////////////
@@ -192,6 +194,7 @@ EDWH        EQU     0FD2DH      ; Convert word to 4-character ASCII hexadecimal
 TABTC_PTR   EQU     0FDE6H      ; Pointer to Tandberg tape cartridge device driver
 TABIN_PTR   EQU     0FDEAH      ; Pointer to Intel floppy disk device driver
 BB_FCB_PTR  EQU     0FDF2H      ; Pointer to output sink device file
+RAMST       EQU     0FDFCH      ; Address to start of user-RAM
 
 ;
 ; TOS standard files
@@ -343,7 +346,7 @@ start_addr_set_flag:
 
         ORG         SIGNATURE
         DB          'LINK',NULL,NULL
-        DB          '101'
+        DB          '102'
 
 
 ;//////////////////////////////////////////////////////////////////////////////
@@ -465,15 +468,7 @@ printer_file_ready:
         ;
         ; Get the start of User-RAM
         ;
-        LXI         H,program_origo
-scan_for_memory_start_loop:
-        DCR         H
-        MOV         A,M
-        INR         M
-        CMP         M
-        JNZ         scan_for_memory_start_loop
-        INR         H
-        MVI         L,000H
+        LHLD        RAMST
         ;
         ; Set addresses to data-buffers
         ;
@@ -3473,7 +3468,11 @@ print_str:
         MOV         A,M
         ORA         A
         RZ
-        CALL        TTO
+        PUSH        H
+        LHLD        CO_FCB
+        CALL        OUTCHAR
+        JC          break_quit
+        POP         H
         INX         H
         JMP         print_str
 
@@ -3562,7 +3561,7 @@ externals_missing_str:
 routine_table_header_str:
         DB          'Routine table',CR
 program_title_str:
-        DB          'TDV 2100 LINKER V.1.1',CR
+        DB          'TDV 2100 LINKER V.1.2',CR
 program_str:
         DB          'Program: ',NULL
 bad_record_str:
