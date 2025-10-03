@@ -155,6 +155,16 @@
 ;//                 -> Version ID written to 0x2700
 ;//                 -> Adds use of the AL device file for batch-file input
 ;//
+;//             1.7: Entry at 0xC000
+;//
+;//                 -> Uses TOS CO device file for clearing screen and linebreaks
+;//                    instead of the XMON API directly when CO is default output
+;//                 -> Uses XMON API instead of TOS CO device file for outputting
+;//                    formatted text if CO is default output
+;//                 -> Immediately aborts if Q is pressed when CO is default output
+;//                 -> Catches if there are any problem writing output to CO
+;//                 -> Fixes the console output pause bug from v1.5
+;//
 
 
 ;//////////////////////////////////////////////////////////////////////////////
@@ -189,6 +199,7 @@ SIGNATURE   EQU     02700H      ; Program signature
 ;
 ; TOS system calls
 ;
+OUTCHAR     EQU     0FD0CH      ; Output single character
 GET         EQU     0FD0FH      ; Input string, inclusive CR
 PUT         EQU     0FD12H      ; Output string of characters, inclusive CR
 OPEN        EQU     0FD1EH      ; Open block device
@@ -239,7 +250,7 @@ PN_TYPE_3   EQU     008H        ; Page number format: Page ####
 
         ORG         SIGNATURE
         DB          'TXW',NULL,NULL,NULL
-        DB          '106'
+        DB          '107'
 
 
 ;//////////////////////////////////////////////////////////////////////////////
@@ -465,7 +476,11 @@ input_file_ok:
         ; Clear screen to initially start of with a blank page
         ;
         MVI         A,ERPAG
-        CALL        TTO
+        PUSH        H
+        LHLD        CO_FCB
+        CALL        OUTCHAR
+        POP         H
+        JC          quit
         RET
 
 uses_line_output_file:
@@ -1393,11 +1408,30 @@ goto_line_loop:
 
 write_output_line:
         ;
-        ; Write line to output file
+        ; Check if console output
         ;
         LXI         D,output_line_buffer
+        LDA         console_output_flag
+        ANA         A
+        JZ          write_to_file
+        ;
+        ; If so, write line to console directly, and let TOS handle newline
+        ;
+write_next_char_to_console:
+        LDAX        D
+        CPI         CR
+        JZ          write_to_file
+        CALL        TTO
+        INX         D
+        JMP         write_next_char_to_console
+
+write_to_file:
+        ;
+        ; Write line to output file
+        ;
         LHLD        SO_FCB
         CALL        PUT
+        JC          quit
         ;
         ; If output device is the console, pause for each full screen
         ;
@@ -1407,14 +1441,24 @@ write_output_line:
         LDA         console_line_counter
         INR         A
         STA         console_line_counter
-        SUI         24
-        RNZ
+        CPI         24
+        RC
+        XRA         A
+        STA         console_line_counter
         ;
-        ; Wait for keypress before continuing
+        ; Wait for keypress before continuing, quit if Q-key pressed
         ;
         CALL        TTI
+        CPI         'Q'
+        JZ          quit
+        CPI         'q'
+        JZ          quit
+        PUSH        H
+        LHLD        CO_FCB
         MVI         A,ERPAG
-        CALL        TTO
+        CALL        OUTCHAR
+        JC          quit
+        POP         H
         RET
 
 

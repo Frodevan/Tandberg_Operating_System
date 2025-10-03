@@ -37,6 +37,8 @@
 ;//
 ;//             1.7: Entry at 0x8000
 ;//
+;//                 -> Flushes excess keypresses after the start-transfer prompt
+;//
 
 
 ;//////////////////////////////////////////////////////////////////////////////
@@ -66,6 +68,7 @@ ASCI        EQU     0277EH      ; EBCDIC to ASCII translation table reference
 ;
 INCHAR      EQU     0FD09H      ; Input single character
 PUT         EQU     0FD12H      ; Output string of characters, inclusive CR
+PUTSTR      EQU     0FD15H      ; Output string of characters, exclusive CR
 DCALW       EQU     0FD70H      ; Reset disk drive with wait
 DSRDW       EQU     0FD73H      ; Read from disk with wait
 DSWRW       EQU     0FD76H      ; Write to disk with wait
@@ -90,7 +93,7 @@ ERROR_20    EQU     020H        ; DELETED DATA RECORD
 
         ORG         SIGNATURE
         DB          'DCONVA'
-        DB          '106'
+        DB          '107'
 
 
 ;//////////////////////////////////////////////////////////////////////////////
@@ -106,7 +109,7 @@ start:
         ;
         LHLD        CO_FCB
         LXI         D,welcome_prompt_str
-        CALL        PUT
+        CALL        PUTSTR
         RC
         ;
         ; Expecy a Y to continue, otherwise exit program
@@ -115,8 +118,21 @@ start:
         CALL        INCHAR
         RC
         CALL        to_uppercase
+        MOV         C,A
+        CPI         CR
+        RZ
+parse_input_loop:
+        CALL        INCHAR
+        RC
+        CPI         CR
+        JNZ         parse_input_loop
+        MOV         A,C
         CPI         'Y'
-        RNZ
+        JZ          start_conversion
+        ANA         A
+        RET
+
+start_conversion:
         ;
         ; Reset disk drive and get ready to start from track zero
         ;
@@ -291,6 +307,6 @@ track_data_buffer:
         DS          26*128
 
 welcome_prompt_str:
-        DB          'CONVERT FROM EBCDIC TO ASCII (UNIT 0) - TYPE Y TO START',CR
+        DB          'CONVERT FROM EBCDIC TO ASCII (UNIT 0) - TYPE Y TO START: ',CR
 aborted_str:
         DB          'DISKETTE IS ONLY PARTLY CONVERTED',CR
