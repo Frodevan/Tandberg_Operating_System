@@ -75,6 +75,13 @@
 ;//                 -> Adds the I option
 ;//                 -> Typing Q at any prompt during the copy aborts the operation
 ;//
+;//             1.8: Entry at 0x2000
+;//
+;//                 -> Will only make additional copies if Y is given for an answer
+;//                    at the final prompt, and will re-use the initial option if
+;//                    so. This is different from older versions, which would take
+;//                    a new option to replace the previous choice here.
+;//
 
 
 ;//////////////////////////////////////////////////////////////////////////////
@@ -140,7 +147,7 @@ ERROR_20    EQU     020H        ; DELETED DATA RECORD
 
         ORG         SIGNATURE
         DB          'DCOPY',NULL
-        DB          '107'
+        DB          '108'
 
 
 ;//////////////////////////////////////////////////////////////////////////////
@@ -217,14 +224,6 @@ parse_prompt_input:
         CPI         CR
         JZ          quit_program
         ;
-        ; Flush remaining input chars
-        ;
-flush_user_input_prompt:
-        CALL        get_input_char
-        CPI         CR
-        JNZ         flush_user_input_prompt
-        MOV         A,C
-        ;
         ; Convert input choice to uppercase
         ;
         CPI         'a'-1
@@ -245,6 +244,7 @@ prepare_to_copy:
         ; Save prompt selection, and prepare to start copy
         ;
         STA         prompt_choice
+start_new_copy:
         ;
         ; Reset source disk drive
         ;
@@ -533,9 +533,15 @@ copy_successful:
         ;
         LXI         D,verification_ok_str
         LHLD        CO_FCB
+        XRA         A
         CALL        PUTSTR
         JC          quit_with_error_code
-        JMP         parse_prompt_input
+        CALL        get_input_char
+        CPI         'Y'
+        JZ          start_new_copy
+        CPI         'y'
+        JZ          start_new_copy
+        JMP         quit_program
 
 
 ;//////////////////////////////////////
@@ -598,9 +604,23 @@ prompt_user:
         ;
 get_input_char:
         PUSH        H
+        PUSH        B
         LHLD        CI_FCB
         CALL        INCHAR
         JC          quit_with_error_code
+        MOV         C,A
+        ;
+        ; Flush remaining input chars
+        ;
+flush_user_input_prompt:
+        CPI         CR
+        JZ          user_input_flushed
+        CALL        INCHAR
+        JMP         flush_user_input_prompt
+
+user_input_flushed:
+        MOV         A,C
+        POP         B
         POP         H
         RET
 
@@ -736,7 +756,7 @@ retry_counter:
 welcome_prompt_str:
         DB          'Copy from 0 to 0 - type S, from 0 to 1 - type Y: ',CR
 verification_ok_str:
-        DB          'EQUAL. More ? (S/Y): ',CR
+        DB          'EQUAL. More ? (Y/N): ',CR
 change_to_copy_str:
         DB          'Change to output diskette: ',BEL,CR
 change_to_original_str:

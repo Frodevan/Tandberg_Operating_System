@@ -118,6 +118,8 @@
 ;//
 ;//             1.7b: Entry at 0xBC79
 ;//
+;//                 -> Fixes the S argument drive-check bug from v1.7a
+;//
 
 
 ;//////////////////////////////////////////////////////////////////////////////
@@ -657,8 +659,9 @@ use_intel_drive:
         CALL        FILENAME
         RC
         STA         input_char
+        STA         user_option_flag
         CPI         CR
-        JZ          set_user_option_flag_for_disk
+        JZ          format_intel_disk
         ;
         ; Check if system-transfer switch is set in args
         ;
@@ -686,7 +689,6 @@ use_intel_drive:
         JZ          update_intel_label
         CPI         'S'
         JNZ         invalid_cli_args
-set_user_option_flag_for_disk:
         STA         user_option_flag
         ;
         ; Make sure to not format system drive if system-transfer switch is set

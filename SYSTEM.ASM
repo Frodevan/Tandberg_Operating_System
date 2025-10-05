@@ -95,6 +95,12 @@
 ;//                 -> Identifies and exposes a reference to the start of User-RAM
 ;//                 -> Minor tweaks and fixes
 ;//
+;//             v1.8: Entry at 0xD516
+;//
+;//                 -> Enables multiple files to be used simultaneously on any of
+;//                    the tape drives
+;//                 -> Minor tweaks and fixes
+;//
 
 
 ;//////////////////////////////////////////////////////////////////////////////
@@ -377,6 +383,14 @@ TAB_CLOSE   EQU     00CH        ; Device driver close routines
 ;//                 -> New system switch C to disable the automatic batch file
 ;//                    abort-on-error feature
 ;//
+;//             v1.8:
+;//
+;//                 -> Only resets stack on TOS startup if the stack is outside the
+;//                    TOS stack area. This adds support for preserving a full
+;//                    stack-trace past the loading of the TOS command line
+;//                    interpreter, in particular for cases where SYSTEM has been
+;//                    run through another session of TOS and/or the debugger.
+;//
 
 
 ;//////////////////////////////////////////////////////////////////////////////
@@ -398,6 +412,8 @@ buffer_list_tail:
 
 error_number:
         DB          000H
+tos_stack_backup:
+        DW          00000H
 
 
 ;//////////////////////////////////////////////////////////////////////////////
@@ -500,11 +516,23 @@ T_MON:
         ;
 main:
         ;
-        ; Reset TOS stack and debug flag
+        ; Reset TOS debug flag
         ;
         SUB         A
         STA         DEBUG
-        LXI         SP,STACK
+        ;
+        ; Reset TOS stack if it is not already set up
+        ;
+        LXI         H,00000H
+        DAD         SP
+        SHLD        tos_stack_backup
+        LXI         D,-STACK
+        DAD         D
+        JNC         stack_ready
+        LXI         H,STACK
+        SHLD        tos_stack_backup
+        SPHL
+stack_ready:
         ;
         ; Clear signature
         ;
@@ -968,7 +996,7 @@ error_str:
 newline_str:
         DB          CR
 title_str:
-        DB          'TOS21 VER. 1.7',CR
+        DB          'TOS21 VER. 1.8',CR
 
 
 ;//////////////////////////////////////////////////////////////////////////////
@@ -6300,11 +6328,6 @@ ibm_data_write_done:
 ;//         requred, as well as the XMON/CD ROM kernel (varieties /D and /F are not
 ;//         supported).
 ;//
-;//         NOTE: Only one single file can be open per tape drive at any time.
-;//               Opening multiple files on the same tape drive will lead to issues
-;//               with reading/writing from/to the appropriate locations on the
-;//               tape.
-;//
 ;//
 ;//         Changelog:
 ;//
@@ -6330,6 +6353,36 @@ ibm_data_write_done:
 ;//                 -> Fixes EOF flag bug from v1.4
 ;//                 -> Fixes the output file CLOSE bug from v1.4
 ;//
+;//             v1.8:
+;//
+;//                 -> Now supports working with multiple open files on the same
+;//                    tape drive at the same time
+;//                 -> CLOSE now works even if a track-end block already exists in
+;//                    the expected location
+;//                 -> If end-of-tape is reached after updating track info on
+;//                    WRITE, the track is rewinded five blocks instead of one. A
+;//                    reload of the file is now forced the next time it is
+;//                    accessed, instead of the file being closed outright should
+;//                    this error happen.
+;//                 -> Fixes the tape-full bug from v1.4
+;//
+
+
+;//////////////////////////////////////////////////////////////////////////////
+;//
+;//     Data
+;//
+;//////////////////////////////////////////////////////////////////////////////
+
+tape_current_file_ptr:
+        DW          00000H
+tape_drive_file_ptr_list:
+        DW          00000H
+        DW          00000H
+        DW          00000H
+        DW          00000H
+tape_write_flag:
+        DB          FALSE
 
 
 ;//////////////////////////////////////////////////////////////////////////////
@@ -6342,6 +6395,11 @@ ibm_data_write_done:
         ; Open tape cartridge file for input
         ;
 tape_open_input:
+        ;
+        ; Clear active file on drive to force full file setup for next access
+        ;
+        SHLD        tape_current_file_ptr
+        CALL        tape_clear_active_file_on_drive
         ;
         ; Set up file control block and save registers
         ;
@@ -6396,6 +6454,8 @@ tape_input_file_found:
         CALL        CBSFW
         JNC         tape_input_file_seek_done
         CPI         ERROR_48
+        JZ          tape_input_file_seek_done
+        CPI         ERROR_3D
         JNZ         tape_operation_exception
 tape_input_file_seek_done:
 
@@ -6434,26 +6494,41 @@ tape_input_file_seek_done:
         ;
         ; Read and validate first data-segment of file
         ;
-        LHLD        current_fcb_plus_01EH
-        MOV         B,M             ; FCB + 01EH, current track
         CALL        RD32
         JC          tape_operation_exception
         MVI         A,'('
         CALL        VERIFY
-        JNC         tape_operation_ok
+        JC          tape_operation_exception
+        ;
+        ; Set opened file as the active file for the drive it is on
+        ;
+        CALL        tape_mark_active_file_on_drive
+        JMP         tape_operation_ok
 
 
 ;//////////////////////////////////////
 
 tape_operation_exception:
         ;
-        ; Recover registers other than exception, and return
+        ; Recover registers other than exception
         ;
-        STC
         POP         D
         POP         B
         INX         SP
         INX         SP
+        ;
+        ; Before returning, check if this was a trivial exception or not
+        ;
+        CPI         ERROR_48
+        JZ          tape_exception_teardown_done
+        CPI         ERROR_3D
+        JZ          tape_exception_teardown_done
+        ;
+        ; If not, clear the active file on the drive to force file setup later
+        ;
+        CALL        tape_clear_active_file_on_drive
+tape_exception_teardown_done:
+        STC
         LHLD        CTLBLK
         RET
 
@@ -6478,6 +6553,11 @@ tape_operation_ok:
         ; Close tape cartridge input file
         ;
 tape_close_input:
+        ;
+        ; Clear active file on drive to force full file setup for next access
+        ;
+        SHLD        tape_current_file_ptr
+        CALL        tape_clear_active_file_on_drive
         ;
         ; Set up file control block and save registers
         ;
@@ -6525,6 +6605,11 @@ current_fcb_plus_022H:
         ; Open tape cartridge file for output
         ;
 tape_open_output:
+        ;
+        ; Clear active file on drive, since a closed file is no longer active
+        ;
+        SHLD        tape_current_file_ptr
+        CALL        tape_clear_active_file_on_drive
         ;
         ; Set up file control block and save registers
         ;
@@ -6741,6 +6826,10 @@ tape_open_output_finalize_index:
         MVI         M,000H          ; FCB + FCB_BUFIDX
         INX         H
         MVI         M,000H
+        ;
+        ; Set opened file as the active file for the drive it is on
+        ;
+        CALL        tape_mark_active_file_on_drive
         JMP         tape_operation_ok
 
 ;//////////////////////////////////////
@@ -6769,6 +6858,7 @@ tape_close_output:
         ;
         ; Set up file control block and save registers
         ;
+        SHLD        tape_current_file_ptr
         CALL        device_driver_set_up_for_file
         RC
         PUSH        PSW
@@ -6811,8 +6901,14 @@ tape_trailer_block_copy_filename_loop:
         MOV         M,D
         LHLD        CTLBLK
         CALL        WRITE
-        JC          tape_operation_exception
+        JNC         tape_close_no_more_data_to_write
+        CPI         ERROR_3D
+        JNZ         tape_operation_exception
 tape_close_no_more_data_to_write:
+        ;
+        ; Clear active file on drive, since a closed file is no longer active
+        ;
+        CALL        tape_clear_active_file_on_drive
         ;
         ; Write tape mark after final data-block block
         ;
@@ -6822,6 +6918,8 @@ tape_close_no_more_data_to_write:
         CALL        CBTMW
         JNC         end_of_data_tape_mark_exists
         CPI         ERROR_48
+        JZ          end_of_data_tape_mark_exists
+        CPI         ERROR_3D
         JNZ         tape_operation_exception
 end_of_data_tape_mark_exists:
         ;
@@ -6831,7 +6929,10 @@ end_of_data_tape_mark_exists:
         LXI         D,32
         LDA         UNIT
         CALL        CBWRW
-        JC          tape_operation_exception
+        JNC         write_file_trailer_block_done
+        CPI         ERROR_3D
+        JNZ         tape_operation_exception
+write_file_trailer_block_done:
         ;
         ; Write tape mark after file trailer block
         ;
@@ -6839,15 +6940,33 @@ end_of_data_tape_mark_exists:
         CALL        CBTMW
         JNC         file_trailer_block_tape_mark_exists
         CPI         ERROR_48
+        JZ          file_trailer_block_tape_mark_exists
+        CPI         ERROR_3D
         JNZ         tape_operation_exception
 file_trailer_block_tape_mark_exists:
         ;
-        ; Write new track-end block, and rewind tape
+        ; Write new track-end block
         ;
         LXI         H,track_end_block
         LDA         UNIT
         CALL        CBWRW
-        JC          tape_operation_exception
+        JNC         track_end_block_done
+        CPI         ERROR_3D
+        JNZ         tape_operation_exception
+track_end_block_done:
+        ;
+        ; Write tape mark after track-end block, and rewind tape
+        ;
+        LDA         UNIT
+        LHLD        current_fcb_plus_01EH
+        MOV         B,M
+        CALL        CBTMW
+        JNC         file_track_end_tape_mark_exists
+        CPI         ERROR_48
+        JZ          file_track_end_tape_mark_exists
+        CPI         ERROR_3D
+        JNZ         tape_operation_exception
+file_track_end_tape_mark_exists:
         LDA         UNIT
         CALL        CCAL
         JC          tape_operation_exception
@@ -7035,6 +7154,13 @@ file_directory_block:
         ;
 tape_write_output:
         ;
+        ; Get tape into the correct position for file, if needed
+        ;
+        MVI         A,TRUE
+        STA         tape_write_flag
+        CALL        tape_set_up_for_file
+        RC
+        ;
         ; Set up file control block and save registers
         ;
         CALL        device_driver_set_up_for_file
@@ -7112,16 +7238,18 @@ tape_write_track_usage_ptr_ready:
         CPI         ERROR_40
         JNZ         tape_operation_exception
         ;
-        ; If so, rewind one block and close output file immediately
+        ; If so, rewind five blocks before raising exception
         ;
+        MVI         B,5
+        LDA         UNIT
+tape_backspace_from_end_of_tape_loop:
         LDA         UNIT
         CALL        CBBSW
         JC          tape_operation_exception
-        POP         D
-        POP         B
-        POP         PSW
-        LHLD        CTLBLK
-        JMP         tape_close_output
+        DCR         B
+        JNZ         tape_backspace_from_end_of_tape_loop
+        MVI         A,ERROR_40
+        JMP         tape_operation_exception
 
 
 ;//////////////////////////////////////////////////////////////////////////////
@@ -7130,6 +7258,13 @@ tape_write_track_usage_ptr_ready:
         ; Read from tape cartridge input file
         ;
 tape_read_input:
+        ;
+        ; Get tape into the correct position for file, if needed
+        ;
+        SUB         A
+        STA         tape_write_flag
+        CALL        tape_set_up_for_file
+        RC
         ;
         ; Set up file control block and save registers
         ;
@@ -7174,7 +7309,10 @@ tape_read_input:
         XCHG
         LDA         UNIT
         CALL        CBRDW
-        JC          tape_operation_exception
+        JNC         tape_input_block_read_done
+        CPI         ERROR_3D
+        JNZ         tape_operation_exception
+tape_input_block_read_done:
         ;
         ; Verify that tape overrun markers were untouched
         ;
@@ -7260,6 +7398,8 @@ tape_read_detect_eof:
         XCHG
         CALL        CBRDW
         JNC         tape_read_no_end_when_expected
+        CPI         ERROR_3D
+        JZ          tape_read_no_end_when_expected
         CPI         ERROR_48
         JNZ         tape_operation_exception
         ;
@@ -7277,6 +7417,333 @@ tape_read_detect_eof:
 tape_read_no_end_when_expected:
         MVI         A,ERROR_57
         JMP         tape_operation_exception
+
+
+;//////////////////////////////////////////////////////////////////////////////
+;//
+;//     Subroutines
+;//
+;//////////////////////////////////////////////////////////////////////////////
+
+        ;
+        ; Reference file at HL as the active file for its drive
+        ;
+tape_mark_active_file_on_drive:
+        PUSH       H
+        PUSH       D
+        CALL       tape_drive_get_active_file
+        MOV        M,E
+        INX        H
+        MOV        M,D
+        POP        D
+        POP        H
+        RET
+
+
+;//////////////////////////////////////////////////////////////////////////////
+
+        ;
+        ; Clear reference to the active file for the drive the file at HL uses
+        ;
+tape_clear_active_file_on_drive:
+        PUSH       H
+        PUSH       D
+        CALL       tape_drive_get_active_file
+        MVI        M,000H
+        INX        H
+        MVI        M,000H
+        POP        D
+        POP        H
+        RET
+
+
+;//////////////////////////////////////////////////////////////////////////////
+
+        ;
+        ; Swap file on drive if current file is not the most recent active file
+        ;
+tape_set_up_for_file:
+        ;
+        ; Store file at HL as the current file, and save registers
+        ;
+        SHLD       tape_current_file_ptr
+        PUSH       PSW
+        PUSH       H
+        PUSH       D
+        PUSH       B
+        ;
+        ; Get recorded active file of the drive of the current file
+        ;
+        CALL       tape_drive_get_active_file
+        ;
+        ; Check if the drive's active file and the current file is the same
+        ;
+        MOV        A,E
+        CMP        M
+        JNZ        tape_setup_file_on_drive
+        INX        H
+        MOV        A,D
+        CMP        M
+        JNZ        tape_setup_file_on_drive
+        ;
+        ; If so, we don't need to do anything here
+        ;
+tape_file_ready:
+        ;
+        ; Restore registers and return
+        ;
+        POP        B
+        POP        D
+        POP        H
+        POP        PSW
+        ANA        A
+        RET
+
+
+;//////////////////////////////////////
+
+tape_setup_file_on_drive:
+        ;
+        ; Point to drive number in file control block of current file
+        ;
+        LHLD       tape_current_file_ptr
+        LXI        D,FCB_DRVNR
+        DAD        D
+        ;
+        ; Check if operation on current file is reading or writing
+        ;
+        LDA        tape_write_flag
+        ANA        A
+        JZ         tape_setup_input_file
+
+
+;//////////////////////////////////////
+
+        ;
+        ; If writing, rewind tape to prepare scanning to next block target
+        ;
+        MOV        A,M              ; FCB + FCB_DRVNR
+        STA        UNIT
+        CALL       CCAL
+        JC         tape_file_setup_error
+        ;
+        ; Get track of current file
+        ;
+        LXI        D,01EH - FCB_DRVNR
+        DAD        D
+        MOV        B,M              ; FCB + 01EH, current track
+        ;
+        ; Get block-number of current file
+        ;
+        LXI        D,023H - 01EH
+        DAD        D
+        MOV        A,M              ; FCB + 023H, file number in track
+        DCR        A
+        JZ         tape_setup_output_file_at_start
+        ADD        A
+        MOV        C,A
+        ;
+        ; Scan to current file data start
+        ;
+        LDA        UNIT
+        CALL       CBSFW
+        JNC        tape_setup_output_file_at_start
+        CPI        ERROR_48
+        JNZ        tape_file_setup_error
+tape_setup_output_file_at_start:
+        ;
+        ; Read first data-block of current file
+        ;
+        CALL       tape_read_and_verify_file_start
+        JC         tape_file_setup_error
+        ;
+        ; Get blocks to wind to get to the end of the current file
+        ;
+        LHLD       tape_current_file_ptr
+        LXI        D,01FH
+        DAD        D
+        MOV        E,M              ; FCB + 01FH, block counter
+        INX        H
+        MOV        D,M
+
+
+;//////////////////////////////////////
+
+tape_setup_get_target_block:
+        ;
+        ; Wind tape to target block inside of current file
+        ;
+        LXI        H,BUF1
+tape_setup_get_next_block:
+        MOV        A,D
+        ORA        E
+        JZ         tape_file_set_up
+        LDA        UNIT
+        CALL       CBRDW
+        DCX        D
+        JNC        tape_setup_get_next_block
+        JMP        tape_file_setup_error
+
+tape_file_set_up:
+        ;
+        ; Mark current file as the active file for the current drive
+        ;
+        CALL       tape_mark_active_file_on_drive
+        JMP        tape_file_ready
+
+
+;//////////////////////////////////////
+
+tape_setup_input_file:
+        ;
+        ; Locate current file in tape directory, and verify that it exists
+        ;
+        MOV        A,M              ; FCB + FCB_DRVNR
+        INX        H
+        CALL       CLOCDIR
+        JC         tape_file_setup_error
+        ANA        A
+        JNZ        tape_setup_file_missing
+        ;
+        ; Rewind tape to prepare for scanning to file data
+        ;
+        LDA        UNIT
+        CALL       CCAL
+        JC         tape_file_setup_error
+        ;
+        ; Get the track number of file from the file directory entry
+        ;
+        LXI        D,00AH
+        DAD        D
+        MOV        B,M
+        ;
+        ; Get start to file block number in track
+        ;
+        INX        H
+        MOV        A,M
+        DCR        A
+        JZ         tape_setup_input_file_at_start
+        ADD        A
+        MOV        C,A
+        ;
+        ; Scan to start of file
+        ;
+        LDA        UNIT
+        CALL       CBSFW
+        JNC        tape_setup_input_file_at_start
+        CPI        ERROR_48
+        JZ         tape_setup_input_file_at_start
+        CPI        ERROR_3D
+        JNZ        tape_file_setup_error
+tape_setup_input_file_at_start:
+        ;
+        ; Get number of blocks in file
+        ;
+        INX        H
+        INX        H
+        INX        H
+        MOV        E,M
+        INX        H
+        MOV        D,M
+        ;
+        ; Load first data-block of file
+        ;
+        LDA        UNIT
+        CALL       tape_read_and_verify_file_start
+        JC         tape_file_setup_error
+        ;
+        ; Point to input file remaining-blocks counter
+        ;
+        PUSH       D
+        LHLD       tape_current_file_ptr
+        LXI        D,01FH
+        DAD        D
+        POP        D
+        ;
+        ; Subtract current remaining-blocks count from file total nr of blocks
+        ;
+        XRA        A
+        MOV        A,E
+        SBB        M                ; FCB + 01FH, block counter
+        MOV        E,A
+        INX        H
+        MOV        A,D
+        SBB        M
+        MOV        D,A
+        JMP        tape_setup_get_target_block
+
+
+;//////////////////////////////////////
+
+tape_setup_file_missing:
+        MVI        A,ERROR_31
+tape_file_setup_error:
+        ;
+        ; Restore registers and return with error code
+        ;
+        POP        B
+        POP        D
+        POP        H
+        INX        SP
+        INX        SP
+        STC
+        RET
+
+
+;//////////////////////////////////////////////////////////////////////////////
+
+        ;
+        ; Get pointer to previous active file on the same drive as current file
+        ;
+tape_drive_get_active_file:
+        ;
+        ; Use drive number as index for list of previously accessed tape files
+        ;
+        LHLD       tape_current_file_ptr
+        LXI        D,FCB_DRVNR
+        DAD        D
+        MOV        E,M              ; FCB + FCB_DRVNR
+        MVI        D,000H
+        ;
+        ; Get file-pointer from list
+        ;
+        LXI        H,tape_drive_file_ptr_list
+        DAD        D
+        DAD        D
+        XCHG
+        LHLD       tape_current_file_ptr
+        XCHG
+        RET
+
+
+;//////////////////////////////////////////////////////////////////////////////
+
+        ;
+        ; Read first block of a file, given tape is at the correct location
+        ;
+tape_read_and_verify_file_start:
+        PUSH       H
+        PUSH       D
+        ;
+        ; Get drive number and set filename pointer in the System-RAM area
+        ;
+        LHLD       tape_current_file_ptr
+        LXI        D,FCB_DRVNR
+        DAD        D
+        MOV        A,M              ; FCB + FCB_DRVNR
+        INX        H                ; FCB + FCB_FNAME
+        SHLD       NAME
+        ;
+        ; Read and verify first data-block of a file
+        ;
+        CALL       RD32
+        JC         tape_read_file_start_done
+        MVI        A,'('
+        CALL       VERIFY
+tape_read_file_start_done:
+        POP        D
+        POP        H
+        RET
 
 
 ;//////////////////////////////////////////////////////////////////////////////
@@ -9001,6 +9468,14 @@ tape_physint_setup:
 ;//                    with echo to both the console output and printer UART
 ;//                 -> Fixes the autoscroll bug from v1.3
 ;//
+;//             v1.8:
+;//
+;//                 -> Adds tables with references to all XMON API calls used by
+;//                    the internal device files available in TOS
+;//                 -> Adds a bug where the XMON API call reference for the CE
+;//                    device file is pointing to the CALL instruction itself, and
+;//                    not the routine-pointer contained within the instruction
+;//
 
 
 ;//////////////////////////////////////////////////////////////////////////////
@@ -9613,6 +10088,7 @@ DEV_CO_routine:
         ;
         ; Send character to console
         ;
+DEV_CO_handler_instr_1:
         CALL        TTO
         ;
         ; Make sure to pay extra attention to linefeeds and cursor movment
@@ -9663,6 +10139,7 @@ co_cursor_home:
 
 co_add_scroll:
         MVI         A,ROLUP
+DEV_CO_handler_instr_2:
         CALL        TTO
 co_autoscroll_done:
         POP         PSW
@@ -9716,6 +10193,7 @@ DEV_CI_FCB_echo:
 DEV_CI_FCB:
         DB          2
         DB          FM_NO_CLOSE + FM_INPUT
+DEV_CI_handler_ptr:
         DW          TTI
         DW          00000H
 
@@ -9754,6 +10232,7 @@ DEV_CE_FCB:
 ;//////////////////////////////////////
 
 console_text_polling_routine:
+DEV_CE_handler_instr:
         CALL        TTI
 
 
@@ -9804,6 +10283,22 @@ DEV_CP_FCB_output:
         DB          FM_NO_CLOSE + FM_OUTPUT
         DW          DEV_CO_FCB
         DW          DEV_LP_FCB
+
+
+;//////////////////////////////////////////////////////////////////////////////
+
+DEV_CI_handlers:
+        DW          DEV_CI_handler_ptr
+        DW          00000H
+
+DEV_CE_handlers:
+        DW          DEV_CE_handler_instr
+        DW          00000H
+
+DEV_CO_handlers:
+        DW          DEV_CO_handler_instr_1 + 1
+        DW          DEV_CO_handler_instr_2 + 1
+        DW          00000H
 
 
 ;//////////////////////////////////////////////////////////////////////////////
@@ -9949,6 +10444,10 @@ ebcdic_to_ascii_table:
 ;//                 -> Cursor-home and clear-screen control characters can now be
 ;//                    used when entering a command at the command line prompt
 ;//                    without voiding the input
+;//
+;//             v1.8:
+;//
+;//                 -> Flushes CI input if program failed to load from command line
 ;//
 
 
@@ -10131,7 +10630,7 @@ cli_load_error:
         CPI         ERROR_0B
         JZ          retry_uppercase_load
         STC
-        RET
+        JMP         load_failed
 
 retry_uppercase_load:
         ;
@@ -10140,7 +10639,7 @@ retry_uppercase_load:
         LXI         H,PRGNAM
         MVI         B,9
         CALL        str_to_uppercase
-        RC
+        JC          load_failed
         ;
         ; Try to load program again
         ;
@@ -10150,6 +10649,7 @@ retry_uppercase_load:
         ;
         ; If still not found, flush CI input and return with exception
         ;
+load_failed:
         PUSH        PSW
         LDA         cli_next_char
         CALL        flush_ci_input
@@ -10219,6 +10719,11 @@ invalid_drive_type:
 ;//                 -> RAMST constant added, which TOS sets to start of User-RAM
 ;//                 -> TOSENTR constant added, referencing the RAM entry-point for
 ;//                    the TOS executable SYSTEM file
+;//
+;//             v1.8:
+;//
+;//                 -> New complete list of all device files exposed at 0xFEC0
+;//                 -> New list for references to device handlers exposed at 0xFEE0
 ;//
 
 
@@ -10424,6 +10929,39 @@ RAMST:
         DW          08000H
 TOSENTR:
         DW          start
+
+        ORG         0FEC0H
+all_devices_list:
+        DW          DEV_LP_FCB
+        DW          DEV_NF_FCB
+        DW          DEV_BB_FCB
+        DW          DEV_CO_FCB
+        DW          DEV_CI_FCB_buffered_echo
+        DW          DEV_XM_FCB
+        DW          DEV_RC_FCB
+        DW          DEV_CE_FCB
+        DW          DEV_RE_FCB
+        DW          DEV_CP_FCB
+        DW          00000h
+        DW          00000h
+        DW          00000h
+        DW          00000h
+        DW          00000h
+        DW          00000h
+
+
+;//////////////////////////////////////////////////////////////////////////////
+;//
+;//     TOS device file handler-reference lists
+;//
+;//////////////////////////////////////////////////////////////////////////////
+
+DEV_CI_REFS:
+        DW          DEV_CI_handlers
+DEV_CE_REFS:
+        DW          DEV_CE_handlers
+DEV_CO_REFS:
+        DW          DEV_CO_handlers
 
 
 ;//////////////////////////////////////////////////////////////////////////////
