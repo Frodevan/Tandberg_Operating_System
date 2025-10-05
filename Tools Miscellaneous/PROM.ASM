@@ -98,6 +98,10 @@
 ;//                    happen, the program will start to print garbage instead of
 ;//                    the expected text.
 ;//
+;//             1.7a: Entry at 0xC2D7
+;//
+;//                 -> Uses a different value when setting the XMON debug flag
+;//
 
 
 ;//////////////////////////////////////////////////////////////////////////////
@@ -109,7 +113,7 @@
 ;
 ; Flag values
 ;
-TRUE        EQU     -1          ; Boolean True
+TRUE        EQU     1           ; Boolean True
 
 ;
 ; ASCII control characters
@@ -178,7 +182,7 @@ FCB_DRVFMT  EQU     01BH        ; Media format
 
         ORG         SIGNATURE
         DB          'PROM',NULL,NULL
-        DB          '106'
+        DB          '107'
 
 
 ;//////////////////////////////////////////////////////////////////////////////
