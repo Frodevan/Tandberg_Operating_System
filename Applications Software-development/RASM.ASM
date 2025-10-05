@@ -71,6 +71,8 @@
 ;//             v2.2b: Entry at 0xBC00
 ;//
 ;//                 -> Fixes the dw external reference bug from v2.2a
+;//                 -> Has a bug where the external reference may be obfuscated in
+;//                    certain edge-cases
 ;//
 ;//             v2.3: Entry at 0xBC00
 ;//
@@ -84,6 +86,10 @@
 ;//                 -> Fixes the $E bug from v2.2a
 ;//
 ;//             v2.5: Entry at 0xB500
+;//
+;//                 -> Fixes the external reference number bug that was at least
+;//                    present in v2.2b
+;//                 -> External references cannot be used for subtraction
 ;//
 
 ;//////////////////////////////////////////////////////////////////////////////
@@ -428,6 +434,8 @@ negative_expr_part_flag:
 expr_symb_name_buffer:
         DS          6
 
+ext_symb_nr_backup:
+        DS          2
 current_ext_symb_nr:
         DS          2
 last_val_ext_symb_nr:
@@ -450,7 +458,7 @@ name_nr_in_line_count:
 
         ORG         SIGNATURE
         DB          'RASM',NULL,NULL
-        DB          '204'
+        DB          '205'
 
 
 ;//////////////////////////////////////////////////////////////////////////////
@@ -2265,7 +2273,6 @@ p2_parse_next_byteval:
         JZ          db_err_check_done
         MVI         A,SB_EXP_ERR
         STA         current_error_nr
-        STA         expr_next_char
 db_err_check_done:
         ;
         ; Start on a new line if multi-value definition is done
@@ -6046,6 +6053,19 @@ exp_ext_check:
         MOV         A,B
         ANI         BASE_CSEG + BASE_DSEG + BASE_EXT
         JNZ         expr_fault
+        ;
+        ; Also don't allow the current expression part to be subtracted
+        ;
+        LDA         negative_expr_part_flag
+        ORA         A
+        JNZ         expr_fault
+        ;
+        ; Save external symbol reference for the time being
+        ;
+        PUSH        H
+        LHLD        current_ext_symb_nr
+        SHLD        ext_symb_nr_backup
+        POP         H
 
 
 ;//////////////////////////////////////
@@ -6135,6 +6155,13 @@ expr_done_load_flags:
 expr_done_flags_ready:
         XRI         EXP_TP_END
         STA         expression_flags
+        ;
+        ; Recover current external symbol reference
+        ;
+        PUSH        H
+        LHLD        ext_symb_nr_backup
+        SHLD        current_ext_symb_nr
+        POP         H
         RET
 
 
@@ -7003,7 +7030,7 @@ final_err_report_str:
 end_error_str:
         DB          '      ****ERROR**** END MISSING',CR,NULL
 rasm_title_str:
-        DB          'TDV 2100 ASSEMBLER V.2.4',NULL,CR
+        DB          'TDV 2100 ASSEMBLER V.2.5',NULL,CR
 error_str:
         DB          '****ERROR****: 00',CR,NULL
         DB          NULL
