@@ -95,6 +95,11 @@
 ;//                    the page mode ASCII prompt, behaving like option A instead
 ;//                 -> Ctrl-characters are output using TOS when SO is CO, not XMON
 ;//
+;//             1.8: Entry at 0xC000
+;//
+;//                 -> Does not cache keypresses during program execution
+;//                 -> Reintroduces echoing of choice on the hex or ASCII prompt
+;//
 
 
 ;//////////////////////////////////////////////////////////////////////////////
@@ -267,7 +272,7 @@ cleanup_and_quit:
         PUSH        PSW
         LXI         H,00000H
         SHLD        SI_FCB
-        JMP         restore_keyboard_buffer
+        JMP         end_page_margin_done
 
 unassignements_done:
         ;
@@ -290,27 +295,6 @@ unassignements_done:
         MOV         B,A
         CALL        write_newlines_to_output
 end_page_margin_done:
-        ;
-        ; Make sure to expect an input keystroke at last page if console output
-        ;
-        LDA         console_paged_output_flag
-        ORA         A
-        JZ          restore_keyboard_buffer
-        CALL        TTI
-        ;
-        ; Restore any captured pending keyboard input
-        ;
-restore_keyboard_buffer:
-        LXI         D,saved_kbd_input_fifo
-        LXI         H,KEYBUF
-        MVI         B,32
-restore_next_kbd_char:
-        LDAX        D
-        MOV         M,A
-        INX         H
-        INX         D
-        DCR         B
-        JNZ         restore_next_kbd_char
         ;
         ; Restore potential error status
         ;
@@ -362,33 +346,6 @@ ready_for_input:
         LHLD        data_buffer_ptr
         XCHG
         LHLD        SI_FCB
-input_loop:
-        ;
-        ; Check for modes that have their own (or no) keyboard handling
-        ;
-        LDA         f0_diskswap_filecopy_flag
-        ORA         A
-        JNZ         read_next_input_byte
-        LDA         console_input_mode_flag
-        ORA         A
-        JNZ         read_next_input_byte
-        LDA         console_paged_output_flag
-        ORA         A
-        JNZ         read_next_input_byte
-        ;
-        ; Check for pending keyboard input
-        ;
-        LDA         KEYBUF
-        ORA         A
-        JZ          read_next_input_byte
-        ;
-        ; If so, cache it for later, and also check if user wants to abort move
-        ;
-        CALL        save_pending_kbd_input
-        CPI         'Q'
-        JZ          cleanup_and_quit
-        JMP         input_loop
-
 read_next_input_byte:
         ;
         ; Get next input byte
@@ -446,7 +403,7 @@ save_input_to_buffer:
         DCX         B
         MOV         A,B
         ORA         C
-        JNZ         input_loop
+        JNZ         read_next_input_byte
         JMP         buffer_full
 
 
@@ -602,8 +559,10 @@ hex_or_ascii_choice_is_uppercase:
         ;
         ; Verify choice against possible options
         ;
+        LXI         D,option_a_str
         CPI         'A'
         JZ          hex_or_ascii_prompt_end
+        LXI         D,option_q_str
         CPI         'Q'
         JZ          hex_or_ascii_prompt_end
         CPI         'H'
@@ -613,10 +572,14 @@ hex_or_ascii_choice_is_uppercase:
         ;
         MVI         A,TRUE
         STA         hex_output_mode_flag
+        LXI         D,option_h_str
 hex_or_ascii_prompt_end:
         ;
         ; Clear prompt and check if user decided to abort move early
         ;
+        PUSH        PSW
+        CALL        PUT
+        POP         PSW
         MVI         A,ERLIN
         CALL        TTO
         MOV         A,C
@@ -679,55 +642,6 @@ diskswap_cleanup_and_quit:
 ;//////////////////////////////////////////////////////////////////////////////
 
         ;
-        ; Save any pending keyboard input into a buffer for later use
-        ;
-save_pending_kbd_input:
-        ;
-        ; Get pending keyboard data, check if user want to end move early
-        ;
-        CALL        TTI
-        CPI         'Q'
-        JZ          abort_move
-        CPI         'q'
-        JNZ         add_kbd_input_to_cache
-abort_move:
-        ;
-        ; Clear pending keyboard input buffer if aborting move
-        ;
-        XRA         A
-        STA         saved_kbd_input_fifo
-        MVI         A,'Q'
-        RET
-
-add_kbd_input_to_cache:
-        ;
-        ; Get index of fifo buffer tail, and check if the buffer is full
-        ;
-        STA         current_kbd_char
-        LDA         saved_kbd_input_fifo
-        CPI         32-1
-        RZ
-        ;
-        ; Append keyboard char to end of fifo buffer
-        ;
-        INR         A
-        STA         saved_kbd_input_fifo
-        PUSH        H
-        PUSH        B
-        LXI         H,saved_kbd_input_fifo
-        MOV         C,A
-        MVI         B,000H
-        DAD         B
-        LDA         current_kbd_char
-        MOV         M,A
-        POP         B
-        POP         H
-        RET
-
-
-;//////////////////////////////////////////////////////////////////////////////
-
-        ;
         ; Write entire buffer to output file
         ;
 write_data_to_output:
@@ -773,7 +687,7 @@ write_output_byte:
         INR         A
         STA         hex_byte_counter
         CPI         16
-        JNZ         write_byte_done
+        JNZ         write_next_output_byte
         ;
         ; If so, insert newline into output and reset counter
         ;
@@ -788,7 +702,7 @@ write_output_byte:
         INR         A
         STA         line_in_paragraph_counter
         CPI         8
-        JNZ         write_byte_done
+        JNZ         write_next_output_byte
         ;
         ; If so, insert an empty line into output and reset counter
         ;
@@ -796,7 +710,7 @@ write_output_byte:
         CALL        advance_page_mode_line
         XRA         A
         STA         line_in_paragraph_counter
-        JMP         write_byte_done
+        JMP         write_next_output_byte
 
 write_byte_as_is:
         ;
@@ -833,7 +747,7 @@ not_console_page_mode:
         ;
         LDA         printer_paged_output_flag
         ORA         A
-        JZ          write_byte_done
+        JZ          write_next_output_byte
         ;
         ; Check for and handle the occurences of newline in paged modes
         ;
@@ -849,31 +763,6 @@ check_for_page_mode_newline:
 line_feed_check:
         CPI         LF
         CZ          advance_page_mode_line
-        ;
-        ; Write complete, maintain user input that happened in the meantime
-        ;
-write_byte_done:
-        ;
-        ; Check for modes that have their own (or no) keyboard handling
-        ;
-        LDA         console_paged_output_flag
-        ORA         A
-        JNZ         write_next_output_byte
-        LDA         console_input_mode_flag
-        ORA         A
-        JNZ         write_next_output_byte
-        ;
-        ; Check for pending keyboard input
-        ;
-        LDA         KEYBUF
-        ORA         A
-        JZ          write_next_output_byte
-        ;
-        ; If so, cache it for later, and also check if user wants to abort move
-        ;
-        CALL        save_pending_kbd_input
-        CPI         'Q'
-        JZ          cleanup_and_quit
 write_next_output_byte:
         ;
         ; Advance to next byte in buffer and continue write
@@ -949,7 +838,7 @@ advance_page_mode_line:
         ;
         LDA         current_line_on_page
         CPI         24
-        RNZ
+        RC
         ;
         ; Wait for keyboard keypress, to give user a chance of reading page
         ;
@@ -960,18 +849,6 @@ advance_page_mode_line:
         ; Check if user wants to abort move with this keypress
         ;
         CPI         'Q'
-        JZ          abort_move_from_page_end
-        CPI         'q'
-        JNZ         setup_next_console_page
-abort_move_from_page_end:
-        ;
-        ; Put 'Q' character back into TTI buffer before exiting program
-        ;
-        MVI         A,1
-        STA         KEYBUF
-        JMP         cleanup_and_quit
-
-setup_next_console_page:
         JZ          cleanup_and_quit
         CPI         'q'
         JZ          cleanup_and_quit
@@ -1050,8 +927,6 @@ write_newline_to_output:
 ;//////////////////////////////////////////////////////////////////////////////
 
 data_area_start:
-saved_kbd_input_fifo:
-        DS          32
 f0_diskswap_filecopy_flag:
         DS          1
 console_paged_output_flag:
@@ -1138,7 +1013,7 @@ page_ength_prompt_str:
 
         ORG         SIGNATURE
         DB          'MOVE',NULL,NULL
-        DB          '107'
+        DB          '108'
 
 
 ;//////////////////////////////////////////////////////////////////////////////
