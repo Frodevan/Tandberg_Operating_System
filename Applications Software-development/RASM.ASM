@@ -91,6 +91,11 @@
 ;//                    present in v2.2b
 ;//                 -> External references cannot be used for subtraction
 ;//
+;//             v2.6: Entry at 0xB500
+;//
+;//                 -> Only allow for two operands per opcode
+;//                 -> Fixes the symbol name bug from v2.2a
+;//
 
 ;//////////////////////////////////////////////////////////////////////////////
 ;//
@@ -183,6 +188,7 @@ NO_EXP_ERR  EQU     010H        ; Missing expression
 UND_SYM_ERR EQU     011H        ; Undefined symbol
 DBLSYMB_ERR EQU     012H        ; Symbol defined multiple times
 INC_REG_ERR EQU     013H        ; Incorrect register
+NR_OPS_ERR  EQU     014H        ; Too many operands for instruction
 
 ;
 ; RASM object file record types
@@ -5177,6 +5183,8 @@ new_title_char_ready:
         ; Get to the next argument in a string with a list of arguments
         ;
 get_to_next_arg:
+        MVI         C,0
+next_arg_check_next_char:
         ;
         ; Skip if at the end of the string of arguments
         ;
@@ -5187,7 +5195,7 @@ get_to_next_arg:
         ; Check for and ignore argument deliminator
         ;
         CPI         ','
-        JZ          check_for_arg_at_next_char
+        JZ          next_arg_deliminator_found
         ;
         ; Check for end of label definition
         ;
@@ -5200,12 +5208,23 @@ get_to_next_arg:
         JC          check_for_arg_at_next_char
         RET
 
+next_arg_deliminator_found:
+        ;
+        ; Only accept one instruction argument-deliminator
+        ;
+        MOV         A,C
+        ORA         A
+        JZ          next_arg_count_delim
+        MVI         A,NR_OPS_ERR
+        STA         current_error_nr
+next_arg_count_delim:
+        INR         C
+check_for_arg_at_next_char:
         ;
         ; Advance to check for start of new argument at the next character
         ;
-check_for_arg_at_next_char:
         INX         H
-        JMP         get_to_next_arg
+        JMP         next_arg_check_next_char
 
 
 ;//////////////////////////////////////////////////////////////////////////////
@@ -5853,7 +5872,7 @@ expr_symb_copied:
         ; Pad out the rest of the symbol name with zeroes
         ;
 expr_symb_padding_loop:
-        MOV         A,M
+        MOV         A,B
         ORA         A
         JZ          expr_symb_ready
         MVI         M,NULL
@@ -7030,7 +7049,7 @@ final_err_report_str:
 end_error_str:
         DB          '      ****ERROR**** END MISSING',CR,NULL
 rasm_title_str:
-        DB          'TDV 2100 ASSEMBLER V.2.5',NULL,CR
+        DB          'TDV 2100 ASSEMBLER V.2.6',NULL,CR
 error_str:
         DB          '****ERROR****: 00',CR,NULL
         DB          NULL

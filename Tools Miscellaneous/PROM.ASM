@@ -34,6 +34,7 @@
 ;//             P <start>,<end>                     Send data block as BNPF
 ;//             Q                                   Quit to TOS
 ;//             T <start>                           Receive BNPF data block
+;//             S <start>,<end>,<destination>       Set Tandberg-checksum
 ;//             W [:<Tn>:]<name>,<start>,<length>   Write block of memory to file
 ;//
 ;//                 start           Address to first byte of datablock
@@ -63,6 +64,11 @@
 ;//               zero is used, the entire 64KB memory map will be written to file,
 ;//               in an Intel Absolute Binary format file block that claims a size
 ;//               of 0 bytes.
+;//
+;//         NOTE: The S command calculates an 8-bit checksum with wraparound, and
+;//               subtracts 0xAA (the expected value Tandberg used for this sum).
+;//               This can be used to set the checksum-adjustement byte in a binary
+;//               image before sending it to the programmer.
 ;//
 ;//
 ;//         Changelog:
@@ -101,6 +107,10 @@
 ;//             1.7a: Entry at 0xC2D7
 ;//
 ;//                 -> Uses a different value when setting the XMON debug flag
+;//
+;//             1.7b: Entry at 0xC331
+;//
+;//                 -> Adds a new S command for calculating a checksum-byte
 ;//
 
 
@@ -611,6 +621,84 @@ end_of_hex_number:
 ;//
 ;//////////////////////////////////////////////////////////////////////////////
 
+cmd_checksum:
+        ;
+        ; Get start address of block to be checksummed
+        ;
+        CALL        get_next_char
+        CALL        parse_hex_number
+        JC          command_error
+        CPI         ','
+        JNZ         command_error
+        INX         H
+        XCHG
+        SHLD        current_data_ptr
+        XCHG
+        ;
+        ; Get end address
+        ;
+        CALL        parse_hex_number
+        JC          command_error
+        CPI         ','
+        JNZ         command_error
+        INX         H
+        XCHG
+        SHLD        end_address
+        XCHG
+        ;
+        ; Get pointer to checksum byte
+        ;
+        CALL        parse_hex_number
+        JC          command_error
+        CPI         CR
+        JNZ         command_error
+        ;
+        ; Clear checksum byte and save pointer on stack
+        ;
+        SUB         A
+        STAX        D
+        PUSH        D
+        ;
+        ; Set up for calculating checksum
+        ;
+        LHLD        end_address
+        XCHG
+        LHLD        current_data_ptr
+        XRA         A
+        ;
+        ; Add every byte together, with carry
+        ;
+add_byte_to_checksum:
+        ADC         M
+        PUSH        PSW
+        MOV         A,E
+        CMP         L
+        JNZ         add_next_byte
+        MOV         A,D
+        CMP         H
+        JZ          checksum_done
+add_next_byte:
+        INX         H
+        POP         PSW
+        JMP         add_byte_to_checksum
+
+checksum_done:
+        POP         PSW
+        ACI         0
+        ;
+        ; Calculate byte needed for checksum AAH, write this to checksum byte
+        ;
+        POP         D
+        MOV         B,A
+        MVI         A,0AAH
+        SUB         B
+        SBI         0
+        STAX        D
+        JMP         next_command_prompt
+
+
+;//////////////////////////////////////
+
 start:
 beginning:
         ;
@@ -760,6 +848,8 @@ skip_leading_spaces:
         JZ          cmd_load_file
         CPI         'P'
         JZ          cmd_program
+        CPI         'S'
+        JZ          cmd_checksum
         CPI         'T'
         JZ          cmd_receive_bnpf
         CPI         'W'
