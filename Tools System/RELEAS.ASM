@@ -15,6 +15,9 @@
 ;//                     AI      Release AI
 ;//                     AO      Release AO
 ;//                     AL      Release AL
+;//                     CI      Local input for CI handler
+;//                     CE      Local input for CE handler
+;//                     CO      Local output for CO handler
 ;//
 ;//
 ;//         Releases a list of assigned devices, and enables reasignement of these.
@@ -27,6 +30,15 @@
 ;//               readability case, but due to the implementation it should also
 ;//               work with no comma, or even any non-alphabetic character as
 ;//               separator such as space or period.
+;//
+;//         NOTE: Releasing assigned XMON handlers requires features that were
+;//               introduced in TOS v1.8. There is no safeguard against using these
+;//               options on an unsuported version of TOS, and worst case you may
+;//               end up with garbage being written all over RAM. This may in turn
+;//               lead to unpredictable behaviour and eventually a system crash.
+;//
+;//         NOTE: Option CE is broken in TOS v1.8x due to a bug in TOS itself, and
+;//               is likely to crash the system if selected.
 ;//
 ;//
 ;//         Changelog:
@@ -49,6 +61,10 @@
 ;//
 ;//                 -> Fixes Version ID bug from v1.6a
 ;//
+;//             1.7: Entry at 0xC000
+;//
+;//                 -> Adds CI, CE and CO as valid options
+;//
 
 
 ;//////////////////////////////////////////////////////////////////////////////
@@ -63,6 +79,12 @@
 CR          EQU     00DH        ; Cartridge Return
 
 ;
+; XMON system calls
+;
+TTI         EQU     00040H      ; Console input
+TTO         EQU     00043H      ; Console output
+
+;
 ; XMON and TOS system data
 ;
 SIGNATURE   EQU     02700H      ; Program signature
@@ -72,6 +94,13 @@ SIGNATURE   EQU     02700H      ; Program signature
 ;
 INCHAR      EQU     0FD09H      ; Input single character
 PUT         EQU     0FD12H      ; Output string of characters, inclusive CR
+
+;
+; TOS device file handler-pointer lists
+;
+DEV_CI_PTRS EQU     0FEE0H      ; Pointer to list with pointers to :CI: handler
+DEV_CE_PTRS EQU     0FEE2H      ; Pointer to list with pointers to :CE: handler
+DEV_CO_PTRS EQU     0FEE4H      ; Pointer to list with pointers to :CO: handler
 
 ;
 ; TOS standard files
@@ -100,7 +129,7 @@ FM_NO_CLOSE EQU     040H        ; Don't close file flag
 
         ORG         SIGNATURE
         DB          'RELEAS'
-        DB          '106'
+        DB          '107'
 
 
 ;//////////////////////////////////////////////////////////////////////////////
@@ -129,6 +158,8 @@ parse_next_argument:
         JC          parse_first_char
         SUI         'a' - 'A'
 parse_first_char:
+        CPI         'C'
+        JZ          console_handlers_arg
         ;
         ; Select offset to sub-list in list of file pointers
         ;
@@ -213,7 +244,127 @@ release_file:
         JMP         parse_next_argument
 
 
+;//////////////////////////////////////////////////////////////////////////////
+
+console_handlers_arg:
+        CALL        INCHAR
+        RC
+        CPI         'Z'+1
+        JC          parse_console_handler_second_char
+        SUI         'a' - 'A'
+parse_console_handler_second_char:
+        CPI         'I'
+        JZ          restore_ci
+        CPI         'E'
+        JZ          restore_ce
+        CPI         'O'
+        JZ          restore_co
+        JMP         invalid_parameter
+
+
 ;//////////////////////////////////////
+
+restore_ci:
+        ;
+        ; Point to list of :CI: handler pointers
+        ;
+        LHLD        DEV_CI_PTRS
+replace_next_ci_handler_ptr_loop:
+        ;
+        ; Get next pointer from list
+        ;
+        MOV         E,M
+        INX         H
+        MOV         D,M
+        ;
+        ; Check if we are at the end of the list
+        ;
+        MOV         A,E
+        ORA         D
+        JZ          parse_next_argument
+        INX         H
+        ;
+        ; Restore one pointer to :CI: handler
+        ;
+        PUSH        H
+        XCHG
+        LXI         D,TTI
+        MOV         M,E
+        INX         H
+        MOV         M,D
+        POP         H
+        JMP         replace_next_ci_handler_ptr_loop
+
+
+;//////////////////////////////////////
+
+restore_ce:
+        ;
+        ; Point to list of :CE: handler pointers
+        ;
+        LHLD        DEV_CE_PTRS
+replace_next_ce_handler_ptr_loop:
+        ;
+        ; Get next pointer from list
+        ;
+        MOV         E,M
+        INX         H
+        MOV         D,M
+        ;
+        ; Check if we are at the end of the list
+        ;
+        MOV         A,E
+        ORA         D
+        JZ          parse_next_argument
+        INX         H
+        ;
+        ; Restore one pointer to :CE: handler
+        ;
+        PUSH        H
+        XCHG
+        LXI         D,TTI
+        MOV         M,E
+        INX         H
+        MOV         M,D
+        POP         H
+        JMP         replace_next_ce_handler_ptr_loop
+
+
+;//////////////////////////////////////
+
+restore_co:
+        ;
+        ; Point to list of :CO: handler pointers
+        ;
+        LHLD        DEV_CO_PTRS
+replace_next_co_handler_ptr_loop:
+        ;
+        ; Get next pointer from list
+        ;
+        MOV         E,M
+        INX         H
+        MOV         D,M
+        ;
+        ; Check if we are at the end of the list
+        ;
+        MOV         A,E
+        ORA         D
+        JZ          parse_next_argument
+        INX         H
+        ;
+        ; Restore one pointer to :CO: handler
+        ;
+        PUSH        H
+        XCHG
+        LXI         D,TTO
+        MOV         M,E
+        INX         H
+        MOV         M,D
+        POP         H
+        JMP         replace_next_co_handler_ptr_loop
+
+
+;//////////////////////////////////////////////////////////////////////////////
 
 invalid_parameter:
         ;
