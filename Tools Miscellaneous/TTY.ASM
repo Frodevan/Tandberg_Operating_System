@@ -27,6 +27,13 @@
 ;//
 ;//                 -> Version ID written to 0x2700
 ;//
+;//             1.7: Entry at 0xC000
+;//
+;//                 -> Adds support for new Rx buffer location at 0x24E0
+;//                 -> Adds a bug that the new Rx buffer location is only selected
+;//                    if XMON starts with a 0x00 tag, not the more typical 0x7F
+;//                    tag of XMON/F and XMON/23.
+;//
 
 
 ;//////////////////////////////////////////////////////////////////////////////
@@ -62,6 +69,8 @@ XMIO        EQU     000CAH      ; Main UART output
 ;
 ; XMON and TOS system data
 ;
+XMON_TAG    EQU     00000H      ; Identifier set to different values depending on XMON type
+RCVBUF_NEW  EQU     024E0H      ; Main UART input buffer for XMON/F and XMON/23
 RCVBUF      EQU     025E0H      ; Main UART input buffer
 SIGNATURE   EQU     02700H      ; Program signature
 KEYBUF      EQU     02780H      ; Console input buffer
@@ -75,7 +84,7 @@ KEYBUF      EQU     02780H      ; Console input buffer
 
         ORG         SIGNATURE
         DB          'TTY',NULL,NULL,NULL
-        DB          '106'
+        DB          '107'
 
 
 ;//////////////////////////////////////////////////////////////////////////////
@@ -360,9 +369,18 @@ get_next_char:
         CALL        XMIO
 check_serial_in:
         ;
+        ; Choose location of serial port buffer based on XMON type
+        ;
+        LXI         D,RCVBUF_NEW
+        LDA         XMON_TAG
+        ANA         A
+        JZ          xmon_check_done
+        LXI         D,RCVBUF
+xmon_check_done:
+        ;
         ; Check for pending serial port input
         ;
-        LDA         RCVBUF
+        LDAX        D
         ANA         A
         JZ          get_next_char
         ;
