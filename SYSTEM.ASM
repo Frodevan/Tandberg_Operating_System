@@ -101,6 +101,10 @@
 ;//                    the tape drives
 ;//                 -> Minor tweaks and fixes
 ;//
+;//             v1.81: Entry at 0xD516
+;//
+;//                 -> No functional differences from v1.8 in the SYSTEM kernel
+;//
 
 
 ;//////////////////////////////////////////////////////////////////////////////
@@ -996,7 +1000,7 @@ error_str:
 newline_str:
         DB          CR
 title_str:
-        DB          'TOS21 VER. 1.8',CR
+        DB          'TOS21 VER. 1.81',CR
 
 
 ;//////////////////////////////////////////////////////////////////////////////

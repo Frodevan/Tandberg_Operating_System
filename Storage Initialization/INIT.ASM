@@ -104,6 +104,18 @@
 ;//                 -> Prints status message before reloading system on exit
 ;//                 -> Fixes the label-record bug from the Early versions
 ;//
+;//             v1.9: Entry at 0x8000
+;//
+;//                 -> Will no longer automatically abort if drive not ready at the
+;//                    start of the initalization, a second prompt for putting in a
+;//                    disk will be provided instead. Continuing from this prompt
+;//                    will go on with the initialization no matter if the drive is
+;//                    ready or not.
+;//                 -> Flushes excess input after 'Again?' prompt from v1.7,
+;//                    allowing for longer answers such as 'yes' and 'no'
+;//                 -> Will re-prompt for system disk if the floppy disk drive is
+;//                    not ready when trying to load the system
+;//
 
 
 ;//////////////////////////////////////////////////////////////////////////////
@@ -168,6 +180,11 @@ PUTSTR      EQU     0FD15H      ; Output string of characters, exclusive CR
 CI_FCB      EQU     0FF00H      ; Console input abstract file FCB pointer
 CO_FCB      EQU     0FF02H      ; Console output abstract file FCB pointer
 
+;
+; TOS Errors
+;
+ERROR_08    EQU     008H        ; DRIVE NOT READY
+
 
 ;//////////////////////////////////////////////////////////////////////////////
 ;//
@@ -177,7 +194,7 @@ CO_FCB      EQU     0FF02H      ; Console output abstract file FCB pointer
 
         ORG         SIGNATURE
         DB          'INIT',NULL,NULL
-        DB          '108'
+        DB          '109'
 
 
 ;//////////////////////////////////////////////////////////////////////////////
@@ -524,10 +541,25 @@ prep_next_sector_address_mark:
         ;
 write_low_level_track:
         ;
-        ; Wait for disk controller to be ready and prepare for write
+        ; Wait for disk controller to be ready
         ;
         CALL        DSWT
-        JC          operation_aborted
+        JNC         drive_ready
+        CPI         ERROR_08
+        STC
+        JNZ         operation_aborted
+        ;
+        ; Prompt user to insert disk
+        ;
+insert_disk_prompt:
+        LXI         D,insert_disk_prompt_str
+        MVI         A,'C'
+        CALL        prompt_for_char
+        JC          insert_disk_prompt
+drive_ready:
+        ;
+        ; Prepare for write
+        ;
         MVI         A,5
         STA         write_retry_countdown
 start_formatting_track:
@@ -910,6 +942,9 @@ first_track_pattern_set:
         DW          deleted_file_record_pattern
         DW          deleted_file_record_pattern
 
+prompt_target_char:
+        DB          NULL
+
 blank_sector_pattern:
         DB            6
         DB            6, 0FFH, 000H
@@ -1161,8 +1196,18 @@ init_again_prompt:
         JMP         init_again_prompt
 
 parse_init_again_prompt:
-        CALL        TTO
         PUSH        PSW
+        ;
+        ; Flush remaining input from prompt
+        ;
+flush_init_again_prompt:
+        CALL        TTO
+        CALL        TTI
+        CPI         CR
+        JNZ         flush_init_again_prompt
+        ;
+        ; Print newline and check input char
+        ;
         LXI         D,newline_str
         CALL        print_str
         POP         PSW
@@ -1202,7 +1247,13 @@ reload_system_and_exit:
         XRA         A
         LXI         H,system_filename_str
         CALL        LOADD
-        JC          ERR
+        JNC         run_system
+        CPI         ERROR_08
+        STC
+        JNZ         ERR
+        JMP         quit
+
+run_system:
         PCHL
 
 
@@ -1257,6 +1308,80 @@ operation_interrupted:
 ;//
 ;//     Subroutines
 ;//
+;//////////////////////////////////////////////////////////////////////////////
+
+        ;
+        ; Prompt for target response from A with string pointed to by DE
+        ;
+prompt_for_char:
+        ;
+        ; Print prompt and get input
+        ;
+        STA         prompt_target_char
+        CALL        print_str
+        CALL        TTI
+        CALL        TTO
+        CALL        to_uppercase
+        MOV         C,A
+        LDA         prompt_target_char
+        ;
+        ; Check input against requested char
+        ;
+        CMP         C
+        JZ          flush_char_prompt
+        MVI         A,BEL
+        CALL        TTO
+        MOV         A,C
+        STC
+        RET
+
+
+;//////////////////////////////////////
+
+        ;
+        ; Handle autoscrolling after single-character prompt
+        ;
+flush_char_prompt:
+        ;
+        ; Flush prompt until end of input, and move cursor to next line
+        ;
+        CALL        TTI
+        CPI         CR
+        JNZ         flush_char_prompt
+        CALL        TTO
+        MVI         A,LF
+        CALL        TTO
+        ;
+        ; Check autoscroll flag for line number if no autoscroll
+        ;
+        LDA         ROLLSW
+        ANA         A
+        JZ          prompt_char_end
+        ;
+        ; Manually scroll if cursor is at the very last line
+        ;
+        CPI         'Y'
+        JC          prompt_char_no_need_to_scroll
+        LDA         ROLLSW
+        CALL        TTO
+        JMP         prompt_char_end
+
+prompt_char_no_need_to_scroll:
+        ;
+        ; Update autoscroll flag line number
+        ;
+        INR         A
+        STA         ROLLSW
+prompt_char_end:
+        ;
+        ; Recover response to prompt
+        ;
+        MOV         A,C
+        ANA         A
+        RET
+
+
+
 ;//////////////////////////////////////////////////////////////////////////////
 
         ;
@@ -1347,6 +1472,8 @@ sys_disk_prompt_str:
         DB          'INSERT SYSTEM DISKETTE IN DRIVE 0, TYPE "C" TO CONTINUE: ',BEL,ETX
 reload_str:
         DB          'RE-LOAD OF OPERATING SYSTEM',CR,ETX
+insert_disk_prompt_str:
+        DB          'INSERT DISKETTE TO BE CREATED ,TYPE "C" TO CONTINUE : ',BEL,ETX
 
 
 ;//////////////////////////////////////////////////////////////////////////////
