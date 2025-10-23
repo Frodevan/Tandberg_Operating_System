@@ -2,25 +2,23 @@
 ;//
 ;//     DGEN - Copy all files from floppy to floppy
 ;//
-;//         Extra parameters:
-;//
-;//             [$Y]
-;//
-;//                 Y       Immediately start the transfer
-;//
-;//
 ;//         Copy every single file from floppy disk :F0: to floppy :F1:, using TOS
 ;//         system-calls to do the binary transfers. If a file already exsists on
 ;//         the target floppy, the copying of that file is skipped.
 ;//
-;//         Files with the format or direct-access attributes will not be included
-;//         in the copy.
+;//         Files with the alias attribute, or the first four files on the disk
+;//         will not be included in the copy.
 ;//
 ;//         NOTE: Supports 54KB user-RAM. However, TOS v1.7 or more recent is
 ;//               required to run this version.
 ;//
-;//         NOTE: Due to a bug, at least 48KB user-RAM is required to prevent a
-;//               full system crash when copying large files.
+;//         NOTE: Due to a bug, files with the X or W attributes set may cause
+;//               problems when copied by this program.
+;//
+;//         NOTE: Due to a bug, if the file size of a source file is an exact
+;//               multiple of the buffer size, incl. the case of an empty file, the
+;//               contents of the entire 64KB memory space of the computer will be
+;//               appended to the end of the file copy.
 ;//
 ;//
 ;//         Changelog:
@@ -52,6 +50,25 @@
 ;//                 -> Ignonres files with the Direct-Access attribute set as well
 ;//                 -> Copies over any other attributes
 ;//
+;//             1.8: Entry at 0xCD9A
+;//
+;//                 -> Total rewrite, but retaining much the same features as v1.7
+;//                 -> No version ID at 0x2700
+;//                 -> No extra parameters
+;//                 -> Uses XMON API calls to check the file-dictionary, and
+;//                    PHYSINT to prepare files for opening. This is in comparison
+;//                    to static structures and TOS-calls to open files as done in
+;//                    earlier versions.
+;//                 -> Does not copy Aliases, or the first four files in the file
+;//                    table on the source disk.
+;//                 -> Has a bug where a newline single-char print is calling the
+;//                    API call for print string instead
+;//                 -> Introduces a bug where the file attribute byte of the source
+;//                    file is written to the media type of the target file FCB
+;//                    before the target file is being opened for writing.
+;//                 -> Introduces a bug where the buffer is not checked against a
+;//                    length of zero before writing data to file.
+;//
 
 
 ;//////////////////////////////////////////////////////////////////////////////
@@ -61,20 +78,19 @@
 ;//////////////////////////////////////////////////////////////////////////////
 
 ;
-; Flag values
-;
-FALSE       EQU     0           ; Boolean False
-TRUE        EQU     -1          ; Boolean True
-
-;
 ; ASCII control characters
 ;
 NULL        EQU     000H        ; Null character
+LF          EQU     00AH        ; Line Feed
 CR          EQU     00DH        ; Cartridge Return
 
 ;
 ; XMON system calls
 ;
+TTI         EQU     00040H      ; Console input
+TTO         EQU     00043H      ; Console output
+DSRD        EQU     0005BH      ; Read from disk without wait
+DSWT        EQU     0006DH      ; Wait for floppy disk controller
 DSWRW       EQU     00076H      ; Write to disk with wait
 LOCDIR      EQU     00085H      ; Look up filetable entry of filename on disk
 
@@ -82,7 +98,6 @@ LOCDIR      EQU     00085H      ; Look up filetable entry of filename on disk
 ; XMON and TOS system data
 ;
 BUF2        EQU     02600H      ; Sector data of last filesystem operation
-SIGNATURE   EQU     02700H      ; Program signature
 TRK         EQU     02731H      ; Pointer to block address of next directory data block
 
 ;
@@ -92,44 +107,34 @@ INCHAR      EQU     0FD09H      ; Input single character
 OUTCHAR     EQU     0FD0CH      ; Output single character
 PUT         EQU     0FD12H      ; Output string of characters, inclusive CR
 PUTSTR      EQU     0FD15H      ; Output string of characters, exclusive CR
-GETBIN      EQU     0FD18H      ; Input a given number of raw bytes
 OPEN        EQU     0FD1EH      ; Open block device
 CLOSE       EQU     0FD27H      ; Close block device
+PHYSINT     EQU     0FDDFH      ; Initialize FCB from full file designator
 
 ;
 ; TOS constants
 ;
-TABIN_PTR   EQU     0FDEAH      ; Pointer to Intel floppy disk device driver
 RAMST       EQU     0FDFCH      ; Address to start of user-RAM
 
 ;
 ; TOS standard files
 ;
-CI_FCB      EQU     0FF00H      ; Console input abstract file FCB pointer
 CO_FCB      EQU     0FF02H      ; Console output abstract file FCB pointer
 
 ;
 ; TOS Errors
 ;
-ERROR_32    EQU     032H        ; OUTPUT FILE ALREADY ON DISKETTE
+ERROR_08    EQU     008H        ; DRIVE NOT READY
 
 ;
 ; TOS file attributes
 ;
-ATTR_X      EQU     040H        ; Direct-access file
-ATTR_F      EQU     080H        ; Format file
+ATTR_A      EQU     008H        ; Alias file
 
 ;
 ; TOS File Control Block, block device variables
 ;
-FCB_MODE    EQU     001H        ; File mode
-FCB_BUFLEN  EQU     004H        ; Length of block/buffered-device data buffer
-FCB_READ    EQU     008H        ; Device-driver Read API call
-FCB_WRITE   EQU     00AH        ; Device-driver Write API call
-FCB_OPEN    EQU     00CH        ; Device-driver Open API call
-FCB_CLOSE   EQU     00EH        ; Device-driver Close API call
-FCB_FNAME   EQU     012H        ; Filename string
-FCB_FEXT    EQU     FCB_FNAME+6 ; File extension string
+FCB_DRVFMT  EQU     01BH        ; Media format
 
 ;
 ; FCB mode flags
@@ -141,132 +146,167 @@ FM_BINARY   EQU     004H        ; Binary flag
 
 ;//////////////////////////////////////////////////////////////////////////////
 ;//
-;//     Signature
-;//
-;//////////////////////////////////////////////////////////////////////////////
-
-        ORG         SIGNATURE
-        DB          'DGEN',NULL,NULL
-        DB          '107'
-
-
-;//////////////////////////////////////////////////////////////////////////////
-;//
-;//     Legacy program entry
-;//
-;//////////////////////////////////////////////////////////////////////////////
-
-        ORG         0C800H
-program_origin:
-        JMP         beginning
-
-
-;//////////////////////////////////////////////////////////////////////////////
-;//
 ;//     Data
 ;//
 ;//////////////////////////////////////////////////////////////////////////////
 
-data_buffer_length:
-        DW          0
-data_buffer_free:
-        DW          0
-data_buffer_chars:
-        DW          0
-data_buffer_ptr:
-        DW          00000H
-
-end_of_file_flag:
-        DB          FALSE
-file_attributes:
-        DB          000H
-
-;//////////////////////////////////////
-
-directory_file_fcb:
-        DB          5
-        DB          FM_BINARY
-        DW          0
-        DW          128
-        DW          dir_file_buffer
-        DS          2
-        DW          00000H
-        DS          2
-        DS          2
-        DB          0
-        DB          0
+        ORG         0C000H
+filetable_buffer:
+        DS          26*128
+filetable_filename:
         DB          'ISIS',NULL,NULL
         DB          'DIR'
-        DB          001H
-        DS          2
-        DS          1
-        DS          1
-        DW          dir_file_linking_block_buffer
 
-dir_file_buffer:
-        DS          128
-dir_file_linking_block_buffer:
-        DS          128
+output_filename_str:
+        DB          ':F1:'
+filename_str:
+        DS          16
 
-
-;//////////////////////////////////////
+input_char:
+        DB          000H
+file_attributes:
+        DB          000H
+data_buffer_end_page:
+        DB          000H
+sp_backup:
+        DW          00000H
+file_entry_ptr:
+        DW          00000H
+        DW          00000H
 
 input_file_fcb:
-        DB          5
-        DB          FM_BINARY
-        DW          0
-        DW          128
-        DW          in_file_buffer
-        DS          2
         DW          00000H
-        DS          2
-        DS          2
-        DB          0
-        DB          0
-        DS          9
-        DB          001H
-        DS          2
-        DS          1
-        DS          1
-        DW          in_file_linking_block_buffer
-
-in_file_buffer:
-        DS          128
-in_file_linking_block_buffer:
-        DS          128
-
-
-;//////////////////////////////////////
-
 output_file_fcb:
-        DB          5
-        DB          FM_BINARY
-        DW          0
-        DW          128
-        DW          out_file_buffer
         DW          00000H
-        DS          2
-        DS          2
-        DS          2
-        DB          0
-        DB          1
-        DS          9
-        DB          001H
-        DS          2
-        DS          1
-        DS          1
-        DW          out_file_linking_block_buffer
-
-out_file_buffer:
-        DS          128
-out_file_linking_block_buffer:
-        DS          128
 
 
-;//////////////////////////////////////
+;//////////////////////////////////////////////////////////////////////////////
+;//
+;//     Subroutines
+;//
+;//////////////////////////////////////////////////////////////////////////////
 
-flush_outlet:
-        DS          16
+read_remaining_track:
+        ;
+        ; Read next sector in track from disk 0
+        ;
+        MVI         A,0
+        INR         C
+        CALL        DSRD
+        RC
+        ;
+        ; Check if last sector of track
+        ;
+        MOV         A,C
+        CPI         26
+        RZ
+        ;
+        ; Advance to next sector and wait for disk controller
+        ;
+        LXI         D,128
+        DAD         D
+        CALL        DSWT
+        RC
+        JMP         read_remaining_track
+
+
+;//////////////////////////////////////////////////////////////////////////////
+
+prepare_filename_str:
+        ;
+        ; Copy filename into string buffer
+        ;
+        LXI         D,filename_str
+        MVI         B,6
+        CALL        copy_part_of_filename
+        MVI         A,'.'
+        STAX        D
+        INX         D
+        MVI         B,3
+        CALL        copy_part_of_filename
+        MVI         A,CR
+        STAX        D
+        ;
+        ; Remove file extension deliminer if no file extension
+        ;
+        DCX         D
+        LDAX        D
+        CPI         '.'
+        RNZ
+        MVI         A,CR
+        STAX        D
+        RET
+
+
+;//////////////////////////////////////////////////////////////////////////////
+
+        ;
+        ; Copy string of given length, skipping any NULL chars
+        ;
+copy_part_of_filename:
+        MOV         A,M
+        INX         H
+        ORA         A
+        JZ          filename_char_done
+        STAX        D
+        INX         D
+filename_char_done:
+        DCR         B
+        JNZ         copy_part_of_filename
+        RET
+
+
+;//////////////////////////////////////////////////////////////////////////////
+
+open_input_file:
+        ;
+        ; Create input file FCB
+        ;
+        MVI         A,0
+        CALL        PHYSINT
+        RC
+        ;
+        ; Open file for reading
+        ;
+        MVI         A,FM_INPUT
+        CALL        OPEN
+        RC
+        SHLD        input_file_fcb
+        ;
+        ; Set file to binary mode
+        ;
+        INX         H
+        MOV         A,M
+        ORI         FM_BINARY       ; input_file_fcb + FCB_MODE
+        MOV         M,A
+        DCX         H
+        RET
+
+
+;//////////////////////////////////////////////////////////////////////////////
+
+open_output_file:
+        ;
+        ; Create output file FCB
+        ;
+        MVI         A,1
+        CALL        PHYSINT
+        RC
+        SHLD        output_file_fcb
+        ;
+        ; Bug: Author mixed up the FCB and file-entry datastructs
+        ;
+        LXI         D,FCB_DRVFMT
+        DAD         D
+        LDA         file_attributes
+        MOV         M,A
+        ;
+        ; Open file for writing
+        ;
+        LHLD        output_file_fcb
+        MVI         A,FM_OUTPUT
+        CALL        OPEN
+        RET
 
 
 ;//////////////////////////////////////////////////////////////////////////////
@@ -276,347 +316,253 @@ flush_outlet:
 ;//////////////////////////////////////////////////////////////////////////////
 
 start:
-beginning:
         ;
-        ; Set start of buffer to start of user-RAM
+        ; Save stack pointer for breaking out of program from subroutines
         ;
-        LHLD        RAMST
-        SHLD        data_buffer_ptr
+        LXI         H,00000H
+        DAD         SP
+        SHLD        sp_backup
         ;
-        ; Subtract with program start and buffer start to get buffer length
+        ; Print welcome prompt
         ;
-        LXI         D,program_origin
-        MOV         A,E
-        CMA
-        MOV         E,A
-        MOV         A,D
-        CMA
-        MOV         D,A
-        INX         D
-        DAD         D
-        SHLD        data_buffer_length
-        ;
-        ; Print welcome prompt and check response
-        ;
-        LXI         D,welcome_prompt_str
         LHLD        CO_FCB
+        LXI         D,welcome_prompt_str
         CALL        PUTSTR
         RC
-        LHLD        CI_FCB
-        CALL        INCHAR
+        ;
+        ; Wait for user response
+        ;
+        MVI         A,0
+        ANA         A
+wait_for_user_input:
+        STA         input_char
+        CALL        TTI
+        CALL        TTO
         RC
+        CPI         CR
+        JNZ         wait_for_user_input
+        ;
+        ; Check prompt input
+        ;
+        LDA         input_char
         CPI         'Y'
         JZ          start_copying
         CPI         'y'
         JZ          start_copying
         ANA         A
-        RET
+        JMP         exit_program
 
 start_copying:
-        ;
-        ; Clear any remaining input from console
-        ;
-flush_excess_input:
-        CALL        INCHAR
-        RC
-        CPI         CR
-        JNZ         flush_excess_input
-        ;
-        ; Assign Intel Floppy device driver to input files
-        ;
-        LHLD        TABIN_PTR
-        SHLD        directory_file_fcb + FCB_OPEN
-        SHLD        input_file_fcb + FCB_OPEN
-        LXI         D,006H
-        DAD         D
-        SHLD        directory_file_fcb + FCB_READ
-        SHLD        input_file_fcb + FCB_READ
-        DAD         D
-        SHLD        directory_file_fcb + FCB_CLOSE
-        SHLD        input_file_fcb + FCB_CLOSE
-        ;
-        ; Assign Intel Floppy device driver to output file
-        ;
-        LHLD        TABIN_PTR
-        LXI         B,003H
-        DAD         B
-        SHLD        output_file_fcb + FCB_OPEN
-        DAD         D
-        SHLD        output_file_fcb + FCB_WRITE
-        DAD         D
-        SHLD        output_file_fcb + FCB_CLOSE
-        ;
-        ; Open directory file for reading
-        ;
-        LXI         H,directory_file_fcb
-        MVI         A,FM_INPUT
-        CALL        OPEN
-        JC          operation_aborted
-        ;
-        ; Check each file entry of directory and copy all files found
-        ;
-check_next_file:
-        LXI         H,directory_file_fcb
-        CALL        INCHAR
-        JC          copying_done
-        ANA         A
-        JZ          file_found
-        CPI         07FH
-        RZ
-        LXI         H,directory_file_fcb
-        MVI         B,15
-        LXI         D,flush_outlet
-        CALL        GETBIN
-        JC          operation_aborted
-        JMP         check_next_file
-
-file_found:
-        ;
-        ; Get filename from directory and put into input file FCB
-        ;
-        LXI         H,directory_file_fcb
-        MVI         B,9
-        LXI         D,input_file_fcb + FCB_FNAME
-        CALL        GETBIN
-        JC          operation_aborted
-        ;
-        ; Check attributes of file, and skip if format or direct-access file
-        ;
-        CALL        INCHAR
-        JC          operation_aborted
-        STA         file_attributes
-        ANI         ATTR_F + ATTR_X
-        JZ          copy_file
-        LXI         D,flush_outlet
-        MVI         B,5
-        CALL        GETBIN
-        JC          operation_aborted
-        JMP         check_next_file
-
-copy_file:
-        ;
-        ; Flush remainder of file entry
-        ;
-        LXI         D,flush_outlet
-        MVI         B,5
-        CALL        GETBIN
-        JC          operation_aborted
-        ;
-        ; Reset FCB of input and output files
-        ;
-        LXI         H,128
-        SHLD        input_file_fcb + FCB_BUFLEN
-        SHLD        output_file_fcb + FCB_BUFLEN
-        MVI         A,FM_BINARY
-        STA         input_file_fcb + FCB_MODE
-        STA         output_file_fcb + FCB_MODE
-        ;
-        ; Open input file for reading
-        ;
-        LXI         H,input_file_fcb
-        MVI         A,FM_INPUT
-        CALL        OPEN
-        JC          operation_aborted
-        ;
-        ; Print filename of input file
-        ;
         LHLD        CO_FCB
-        LXI         D,input_file_fcb + FCB_FNAME
-        MVI         B,6
-        CALL        print_filename_part
-        RC
-        MOV         C,B
+        MVI         A,LF
+        CALL        PUT
         ;
-        ; Check for filename extension, print it if so
+        ; Try to locate filetable on source disk
         ;
-        MVI         B,3
-        INR         C
-        LDA         input_file_fcb + FCB_FEXT
+        LXI         H,filetable_filename
+        MVI         A,0
+        CALL        LOCDIR
+        JNC         src_filetable_found
+        CPI         ERROR_08
+        JZ          src_filetable_read_error
+        LHLD        CO_FCB
+        LXI         D,invalid_source_str
+        CALL        PUT
+        MVI         A,000H
         ANA         A
-        JZ          filename_printed
-        DCR         C
-        MVI         A,'.'
-        CALL        OUTCHAR
-        RC
-        LXI         D,input_file_fcb + FCB_FEXT
-        CALL        print_filename_part
-        RC
-        ;
-        ; Pad out after filename with spaces
-        ;
-filename_printed:
-        MOV         A,B
-        ADD         C
-        JZ          setup_file_copy
-        MOV         B,A
-pad_filename_print:
-        MVI         A,' '
-        CALL        OUTCHAR
-        RC
-        DCR         B
-        JNZ         pad_filename_print
-        JMP         setup_file_copy
-
-        ;
-        ; Print a string of a given length, or till first NULL
-        ;
-print_filename_part:
-        LDAX        D
-        ANA         A
-        RZ
-        CALL        OUTCHAR
-        RC
-        INX         D
-        DCR         B
-        JNZ         print_filename_part
         RET
+
+src_filetable_read_error:
+        STC
+        RET
+
+src_filetable_found:
+        ;
+        ; Load source disk filetable into buffer
+        ;
+        MVI         B,1
+        MVI         C,1
+        LXI         H,filetable_buffer
+        CALL        read_remaining_track
+        JC          exit_program
+        ;
+        ; Try to locate filetable on destination disk
+        ;
+        LXI         H,filetable_filename
+        MVI         A,1
+        CALL        LOCDIR
+        JC          dest_filetable_not_found
+        ;
+        ; Verify file with destination filetable is active
+        ;
+        MOV         A,M
+        ANA         A
+        JZ          dest_filetable_found
+dest_filetable_not_found:
+        CPI         ERROR_08
+        JNZ         dest_wrong_format
+        STC
+        RET
+
+dest_wrong_format:
+        LHLD        CO_FCB
+        LXI         D,invalid_destination_str
+        CALL        PUT
+        MVI         A,000H
+        ANA         A
+        JMP         exit_program
 
 
 ;//////////////////////////////////////
 
-setup_file_copy:
+dest_filetable_found:
         ;
-        ; Copy filename from input file FCB to output file FCB
+        ; Skip the four first files (usually filesystem/format related files)
         ;
-        LXI         D,input_file_fcb + FCB_FNAME
-        LXI         H,output_file_fcb + FCB_FNAME
-        MVI         B,9
-copy_filename_loop:
-        LDAX        D
-        MOV         M,A
-        INX         D
+        LXI         H,filetable_buffer
+        LXI         B,3*16
+        DAD         B
+        SHLD        file_entry_ptr
+check_next_file:
+        ;
+        ; Advance to next file entry
+        ;
+        LHLD        file_entry_ptr
+        LXI         B,16
+        DAD         B
+        SHLD        file_entry_ptr
+        ;
+        ; Check file-entry status
+        ;
+        MOV         A,M
+        CPI         07FH
+        JZ          program_complete
+        CPI         0FFH
+        JZ          check_next_file
+        CPI         000H
+        JNZ         program_complete
+        ;
+        ; File found, check if it already exists on target
+        ;
         INX         H
-        DCR         B
-        JNZ         copy_filename_loop
+        MVI         A,1
+        CALL        LOCDIR
+        RC
+        MOV         A,M
+        ANA         A
+        JZ          file_already_exists
         ;
-        ; Open output file for writing
+        ; Get and check file attributes
         ;
-        LXI         H,output_file_fcb
-        MVI         A,FM_OUTPUT
-        CALL        OPEN
-        JNC         read_from_source_file
-        CPI         ERROR_32
-        JZ          not_copied
-        STC
-        JMP         exit_with_error
-
-not_copied:
-        LXI         D,not_copied_str
+        LHLD        file_entry_ptr
+        LXI         B,00AH
+        DAD         B
+        MOV         A,M
+        STA         file_attributes
+        ANI         ATTR_A
+        JNZ         alias_file
+        ;
+        ; Print filename for file to be copied
+        ;
+        LHLD        file_entry_ptr
+        INX         H
+        CALL        prepare_filename_str
         LHLD        CO_FCB
+        LXI         D,copy_file_str
+        CALL        PUTSTR
+        MVI         A,CR
+        CALL        TTO
+        LXI         D,filename_str
         CALL        PUT
         RC
-        JMP         file_done
+        ;
+        ; Open input and output files for IO
+        ;
+        LXI         H,filename_str
+        CALL        open_input_file
+        JC          exit_program
+        LXI         H,output_filename_str
+        CALL        open_output_file
+        JC          exit_program
 
 
 ;//////////////////////////////////////
 
 read_from_source_file:
         ;
-        ; Flush data-buffer
+        ; Flush data-buffer and prepare to read from input file
         ;
-        LHLD        data_buffer_length
-        SHLD        data_buffer_free
-        LXI         H,0
-        SHLD        data_buffer_chars
-        ;
-        ; Read from input file into data-buffer
-        ;
-        XRA         A
-        STA         end_of_file_flag
-        LHLD        data_buffer_ptr
-        XCHG
+        LHLD        RAMST
+        MOV         B,H
+        MOV         C,L
+        LHLD        input_file_fcb
+        LXI         D,0
 read_next_source_byte:
         ;
         ; Read byte
         ;
-        LXI         H,input_file_fcb
         CALL        INCHAR
         JC          read_error
-        STAX        D
-        INX         D
+        STAX        B
+        INX         B
         ;
         ; Update data-buffer status and check if full
         ;
-        LHLD        data_buffer_chars
-        INX         H
-        SHLD        data_buffer_chars
-        LHLD        data_buffer_free
-        DCX         H
-        SHLD        data_buffer_free
-        MOV         A,L
-        ORA         H
-        JNZ         read_next_source_byte
-        JMP         write_to_file_copy
+        INX         D
+        MOV         A,B
+        CPI         0C0H
+        JZ          data_buffer_full
+        JMP         read_next_source_byte
 
 read_error:
         ;
         ; Make sure to also write the final data if only end of file
         ;
         ANA         A
-        STC
-        JNZ         exit_with_error
-        MVI         A,TRUE
-        STA         end_of_file_flag
-
-
-;//////////////////////////////////////
-
-write_to_file_copy:
-        ;
-        ; Check if the buffer is empty
-        ;
-        LHLD        data_buffer_chars
-        MOV         A,L
-        ORA         H
-        JZ          finalize_copy
+        JNZ         program_complete
+        CALL        CLOSE
+        RC
+data_buffer_full:
+        MOV         A,B
+        STA         data_buffer_end_page
         ;
         ; Write data-buffer to output file
         ;
-        LHLD        data_buffer_ptr
-        XCHG
+        LHLD        RAMST
+        MOV         B,H
+        MOV         C,L
+        LHLD        output_file_fcb
 write_next_byte_to_copy:
         ;
         ; Write byte
         ;
-        LXI         H,output_file_fcb
-        LDAX        D
-        INX         D
+        LDAX        B
         CALL        OUTCHAR
-        JC          exit_with_error
+        RC
+        INX         B
         ;
         ; Update data-buffer status and check if empty
         ;
-        LHLD        data_buffer_chars
-        DCX         H
-        SHLD        data_buffer_chars
-        MOV         A,L
-        ORA         H
+        DCX         D
+        MOV         A,D
+        ORA         E
         JNZ         write_next_byte_to_copy
-        LDA         end_of_file_flag
-        ANA         A
+        LDA         data_buffer_end_page
+        CPI         0C0H
         JZ          read_from_source_file
-
-
-;//////////////////////////////////////
-
-finalize_copy:
         ;
         ; Copy went ok, print status, close output file to update file-system
         ;
-        LXI         D,copied_ok_str
-        LHLD        CO_FCB
-        CALL        PUT
-        RC
-        LXI         H,output_file_fcb
+        LHLD        output_file_fcb
         CALL        CLOSE
-        JC          operation_aborted
+        RC
         ;
         ; Look up file entry of copy
         ;
-        LXI         H,output_file_fcb + FCB_FNAME
+        LHLD        file_entry_ptr
+        INX         H
         MVI         A,1
         CALL        LOCDIR
-        JC          operation_aborted
         ;
         ; Set file attributes to match source file
         ;
@@ -632,50 +578,66 @@ finalize_copy:
         MOV         B,M
         DCX         H
         MOV         C,M
-        MVI         A,1
         LXI         H,BUF2
+        MVI         A,1
         CALL        DSWRW
-        JC          operation_aborted
-file_done:
-        ;
-        ; Close input file
-        ;
-        LXI         H,input_file_fcb
-        CALL        CLOSE
-        JC          operation_aborted
+        RC
         JMP         check_next_file
-
-copying_done:
-        ;
-        ; No more files to copy, check if the directory file is at end of file
-        ;
-        ANA         A
-        RZ
-        STC
-        JMP         operation_aborted
 
 
 ;//////////////////////////////////////
 
-exit_with_error:
-        PUSH        PSW
-        LXI         D,newline_str
+file_already_exists:
+        ;
+        ; Set filename string
+        ;
+        LHLD        file_entry_ptr
+        INX         H
+        CALL        prepare_filename_str
+        ;
+        ; Print status message
+        ;
         LHLD        CO_FCB
+        LXI         D,file_exists_str
+        CALL        PUTSTR
+        MVI         A,CR
+        CALL        TTO
+        LXI         D,output_filename_str
         CALL        PUT
-        JC          final_string_error
-        POP         PSW
-operation_aborted:
-        PUSH        PSW
-        LXI         D,operation_aborted_str
-        LHLD        CO_FCB
-        CALL        PUT
-        JC          final_string_error
-        POP         PSW
-        RET
+        JMP         check_next_file
 
-final_string_error:
-        INX         SP
-        INX         SP
+alias_file:
+        ;
+        ; Set filename string
+        ;
+        LHLD        file_entry_ptr
+        INX         H
+        CALL        prepare_filename_str
+        ;
+        ; Print status message
+        ;
+        LHLD        CO_FCB
+        LXI         D,alias_str
+        CALL        PUTSTR
+        MVI         A,CR
+        CALL        TTO
+        LXI         D,filename_str
+        CALL        PUT
+        RC
+        JMP         check_next_file
+
+program_complete:
+        ;
+        ; Clear any potential error codes and print program complete status
+        ;
+        MVI         A,000H
+        ANA         A
+        LHLD        CO_FCB
+        LXI         D,program_complete_str
+        CALL        PUT
+exit_program:
+        LHLD        sp_backup
+        SPHL
         RET
 
 
@@ -686,12 +648,16 @@ final_string_error:
 ;//////////////////////////////////////////////////////////////////////////////
 
 welcome_prompt_str:
-        DB          'DATASET COPY FROM DISKETTE 0 TO DISKETTE 1 - TYPE Y TO START ',CR
-not_copied_str:
-        DB          ' NOT'
-copied_ok_str:
-        DB          ' COPIED',CR
-operation_aborted_str:
-        DB          'OPERATION ABORTED',CR
-newline_str:
-        DB          CR
+        DB          'File copy from :F0: to :F1:  Ready ? (Y/N): ',CR
+file_exists_str:
+        DB          '              :  Exists  ',CR
+copy_file_str:
+        DB          '              :  Copy   to  :F1: ',CR
+alias_str:
+        DB          '              :  Alias name.   No copy ',CR
+program_complete_str:
+        DB          '              :  Operation   completed',CR
+invalid_destination_str:
+        DB          'Diskette in drive 1 is not Tandberg formatted',CR
+invalid_source_str:
+        DB          'Diskette in drive 0 is not Tandberg formatted',CR
