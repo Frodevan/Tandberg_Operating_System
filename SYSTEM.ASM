@@ -50,6 +50,14 @@
 ;//                 -> Pre-release version for v1.4
 ;//                 -> Experimental IBM floppy disk support
 ;//
+;//             v1.4: Entry at 0xE000
+;//
+;//                 -> Adds device-files :CE: and :RE:
+;//                 -> A few bugs are fixed, in particular memory-leaks and
+;//                    the EBCDIC translation tables
+;//                 -> Some new bugs are introduced, for instance the system
+;//                    crashes after writing a file to tape
+;//
 
 
 ;//////////////////////////////////////////////////////////////////////////////
@@ -68,7 +76,9 @@ TRUE        EQU     1           ; Boolean True
 ; ASCII control characters
 ;
 NULL        EQU     000H        ; Null character
+ETX         EQU     003H        ; End of text
 ERLIN       EQU     004H        ; Erase current line
+BEL         EQU     007H        ; Bell (short beep)
 CURL        EQU     008H        ; Cursor left
 HTAB        EQU     009H        ; Horizontal tabulation
 LF          EQU     00AH        ; Line Feed
@@ -90,53 +100,53 @@ DISK_SECTOR EQU     00001H      ; Multiplier for floppy disk sector
 ; XMON system calls
 ;
 RESET       EQU     00000H      ; Reset XMON, can be used to trigger debugger
-X_TTI       EQU     00040H      ; Console input
-X_TTO       EQU     00043H      ; Console output
-X_TTONC     EQU     00046H      ; Console output, without control character handling
-X_CURSOR    EQU     00049H      ; Set console cursor position
-X_XMON      EQU     0004CH      ; Run monitor
-X_ERR       EQU     0004FH      ; Throw an error
-X_PRNT      EQU     00052H      ; Printer port output
-X_DTST      EQU     00055H      ; Test disk drive
-X_DCAL      EQU     00058H      ; Reset disk drive
-X_DSRD      EQU     0005BH      ; Read from disk
-X_DSWR      EQU     0005EH      ; Write to disk
-X_DSDL      EQU     00061H      ; Write deleted to disk
-X_DSRDA     EQU     00064H      ; Read from disk and translate EBCDIC to ASCII
-X_DSWRA     EQU     00067H      ; Translate ASCII to EBCDIC and write to disk
-X_INDISP    EQU     0006AH      ; Read character at console cursor
-X_DSWT      EQU     0006DH      ; Wait for floppy disk controller
-X_DCALW     EQU     00070H      ; Reset disk drive with wait
-X_DSRDW     EQU     00073H      ; Read from disk with wait
-X_DSWRW     EQU     00076H      ; Write to disk with wait
-X_DSDLW     EQU     00079H      ; Write deleted to disk with wait
-X_DSRAW     EQU     0007CH      ; Read from disk with wait and translate EBCDIC to ASCII
-X_DSWAW     EQU     0007FH      ; Translate ASCII to EBCDIC and write to disk with wait
-X_RCVI      EQU     00082H      ; Main UART input
-X_LOCDIR    EQU     00085H      ; Look up filetable entry of filename on disk
-X_LOADD     EQU     00088H      ; Load and unpack file from floppy disk to memory
-X_LINKD     EQU     0008BH      ; Load and unpack file from floppy disk to memory, and run it
-X_CTST      EQU     0008EH      ; Test tape cartridge
-X_CCAL      EQU     00091H      ; Reset tape cartridge
-X_CBRD      EQU     00094H      ; Read data from tape cartridge
-X_CBWR      EQU     00097H      ; Write data to tape cartridge
-X_CBBS      EQU     0009AH      ; Backspace one block on tape cartridge
-X_CBTM      EQU     0009DH      ; Write tape mark to tape cartridge
-X_CBSF      EQU     000A0H      ; Search forward on tape cartridge
-X_CBSB      EQU     000A3H      ; Search backwards on tape cartridge
-X_CUN       EQU     000A6H      ; Rewind and unload tape cartridge
-X_CRW       EQU     000A9H      ; Rewind tape cartridge with wait
-X_CWT       EQU     000ACH      ; Wait for tape command complete
-X_CBRDW     EQU     000AFH      ; Read data from tape cartridge with wait
-X_CBWRW     EQU     000B2H      ; Write data to tape cartridge with wait
-X_CBBSW     EQU     000B5H      ; Backspace one block on tape cartridge with wait
-X_CBTMW     EQU     000B8H      ; Write tape mark to tape cartridge with wait
-X_CBSFW     EQU     000BBH      ; Search forward on tape cartridge with wait
-X_CBSBW     EQU     000BEH      ; Search backwards on tape cartridge with wait
-X_CLOCDIR   EQU     000C1H      ; Look up filetable entry of filename on tape
-X_CLOAD     EQU     000C4H      ; Load and unpack file from tape cartridge to memory
-X_CLINK     EQU     000C7H      ; Load and unpack file from tape cartridge to memory, and run it
-X_XMIO      EQU     000CAH      ; Main UART output
+TTI         EQU     00040H      ; Console input
+TTO         EQU     00043H      ; Console output
+TTONC       EQU     00046H      ; Console output, without control character handling
+CURSOR      EQU     00049H      ; Set console cursor position
+XMON        EQU     0004CH      ; Run monitor
+ERR         EQU     0004FH      ; Throw an error
+PRNT        EQU     00052H      ; Printer port output
+DTST        EQU     00055H      ; Test disk drive
+DCAL        EQU     00058H      ; Reset disk drive
+DSRD        EQU     0005BH      ; Read from disk
+DSWR        EQU     0005EH      ; Write to disk
+DSDL        EQU     00061H      ; Write deleted to disk
+DSRDA       EQU     00064H      ; Read from disk and translate EBCDIC to ASCII
+DSWRA       EQU     00067H      ; Translate ASCII to EBCDIC and write to disk
+INDISP      EQU     0006AH      ; Read character at console cursor
+DSWT        EQU     0006DH      ; Wait for floppy disk controller
+DCALW       EQU     00070H      ; Reset disk drive with wait
+DSRDW       EQU     00073H      ; Read from disk with wait
+DSWRW       EQU     00076H      ; Write to disk with wait
+DSDLW       EQU     00079H      ; Write deleted to disk with wait
+DSRAW       EQU     0007CH      ; Read from disk with wait and translate EBCDIC to ASCII
+DSWAW       EQU     0007FH      ; Translate ASCII to EBCDIC and write to disk with wait
+RCVI        EQU     00082H      ; Main UART input
+LOCDIR      EQU     00085H      ; Look up filetable entry of filename on disk
+LOADD       EQU     00088H      ; Load and unpack file from floppy disk to memory
+LINKD       EQU     0008BH      ; Load and unpack file from floppy disk to memory, and run it
+CTST        EQU     0008EH      ; Test tape cartridge
+CCAL        EQU     00091H      ; Reset tape cartridge
+CBRD        EQU     00094H      ; Read data from tape cartridge
+CBWR        EQU     00097H      ; Write data to tape cartridge
+CBBS        EQU     0009AH      ; Backspace one block on tape cartridge
+CBTM        EQU     0009DH      ; Write tape mark to tape cartridge
+CBSF        EQU     000A0H      ; Search forward on tape cartridge
+CBSB        EQU     000A3H      ; Search backwards on tape cartridge
+CUN         EQU     000A6H      ; Rewind and unload tape cartridge
+CRW         EQU     000A9H      ; Rewind tape cartridge with wait
+CWT         EQU     000ACH      ; Wait for tape command complete
+CBRDW       EQU     000AFH      ; Read data from tape cartridge with wait
+CBWRW       EQU     000B2H      ; Write data to tape cartridge with wait
+CBBSW       EQU     000B5H      ; Backspace one block on tape cartridge with wait
+CBTMW       EQU     000B8H      ; Write tape mark to tape cartridge with wait
+CBSFW       EQU     000BBH      ; Search forward on tape cartridge with wait
+CBSBW       EQU     000BEH      ; Search backwards on tape cartridge with wait
+CLOCDIR     EQU     000C1H      ; Look up filetable entry of filename on tape
+CLOAD       EQU     000C4H      ; Load and unpack file from tape cartridge to memory
+CLINK       EQU     000C7H      ; Load and unpack file from tape cartridge to memory, and run it
+XMIO        EQU     000CAH      ; Main UART output
 RD32        EQU     000CDH      ; Read next 32-byte block from tape cartridge
 VERIFY      EQU     000D0H      ; Verify tape cartridge block type
 
@@ -169,7 +179,7 @@ TIMER       EQU     027BDH      ; Oneshot-timer countdown in 20ms intervals
 ;
 ; TOS Errors
 ;
-ERROR_00    EQU     000H        ; END OF FILE
+ERROR_09    EQU     009H        ; NAME NOT IN DIR AND DIR FULL
 ERROR_0A    EQU     00AH        ; NAME NOT IN DIRECTORY
 ERROR_0B    EQU     00BH        ; PROGRAM NAME NOT FOUND
 ERROR_0C    EQU     00CH        ; ILLEGAL DIRECTORY ENTRY
@@ -208,6 +218,7 @@ ERROR_34    EQU     034H        ; FILENAME > 8 CHARACTERS
 ERROR_3C    EQU     03CH        ; OUTPUT FILE ALREADY ON CARTR.
 ERROR_3D    EQU     03DH        ; NO MORE SPACE ON CARTRIDGE
 ERROR_3E    EQU     03EH        ; INPUT FILE OVERRUN
+ERROR_40    EQU     040H        ; END OF TAPE ERROR
 ERROR_48    EQU     048H        ; TAPE MARK DETECTED
 ERROR_57    EQU     057H        ; CARTRIDGE EXTRA BLOCKS IN FILE
 ERROR_5A    EQU     05AH        ; INCORRECT NAME IN HEADER BLOCK
@@ -217,6 +228,7 @@ ERROR_5A    EQU     05AH        ; INCORRECT NAME IN HEADER BLOCK
 ;
 ATTR_I      EQU     001H        ; Invisible file
 ATTR_S      EQU     002H        ; System file
+ATTR_W      EQU     004H        ; Write-protected file
 
 ;
 ; TOS File Control Block, block device variables
@@ -258,16 +270,6 @@ BUFLST_ACTV EQU     000H        ; Active element of chained list of buffers
 BUFLST_HEAD EQU     080H        ; Head element of chained list of buffers
 BUFLST_INAC EQU     0FFH        ; Released element of chained list
 
-;
-; TOS Device driver tables
-;
-TAB_OPEN_I  EQU     000H        ; Device driver open input routine
-TAB_OPEN_O  EQU     003H        ; Device driver open output routine
-TAB_READ_I  EQU     006H        ; Device driver read input routine
-TAB_WRITE_O EQU     009H        ; Device driver write output routine
-TAB_CLOSE_I EQU     00CH        ; Device driver close input routine
-TAB_CLOSE_O EQU     00FH        ; Device driver close output routine
-
 
 ;//////////////////////////////////////////////////////////////////////////////
 ;//
@@ -286,6 +288,12 @@ TAB_CLOSE_O EQU     00FH        ; Device driver close output routine
 ;//
 ;//                 -> First version I have
 ;//
+;//             v1.4:
+;//
+;//                 -> Clears one-shot timer routine pointer on initialization
+;//                 -> Now resets the state of the debug flag after a program ends
+;//                    with an error
+;//
 
 
 ;//////////////////////////////////////////////////////////////////////////////
@@ -296,16 +304,15 @@ TAB_CLOSE_O EQU     00FH        ; Device driver close output routine
 
         ORG         0E000H
 start:
-        JMP         beginning
-
-
-;//////////////////////////////////////////////////////////////////////////////
-
-beginning:
+        ;
+        ; Reset one-shot timer routine
+        ;
+        LXI         H,00000H
+        SHLD        TIMEAD
         ;
         ; Set lower memory boundary of TOS
         ;
-        LXI         H,buffer_list_next_ptr-1
+        LXI         H,buffer_list_next_ptr
         SHLD        BUFLIM
         ;
         ; Try to trigger autoscroll, if active
@@ -361,7 +368,7 @@ error_str:
 newline_str:
         DB          CR
 title_str:
-        DB          'TOS21 VER. 1.3',CR
+        DB          'TOS21 VER. 1.4',CR
 
 error_number:
         DB          000H
@@ -405,7 +412,7 @@ cli_close_assigned_file:
         RZ
         DCX         H
         CALL        CLOSE
-        CC          ERROR
+        CC          T_ERROR
         RET
 
 
@@ -461,6 +468,9 @@ parse_command_line_prompt:
         SHLD        CI_FCB
         JMP         cli_prompt_cleanup
 
+
+;//////////////////////////////////////
+
 cli_prompt_invalid_end_of_file:
         SUB         A
 cli_prompt_error:
@@ -468,14 +478,20 @@ cli_prompt_error:
         ; Print error-message before next prompt
         ;
         STC
-        CALL        ERROR
+        CALL        T_ERROR
+        JMP         cli_force_cleanup
+
+
+;//////////////////////////////////////
+
 cli_prompt_cleanup:
         ;
         ; Immediately get next prompt-input if the debug flag is set
         ;
         LDA         DEBUG
-        CPI         FALSE
+        ANA         A
         JNZ         parse_command_line_prompt
+cli_force_cleanup:
         ;
         ; Otherwise clean up abstract-file assignements and run next cli prompt
         ;
@@ -635,15 +651,12 @@ error_print_str_loop:
         ;
 nibble_to_ascii_hex:
         ANI         00FH
-        CPI         10
-        CP          bin_to_ascii_hex_adjust
-        ADI         '0'
+        ADI         090H
+        DAA
+        ACI         040H
+        DAA
         MOV         M,A
         INX         H
-        RET
-
-bin_to_ascii_hex_adjust:
-        ADI         'A'-('9'+1)
         RET
 
 
@@ -684,12 +697,12 @@ T_EDWH:
         ;
         PUSH        PSW
         MOV         A,D
-        CALL        EDBH
+        CALL        T_EDBH
         ;
         ; Convert lower two digits
         ;
         MOV         A,E
-        CALL        EDBH
+        CALL        T_EDBH
         POP         PSW
         ANA         A
         RET
@@ -763,13 +776,13 @@ T_EDHW:
         ; Convert upper two digits
         ;
         PUSH        PSW
-        CALL        EDHB
+        CALL        T_EDHB
         JC          invalid_hex_word
         MOV         D,A
         ;
         ; Convert lower two digits
         ;
-        CALL        EDHB
+        CALL        T_EDHB
         JC          invalid_hex_word
         MOV         E,A
         POP         PSW
@@ -908,9 +921,9 @@ check_file_control_block:
         ;
         MOV         A,M
         CPI         7
-        JP          unknown_fcb_device_type
+        JNC         unknown_fcb_device_type
         CPI         2
-        JM          unknown_fcb_device_type
+        JC          unknown_fcb_device_type
         POP         PSW
         ANA         A
         RET
@@ -1028,7 +1041,7 @@ inchar_test_for_type_3:
         ;
         PUSH        H
         XCHG                        ; HL => Nested input FCB of echo file
-        CALL        INCHAR
+        CALL        T_INCHAR
         POP         H
         JC          inchar_return
         ;
@@ -1064,7 +1077,7 @@ inchar_test_for_type_6:
         ;
         ; If not, get data from first nested file
         ;
-        CALL        INCHAR
+        CALL        T_INCHAR
         JNC         inchar_return
         ;
         ; If input exception, check if first file just went into end-of-file
@@ -1083,7 +1096,7 @@ inchar_type_6_end_of_first_file:
         INX         H
         MOV         D,M
         XCHG                        ; HL => Second nested FCB of linked file
-        CALL        INCHAR
+        CALL        T_INCHAR
         JNC         inchar_return
         ;
         ; Check for second file end-of-file if exception
@@ -1238,7 +1251,7 @@ inchar_linked_file_end:
         ; Get an entire string from file HL to string at DE
         ;
 T_GET:
-        CALL        INCHAR
+        CALL        T_INCHAR
         RC
         STAX        D
         INX         D
@@ -1267,7 +1280,7 @@ T_GETBIN:
         ; Get binary data from file
         ;
 getbin_fetch_next_byte:
-        CALL        INCHAR
+        CALL        T_INCHAR
         JC          getbin_exception
         STAX        D
         INX         D
@@ -1312,6 +1325,10 @@ getbin_exception:
 ;//                 -> Has a bug where the stack is off by one item for the return
 ;//                    if a WRITE call fails, something which is likely to cause a
 ;//                    system crash should the situation occur
+;//
+;//             v1.4:
+;//
+;//                 -> Fixes the WRITE-failure return stack bug from v1.3
 ;//
 
 
@@ -1455,19 +1472,17 @@ outchar_type_5:
         CMP         D
         JNZ         outchar_block_not_full
         ;
-        ; If block is full, write current block to file
+        ; If block is full, write current block to file and add character again
         ;
         POP         H
         CALL        WRITE
-        JC          outchar_return
+        JNC         outchar_type_5
         ;
-        ; Try to add character again, after buffer was flushed during write
+        ; Otherwise return error
         ;
-        INX         H
-        INX         H
-        DCX         H
-        DCX         H
-        JMP         outchar_type_5
+        INX         SP
+        INX         SP
+        JMP         outchar_return
 
 outchar_block_not_full:
         ;
@@ -1518,7 +1533,7 @@ outchar_type_6:
         PUSH        PSW
         PUSH        H
         XCHG
-        CALL        OUTCHAR
+        CALL        T_OUTCHAR
         POP         H
         JC          outchar_type_6_exception
 outchar_linked_fcb:
@@ -1530,7 +1545,7 @@ outchar_linked_fcb:
         ;
         XCHG
         POP         PSW
-        CALL        OUTCHAR
+        CALL        T_OUTCHAR
         JMP         outchar_return
 
 outchar_type_6_exception:
@@ -1548,7 +1563,7 @@ T_PUTSTR:
         LDAX        D
         CPI         CR
         RZ
-        CALL        OUTCHAR
+        CALL        T_OUTCHAR
         RC
         INX         D
         JMP         T_PUTSTR
@@ -1561,7 +1576,7 @@ T_PUTSTR:
         ;
 T_PUTBIN:
         LDAX        D
-        CALL        OUTCHAR
+        CALL        T_OUTCHAR
         RC
         INX         D
         DCR         B
@@ -1576,13 +1591,13 @@ T_PUTBIN:
         ; Output an entire string at DE to file HL, with newline
         ;
 T_PUT:
-        CALL        PUTSTR
+        CALL        T_PUTSTR
         RC
         MVI         A,CR
-        CALL        OUTCHAR
+        CALL        T_OUTCHAR
         RC
         MVI         A,LF
-        CALL        OUTCHAR
+        CALL        T_OUTCHAR
         RET
 
 
@@ -1602,6 +1617,11 @@ T_PUT:
 ;//                 -> Bug where line-buffered file control block is expected to
 ;//                    have an OPEN-routine pointer at offset 0C, instead of
 ;//                    propagating the opening operation to linked FCB
+;//
+;//             v1.4:
+;//
+;//                 -> Binary mode of linked files now propagates down through the
+;//                    nested files
 ;//
 
 
@@ -1689,9 +1709,9 @@ open_file_test_for_type_2:
 
 ;//////////////////////////////////////
 
-open_close_complete:
+open_complete:
         POP         H
-open_type_4_close_type_5_6_ok:
+open_type_4_ok:
         POP         D
         ANA         A
         RET
@@ -1714,7 +1734,7 @@ open_file_test_for_type_3:
         PUSH        H
         XCHG
         MVI         A,FM_INPUT
-        CALL        OPEN
+        CALL        T_OPEN
         ;
         ; Open nested output file if everything went ok
         ;
@@ -1752,13 +1772,13 @@ open_file_test_for_type_4:
         ;
         ; Set up stack pointer to jump to pointer taken from unused RAM
         ;
-        LXI         H,open_type_4_close_type_5_6_return
+        LXI         H,open_type_4_return
         XTHL
         PUSH        D
         RET
 
-open_type_4_close_type_5_6_return:
-        JNC         open_type_4_close_type_5_6_ok
+open_type_4_return:
+        JNC         open_type_4_ok
         POP         D
         RET
 
@@ -1777,13 +1797,13 @@ open_linked_output_fcb:
         XCHG
         MVI         A,FM_OUTPUT
 open_linked_fcb:
-        CALL        OPEN
-        JNC         open_close_complete
+        CALL        T_OPEN
+        JNC         open_complete
         ;
         ; Waiver exception if the file was already open
         ;
         CPI         ERROR_27
-        JZ          open_close_complete
+        JZ          open_complete
         POP         H
         POP         D
         STC
@@ -1813,16 +1833,35 @@ open_file_test_for_type_6:
         MOV         A,M             ; FCB + FCB_MODE
         ANI         FM_INPUT + FM_OUTPUT
         ;
-        ; Open first nested file with the same IO mode as this file
+        ; Get current binary mode flag
+        ;
+        PUSH        PSW
+        MOV         A,M             ; FCB + FCB_MODE
+        ANI         FM_BINARY
+        ;
+        ; Get reference to the first nested file
         ;
         INX         H
         MOV         E,M             ; FCB + 002H, first nested file
         INX         H
         MOV         D,M
+        ;
+        ; Make sure that nested file adheres to the current binary mode state
+        ;
+        XCHG
+        INX         H
+        ORA         M               ; First nested FCB + FCB_MODE
+        MOV         M,A
+        DCX         H
+        XCHG
+        ;
+        ; Open first nested file with the same IO mode as this file
+        ;
+        POP         PSW
         PUSH        H
         PUSH        PSW
         XCHG
-        CALL        OPEN
+        CALL        T_OPEN
         JNC         open_second_linked_fcb
         ;
         ; Waiver if first nested file was already open
@@ -1834,15 +1873,38 @@ open_file_test_for_type_6:
         JMP         open_file_error
 
 open_second_linked_fcb:
-        ;
-        ; Open second nested file with the same IO mode as this file
-        ;
         POP         PSW
         POP         H
+        ;
+        ; Get current binary mode flag
+        ;
+        PUSH        PSW
+        DCX         H
+        DCX         H
+        MOV         A,M             ; FCB + FCB_MODE
+        INX         H
+        INX         H
+        ANI         FM_BINARY
+        ;
+        ; Get reference to the second nested file
+        ;
         INX         H
         MOV         E,M             ; FCB + 004H, second nested file
         INX         H
         MOV         D,M
+        ;
+        ; Make sure that nested file adheres to the current binary mode state
+        ;
+        XCHG
+        INX         H
+        ORA         M               ; Second nested FCB + FCB_MODE
+        MOV         M,A
+        DCX         H
+        XCHG
+        ;
+        ; Open second nested file with the same IO mode as this file
+        ;
+        POP         PSW
         XCHG
         JMP         open_linked_fcb
 
@@ -1905,7 +1967,7 @@ open_type_5_continue:
         RET
 
 open_type_5_first_read_done:
-        JNC         open_close_complete
+        JNC         open_complete
 open_type_5_done:
         POP         H
         POP         D
@@ -1926,6 +1988,13 @@ open_type_5_done:
 ;//             v1.3:
 ;//
 ;//                 -> First version I have
+;//                 -> Has a bug where linked files assigned through the command-
+;//                    line are not de-allocated automatically on CLOSE
+;//
+;//             v1.4:
+;//
+;//                 -> No longer shares return code with OPEN
+;//                 -> Fixes the linked-file de-allocation bug from v1.3
 ;//
 
 
@@ -1996,7 +2065,7 @@ file_to_close_is_open:
         MOV         D,M
         PUSH        H
         XCHG
-        CALL        CLOSE
+        CALL        T_CLOSE
         JNC         close_type_3_output_file
         ;
         ; Waiver exception if it was due to nested input file already closed
@@ -2019,13 +2088,13 @@ close_type_3_output_file:
         INX         H
         MOV         D,M
         XCHG
-        CALL        CLOSE
-        JNC         open_close_complete
+        CALL        T_CLOSE
+        JNC         close_complete
         ;
         ; Waiver exception if it was due to nested output file already closed
         ;
         CPI         ERROR_29
-        JZ          open_close_complete
+        JZ          close_complete
         POP         H
         POP         D
         STC
@@ -2046,8 +2115,14 @@ close_file_test_for_type_4:
         INX         H
         MOV         D,M
         XCHG
-        CALL        CLOSE
-        JNC         open_close_complete
+        CALL        T_CLOSE
+        JC          close_type_4_end
+        ;
+        ; Restore registers
+        ;
+close_complete:
+        ANA         A
+close_type_4_end:
         POP         H
         POP         D
         RET
@@ -2073,9 +2148,19 @@ close_file_test_for_type_5:
         ;
         ; Set up stack to run device driver close routine and return
         ;
-        LXI         H,open_type_4_close_type_5_6_return
+        LXI         H,close_type_5_6_return
         XTHL
         PUSH        D
+        RET
+
+
+;//////////////////////////////////////
+
+close_type_5_6_return:
+        JC          close_type_5_6_end
+        ANA         A
+close_type_5_6_end:
+        POP         D
         RET
 
 
@@ -2094,7 +2179,7 @@ close_file_type_6:
         INX         H
         PUSH        H
         XCHG
-        CALL        CLOSE
+        CALL        T_CLOSE
         POP         H
         ;
         ; Close second linked file
@@ -2104,11 +2189,23 @@ close_file_type_6:
         INX         H
         MOV         D,M
         XCHG
-        CALL        CLOSE
+        CALL        T_CLOSE
         JC          close_type_6_failed
         POP         PSW
         POP         H
-        JMP         open_type_4_close_type_5_6_return
+        ;
+        ; Check if linked file was assigned on the command line
+        ;
+        INX         H
+        MOV         A,M             ; FCB + FCB_MODE
+        DCX         H
+        ANI         FM_ASSIGNED
+        JZ          close_type_5_6_return
+        ;
+        ; If so, de-allocate the linked fcb now
+        ;
+        CALL        BUFDEALLOC
+        JMP         close_type_5_6_return
 
 close_type_6_failed:
         INX         SP
@@ -2225,7 +2322,7 @@ read_write_driver_call_failed:
         ; Check for end of file
         ;
         POP         D
-        CPI         ERROR_00
+        ANA         A
         JNZ         read_write_return
         ;
         ; If so, mark file as end of file
@@ -2520,6 +2617,17 @@ read_type_4_erase_char:
 ;//                    the linking block buffer will be interpreted as an unused
 ;//                    data-block address to be released
 ;//
+;//             v1.4:
+;//
+;//                 -> Fixes the release block bug from v1.3
+;//                 -> Clears the linking block address and buffer of an output
+;//                    file currently being opened, until the first linking block
+;//                    has properly been reserved on disk. If this fails, closing
+;//                    the file later will silently abort without writing anything
+;//                    to disk.
+;//                 -> Adds write-protect attribute for output files to be written
+;//                    as system files
+;//
 
 
 ;//////////////////////////////////////////////////////////////////////////////
@@ -2673,6 +2781,7 @@ T_RELBLK:
         POP         B
         PUSH        B
         CALL        intel_mapfile_bit_lookup
+        ANA         M
         XRA         M
         MOV         M,A
         CALL        intel_write_mapfile_from_cache
@@ -2738,6 +2847,7 @@ intel_release_next_block:
         ORA         C
         JZ          intel_release_blocks_done
         CALL        intel_mapfile_bit_lookup
+        ANA         M
         XRA         M
         MOV         M,A
         ;
@@ -3050,7 +3160,7 @@ intel_set_up_for_file:
         MOV         A,M             ; FCB + FCB_DRVNR
         INX         H               ; FCB + FCB_FNAME
         CALL        intel_get_map_ref_and_look_up_file
-        JC          device_driver_return_error
+        JC          intel_return_error
         POP         PSW
         ANA         A
         RET
@@ -3058,13 +3168,13 @@ intel_set_up_for_file:
 
 ;//////////////////////////////////////////////////////////////////////////////
 
-device_driver_operation_end:
-        JNC         device_driver_operation_ok
-device_driver_operation_exception:
+intel_operation_end:
+        JNC         intel_operation_ok
+intel_operation_exception:
         STC
         POP         D
         POP         B
-device_driver_return_error:
+intel_return_error:
         INX         SP
         INX         SP
         LHLD        CTLBLK
@@ -3100,7 +3210,7 @@ intel_open_input:
         ;
         MVI         A,ERROR_31
         STC
-        JMP         device_driver_operation_exception
+        JMP         intel_operation_exception
 
 
 ;//////////////////////////////////////
@@ -3144,7 +3254,7 @@ intel_file_to_open_found:
         XCHG
         LDA         UNIT
         CALL        DSRDW
-        JC          device_driver_operation_exception
+        JC          intel_operation_exception
         ;
         ; Get data buffer length of file control block
         ;
@@ -3162,7 +3272,7 @@ intel_file_to_open_found:
         MOV         M,D
         DCX         H
         MOV         M,E             ; FCB + FCB_BUFIDX
-device_driver_operation_ok:
+intel_operation_ok:
         ;
         ; Restore registers
         ;
@@ -3206,7 +3316,7 @@ intel_read_input:
         MOV         A,M             ; FCB + FCB_MODE
         ANI         FM_EOF_NEXT
         JZ          intel_file_has_more_data
-device_driver_file_out_of_data:
+intel_file_out_of_data:
         ;
         ; Set end of file flag
         ;
@@ -3217,7 +3327,7 @@ device_driver_file_out_of_data:
         MOV         M,A
         SUB         A
         STC
-        JMP         device_driver_operation_exception
+        JMP         intel_operation_exception
 
 
 ;//////////////////////////////////////
@@ -3247,7 +3357,7 @@ intel_file_has_more_data:
         SHLD        current_data_block_address
         MOV         A,D
         ORA         E
-        JZ          device_driver_file_out_of_data
+        JZ          intel_file_out_of_data
         ;
         ; Advance linking-block index and check for end of linking block buffer
         ;
@@ -3277,7 +3387,7 @@ intel_file_has_more_data:
         LDA         UNIT
         LHLD        current_linking_block_buffer_ptr
         CALL        DSRDW
-        JC          device_driver_operation_exception
+        JC          intel_operation_exception
         LHLD        current_fcb_plus_01EH
         INX         H
         MVI         M,004H          ; FCB + 01FH, linking block index
@@ -3344,7 +3454,7 @@ intel_read_data_block:
         XCHG
         LDA         UNIT
         CALL        DSRDW
-        JMP         device_driver_operation_end
+        JMP         intel_operation_end
 
 
 ;//////////////////////////////////////////////////////////////////////////////
@@ -3412,16 +3522,25 @@ intel_output_file_already_exists:
         ;
         MVI         A,ERROR_32
         STC
-        JMP         device_driver_operation_exception
+        JMP         intel_operation_exception
 
 
 ;//////////////////////////////////////
 
 intel_create_output_file:
         ;
-        ; Initialize new empty main linking block for file
+        ; Clear current linking block address for the time being
         ;
         LHLD        current_fcb_plus_01EH
+        DCX         H
+        MVI         M,000H
+        DCX         H
+        MVI         M,000H          ; FCB + 01CH, current linking block address
+        INX         H
+        INX         H
+        ;
+        ; Initialize new empty main linking block for file
+        ;
         INX         H
         MVI         M,004H          ; FCB + 01FH, linking block index
         INX         H
@@ -3431,10 +3550,20 @@ intel_create_output_file:
         XCHG
         SHLD        current_linking_block_buffer_ptr
         ;
+        ; Clear linking block buffer
+        ;
+        MVI         A,128
+intel_clear_linking_block_buffer_loop:
+        MVI         M,000H
+        INX         H
+        DCR         A
+        JNZ         intel_clear_linking_block_buffer_loop
+        ;
         ; Reserve a free block on disk for this linking block
         ;
-        CALL        GETBLK
-        JC          device_driver_operation_exception
+        LHLD        current_linking_block_buffer_ptr
+        CALL        T_GETBLK
+        JC          intel_operation_exception
         LHLD        CTLBLK
         LXI         D,01CH
         DAD         D
@@ -3458,9 +3587,8 @@ intel_create_output_file:
         ; Reserve all data-blocks in linking block as long as file is open
         ;
         MVI         A,62
-        CALL        GETN
-        JC          device_driver_operation_exception
-device_driver_open_output_finalize_index:
+        CALL        T_GETN
+        JC          intel_operation_exception
         ;
         ; Reset new output file data index
         ;
@@ -3470,7 +3598,7 @@ device_driver_open_output_finalize_index:
         MVI         M,000H          ; FCB + FCB_BUFIDX
         INX         H
         MVI         M,000H
-        JMP         device_driver_operation_ok
+        JMP         intel_operation_ok
 
 
 ;//////////////////////////////////////////////////////////////////////////////
@@ -3515,9 +3643,9 @@ intel_write_output:
         ;
         LDA         UNIT
         CALL        intel_ready_disk
-        JC          device_driver_operation_exception
-        CALL        GETBLK
-        JC          device_driver_operation_exception
+        JC          intel_operation_exception
+        CALL        T_GETBLK
+        JC          intel_operation_exception
         ;
         ; Chain new linking block onto previous linking block forwards pointer
         ;
@@ -3540,7 +3668,7 @@ intel_write_output:
         LDA         UNIT
         LHLD        current_linking_block_buffer_ptr
         CALL        DSWRW
-        JC          device_driver_operation_exception
+        JC          intel_operation_exception
         ;
         ; Chain old linking block to new linking block backwards pointer
         ;
@@ -3560,8 +3688,8 @@ intel_write_output:
         ; Reserve all data-blocks in new linking block as long as file is open
         ;
         MVI         A,62
-        CALL        GETN
-        JC          device_driver_operation_exception
+        CALL        T_GETN
+        JC          intel_operation_exception
         ;
         ; Update data for new linking block in file control block
         ;
@@ -3616,7 +3744,7 @@ intel_write_has_data_block:
         JZ          intel_write_disk_full
         LDA         UNIT
         CALL        DSWRW
-        JC          device_driver_operation_exception
+        JC          intel_operation_exception
         ;
         ; Advance to next linking block
         ;
@@ -3624,11 +3752,11 @@ intel_write_has_data_block:
         INX         H
         INR         M               ; FCB + 01FH, linking block index
         INR         M
-        JMP         device_driver_operation_ok
+        JMP         intel_operation_ok
 
 intel_write_disk_full:
         MVI         A,ERROR_33
-        JMP         device_driver_operation_exception
+        JMP         intel_operation_exception
 
 
 ;//////////////////////////////////////////////////////////////////////////////
@@ -3664,6 +3792,15 @@ intel_close_output:
         JZ          intel_output_file_already_exists
         SHLD        intel_output_file_dir_entry_ptr
         ;
+        ; Abort silently if OPEN failed and linking block address is invalid
+        ;
+        LHLD        current_fcb_plus_01EH
+        DCX         H
+        MOV         A,M
+        DCX         H
+        ORA         M               ; FCB + 01CH, current linking block address
+        JZ          intel_operation_ok
+        ;
         ; Get location of data block containing available file entry
         ;
         LHLD        TRK
@@ -3694,7 +3831,7 @@ intel_close_output:
         ;
         LHLD        CTLBLK
         CALL        WRITE
-        JC          device_driver_operation_exception
+        JC          intel_operation_exception
 intel_close_data_write_done:
 
 
@@ -3725,7 +3862,7 @@ intel_close_count_unused_blocks_loop:
         MOV         A,M
         INX         H
         INX         H
-        CPI         000H
+        ANA         A
         JZ          intel_unused_blocks_counted
         ;
         ; Count unused reserved data block
@@ -3745,8 +3882,8 @@ intel_unused_blocks_counted:
         ;
         MOV         A,D
         LHLD        intel_file_next_block_in_linking_buffer_ptr
-        CALL        RELN
-        JC          device_driver_operation_exception
+        CALL        T_RELN
+        JC          intel_operation_exception
         ;
         ; Set up to write final linking block to disk
         ;
@@ -3775,7 +3912,7 @@ intel_unused_blocks_counted:
         LHLD        current_linking_block_buffer_ptr
         LDA         UNIT
         CALL        DSWRW
-        JC          device_driver_operation_exception
+        JC          intel_operation_exception
         ;
         ; Add block count of all full linking blocks to total block count
         ;
@@ -3797,7 +3934,7 @@ intel_count_total_blocks_loop:
         LDA         UNIT
         LHLD        current_linking_block_buffer_ptr
         CALL        DSRDW
-        JC          device_driver_operation_exception
+        JC          intel_operation_exception
         ;
         ; Add the data blocks to total count
         ;
@@ -3828,7 +3965,7 @@ intel_total_block_count_found:
         LXI         H,BUF2
         LDA         UNIT
         CALL        DSRDW
-        JC          device_driver_operation_exception
+        JC          intel_operation_exception
         ;
         ; Claim available file entry
         ;
@@ -3860,7 +3997,7 @@ intel_copy_next_filename_char:
         MOV         A,M
         ANI         DF_SYSFILE
         JZ          intel_close_output_no_attr
-        MVI         A,ATTR_I + ATTR_S
+        MVI         A,ATTR_I + ATTR_S + ATTR_W
         JMP         intel_close_output_update_attr
 
 intel_close_output_no_attr:
@@ -3905,20 +4042,13 @@ intel_close_output_update_attr:
         LXI         H,BUF2
         LDA         UNIT
         CALL        DSWRW
-        JC          device_driver_operation_exception
-device_driver_finish_close:
+        JC          intel_operation_exception
         ;
         ; If file was assigned at the command line, de-allocate the fcb now
         ;
         LHLD        CTLBLK
-        INX         H
-        MOV         A,M             ; FCB + FCB_MODE
-        ANI         FM_ASSIGNED
-        MOV         M,A
-        DCX         H
-        JZ          device_driver_operation_ok
-        CALL        BUFDEALLOC
-        JMP         device_driver_operation_end
+        CALL        device_driver_close_valid_input_file
+        JMP         intel_operation_end
 
 
 ;//////////////////////////////////////////////////////////////////////////////
@@ -3936,7 +4066,7 @@ intel_get_map_ref_and_look_up_file:
         RC
         LHLD        UNAM
         LDA         UNIT
-        CALL        X_LOCDIR
+        CALL        LOCDIR
         RET
 
 
@@ -3950,7 +4080,7 @@ intel_ready_disk:
         ; Look up mapfile and check that it exists
         ;
         LXI         H,intel_mapfile_name
-        CALL        X_LOCDIR
+        CALL        LOCDIR
         RC
         MOV         A,M
         ANA         A
@@ -4011,6 +4141,11 @@ intel_mapfile_name:
 ;//
 ;//                 -> First version I have
 ;//
+;//             v1.4:
+;//
+;//                 -> Corrects ASCII to EBCDIC table index 07H, 3CH, 60H, C3H
+;//                 -> Corrects EBCDIC to ASCII table index 4AH, 58H, 79H
+;//
 
 
 ;//////////////////////////////////////////////////////////////////////////////
@@ -4020,19 +4155,19 @@ intel_mapfile_name:
 ;//////////////////////////////////////////////////////////////////////////////
 
 ascii_to_ebcdic_table:
-        DB          000H, 001H, 002H, 003H, 037H, 02DH, 02EH, 007H
+        DB          000H, 001H, 002H, 003H, 037H, 02DH, 02EH, 02FH
         DB          016H, 005H, 025H, 00BH, 00CH, 00DH, 00EH, 00FH
         DB          010H, 011H, 012H, 013H, 03CH, 03DH, 032H, 026H
         DB          018H, 019H, 03FH, 027H, 01CH, 01DH, 01EH, 01FH
         DB          040H, 05AH, 07FH, 07BH, 05BH, 06CH, 050H, 07DH
         DB          04DH, 05DH, 05CH, 04EH, 06BH, 060H, 04BH, 061H
         DB          0F0H, 0F1H, 0F2H, 0F3H, 0F4H, 0F5H, 0F6H, 0F7H
-        DB          0F8H, 0F9H, 07AH, 05EH, 048H, 07EH, 06EH, 06FH
+        DB          0F8H, 0F9H, 07AH, 05EH, 04CH, 07EH, 06EH, 06FH
         DB          07CH, 0C1H, 0C2H, 0C3H, 0C4H, 0C5H, 0C6H, 0C7H
         DB          0C8H, 0C9H, 0D1H, 0D2H, 0D3H, 0D4H, 0D5H, 0D6H
         DB          0D7H, 0D8H, 0D9H, 0E2H, 0E3H, 0E4H, 0E5H, 0E6H
         DB          0E7H, 0E8H, 0E9H, 0EAH, 0EBH, 0ECH, 05FH, 06DH
-        DB          04AH, 081H, 082H, 083H, 084H, 085H, 086H, 087H
+        DB          079H, 081H, 082H, 083H, 084H, 085H, 086H, 087H
         DB          088H, 089H, 091H, 092H, 093H, 094H, 095H, 096H
         DB          097H, 098H, 099H, 0A2H, 0A3H, 0A4H, 0A5H, 0A6H
         DB          0A7H, 0A8H, 0A9H, 0AAH, 0ABH, 0ACH, 04FH, 007H
@@ -4044,7 +4179,7 @@ ascii_to_ebcdic_table:
         DB          051H, 052H, 053H, 054H, 055H, 056H, 057H, 058H
         DB          059H, 062H, 063H, 064H, 065H, 066H, 067H, 068H
         DB          069H, 06AH, 070H, 071H, 072H, 073H, 074H, 075H
-        DB          076H, 077H, 078H, 079H, 080H, 08AH, 08BH, 08CH
+        DB          076H, 077H, 078H, 04AH, 080H, 08AH, 08BH, 08CH
         DB          08DH, 08EH, 08FH, 090H, 09AH, 09BH, 09CH, 09DH
         DB          09EH, 09FH, 0A0H, 0A1H, 0ADH, 0AEH, 0AFH, 0B0H
         DB          0B1H, 0B2H, 0B3H, 0B4H, 0B5H, 0B6H, 0B7H, 0B8H
@@ -4063,13 +4198,13 @@ ebcdic_to_ascii_table:
         DB          094H, 095H, 016H, 096H, 097H, 098H, 099H, 004H
         DB          09AH, 09BH, 09CH, 09DH, 014H, 015H, 09EH, 01AH
         DB          020H, 09FH, 0A0H, 0A1H, 0A2H, 0A3H, 0A4H, 0A5H
-        DB          0A6H, 0A7H, 060H, 02EH, 03CH, 028H, 02BH, 07EH
+        DB          0A6H, 0A7H, 0C3H, 02EH, 03CH, 028H, 02BH, 07EH
         DB          026H, 0A8H, 0A9H, 0AAH, 0ABH, 0ACH, 0ADH, 0AEH
-        DB          087H, 0B0H, 021H, 024H, 02AH, 029H, 03BH, 05EH
+        DB          0AFH, 0B0H, 021H, 024H, 02AH, 029H, 03BH, 05EH
         DB          02DH, 02FH, 0B1H, 0B2H, 0B3H, 0B4H, 0B5H, 0B6H
         DB          0B7H, 0B8H, 0B9H, 02CH, 025H, 05FH, 03EH, 03FH
         DB          0BAH, 0BBH, 0BCH, 0BDH, 0BEH, 0BFH, 0C0H, 0C1H
-        DB          0C2H, 0C3H, 03AH, 023H, 040H, 027H, 03DH, 022H
+        DB          0C2H, 060H, 03AH, 023H, 040H, 027H, 03DH, 022H
         DB          0C4H, 061H, 062H, 063H, 064H, 065H, 066H, 067H
         DB          068H, 069H, 0C5H, 0C6H, 0C7H, 0C8H, 0C9H, 0CAH
         DB          0CBH, 06AH, 06BH, 06CH, 06DH, 06EH, 06FH, 070H
@@ -4141,6 +4276,12 @@ T_STIMER:
 ;//                    IBM files
 ;//                 -> Bug where IBM EOE and EOD sector numbers are treated as
 ;//                    inclusive, not exclusive as per the format definition
+;//
+;//             v1.4:
+;//
+;//                 -> Less shared cleanup code with Intel device driver
+;//                 -> Introduces a bug where the binary file mode flag is used in
+;//                    place of the detect EOF file mode flag
 ;//
 
 
@@ -4468,7 +4609,9 @@ ibm_set_up_for_file:
         MOV         A,M             ; FCB + FCB_UNIT
         INX         H
         CALL        find_ibm_file_index
-        JC          device_driver_operation_exception
+ibm_operation_end:
+        JC          ibm_operation_exception
+ibm_operation_ok:
         ;
         ; Recover registers and return
         ;
@@ -4476,6 +4619,22 @@ ibm_set_up_for_file:
         POP         B
         POP         PSW
         ANA         A
+        LHLD        CTLBLK
+        RET
+
+
+;//////////////////////////////////////
+
+ibm_operation_exception:
+        ;
+        ; Recover registers other than exception, and return
+        ;
+        STC
+        POP         D
+        POP         B
+        INX         SP
+        INX         SP
+        LHLD        CTLBLK
         RET
 
 
@@ -4506,7 +4665,7 @@ ibm_open_file:
         ;
         LXI         D,BUF1 + 018H
         CALL        ascii_decimal_3_digit_to_bin
-        JC          device_driver_operation_exception
+        JC          ibm_operation_exception
         LHLD        CTLBLK
         LXI         B,FCB_BUFLEN
         DAD         B
@@ -4520,12 +4679,12 @@ ibm_open_file:
         DCX         H
         LXI         D,BUF1 + 01CH
         CALL        ascii_decimal_2_digit_to_bin
-        JC          device_driver_operation_exception
+        JC          ibm_operation_exception
         MOV         M,A             ; FCB + 01DH, track of next data record
         DCX         H
         INX         D
         CALL        ascii_decimal_2_digit_to_bin
-        JC          device_driver_operation_exception
+        JC          ibm_operation_exception
         MOV         M,A             ; FCB + 01CH, sector of next data record
         INX         H
         INX         H
@@ -4547,12 +4706,12 @@ ibm_open_set_file_tail:
         ; Set selected field as tailing file data block in fcb
         ;
         CALL        ascii_decimal_2_digit_to_bin
-        JC          device_driver_operation_exception
+        JC          ibm_operation_exception
         MOV         M,A             ; FCB + 01FH, track number of file tail
         DCX         H
         INX         D
         CALL        ascii_decimal_2_digit_to_bin
-        JC          device_driver_operation_exception
+        JC          ibm_operation_exception
         MOV         M,A             ; FCB + 01EH, sector number of file tail
         INX         H
         INX         H
@@ -4571,7 +4730,7 @@ ibm_open_set_file_tail:
         ;
         LDA         ibm_current_file_sector
         MOV         M,A             ; FCB + 022H, sector number of file index
-        JMP         device_driver_operation_ok
+        JMP         ibm_operation_ok
 
 
 ;//////////////////////////////////////////////////////////////////////////////
@@ -4616,7 +4775,7 @@ ibm_advance_to_next_block:
         LHLD        CTLBLK
         INX         H
         MOV         A,M
-        ORI         FM_EOF_NEXT
+        ORI         FM_BINARY
         MOV         M,A
         POP         H
 ibm_advance_data_block:
@@ -4703,7 +4862,7 @@ ibm_read_input:
         ;
         ; Check if the current block was the last block of the file
         ;
-        ANI         FM_EOF_NEXT
+        ANI         FM_BINARY
         JZ          ibm_not_end_of_file
 ibm_end_of_file:
         ;
@@ -4716,7 +4875,7 @@ ibm_end_of_file:
         MOV         M,A
         SUB         A
         STC
-        JMP         device_driver_operation_exception
+        JMP         ibm_operation_exception
 
 
 ;//////////////////////////////////////
@@ -4727,7 +4886,7 @@ ibm_not_end_of_file:
         ;
         CALL        ibm_advance_to_next_block
         CALL        read_ibm_disk_record
-        JMP         device_driver_operation_end
+        JMP         ibm_operation_end
 
 
 ;//////////////////////////////////////////////////////////////////////////////
@@ -4755,14 +4914,14 @@ ibm_write_output:
         ;
         ; Check if the current block was the last block of the file
         ;
-        ANI         FM_EOF_NEXT
+        ANI         FM_BINARY
         JNZ         ibm_end_of_file
         ;
         ; If not, write current block and continue to the next block
         ;
         CALL        ibm_advance_to_next_block
         CALL        write_ibm_disk_record
-        JMP         device_driver_operation_end
+        JMP         ibm_operation_end
 
 
 ;//////////////////////////////////////////////////////////////////////////////
@@ -4803,7 +4962,7 @@ ibm_close_output:
         ;
         LHLD        CTLBLK
         CALL        WRITE
-        JC          device_driver_operation_exception
+        JC          ibm_operation_exception
 ibm_data_write_done:
 
 
@@ -4821,7 +4980,7 @@ ibm_data_write_done:
         MVI         B,000H
         LXI         H,BUF1
         CALL        read_ibm_disk_record
-        JC          device_driver_operation_exception
+        JC          ibm_operation_exception
         ;
         ; Get sector and track of file data end
         ;
@@ -4851,7 +5010,7 @@ ibm_data_write_done:
         MVI         B,000H
         LXI         H,BUF1
         CALL        write_ibm_disk_record
-        JC          device_driver_operation_exception
+        JC          ibm_operation_exception
         ;
         ; Recover registers and continue to close file fcb
         ;
@@ -4859,7 +5018,7 @@ ibm_data_write_done:
         POP         B
         POP         PSW
         LHLD        CTLBLK
-        JMP         device_driver_close_valid_input_file
+        JMP         device_driver_close_input_file
 
 
 ;//////////////////////////////////////////////////////////////////////////////
@@ -4888,6 +5047,16 @@ ibm_data_write_done:
 ;//                    a hard fault, preventing further use of the tape (including
 ;//                    opening files for reading)
 ;//
+;//             v1.4:
+;//
+;//                 -> Less shared cleanup code with Intel device driver
+;//                 -> Immediately closes an output file if tape track becomes full
+;//                 -> Introduces a bug where the binary file mode flag is used in
+;//                    place of the detect EOF file mode flag
+;//                 -> Introduces a bug where closure of a tape output file does
+;//                    not restore the stack, and returns to an addres from a data
+;//                    register. This will likely cause a crash.
+;//
 
 
 ;//////////////////////////////////////////////////////////////////////////////
@@ -4914,12 +5083,12 @@ tape_open_input:
         MOV         A,M
         INX         H
         CALL        CLOCDIR
-        JC          device_driver_operation_exception
+        JC          tape_operation_exception
         MOV         A,M
         ANA         A
         JZ          tape_input_file_found
         MVI         A,ERROR_31
-        JMP         device_driver_operation_exception
+        JMP         tape_operation_exception
 
 
 ;//////////////////////////////////////
@@ -4930,7 +5099,7 @@ tape_input_file_found:
         ;
         LDA         UNIT
         CALL        CCAL
-        JC          device_driver_operation_exception
+        JC          tape_operation_exception
         ;
         ; Get and store track number of file in file control block
         ;
@@ -4954,7 +5123,7 @@ tape_input_file_found:
         CALL        CBSFW
         JNC         tape_input_file_seek_done
         CPI         ERROR_48
-        JNZ         device_driver_operation_exception
+        JNZ         tape_operation_exception
 tape_input_file_seek_done:
 
 
@@ -4995,10 +5164,39 @@ tape_input_file_seek_done:
         LHLD        current_fcb_plus_01EH
         MOV         B,M             ; FCB + 01EH, current track
         CALL        RD32
-        JC          device_driver_operation_exception
+        JC          tape_operation_exception
         MVI         A,'('
         CALL        VERIFY
-        JMP         device_driver_operation_end
+        JNC         tape_operation_ok
+
+
+;//////////////////////////////////////
+
+tape_operation_exception:
+        ;
+        ; Recover registers other than exception, and return
+        ;
+        STC
+        POP         D
+        POP         B
+        INX         SP
+        INX         SP
+        LHLD        CTLBLK
+        RET
+
+
+;//////////////////////////////////////
+
+tape_operation_ok:
+        ;
+        ; Recover registers and return
+        ;
+        POP         D
+        POP         B
+        POP         PSW
+        LHLD        CTLBLK
+        ANA         A
+        RET
 
 
 ;//////////////////////////////////////////////////////////////////////////////
@@ -5029,7 +5227,7 @@ tape_close_input:
         POP         D
         POP         PSW
         LHLD        CTLBLK
-        JMP         device_driver_close_valid_input_file
+        JMP         device_driver_close_input_file
 
 tape_close_error:
         POP         D
@@ -5068,10 +5266,10 @@ tape_open_output:
         MOV         A,M
         INX         H
         CALL        CLOCDIR
-        JC          device_driver_operation_exception
+        JC          tape_operation_exception
         LDA         UNIT
         CALL        CCAL
-        JC          device_driver_operation_exception
+        JC          tape_operation_exception
         ;
         ; Verify that the file does not exist in tape directory
         ;
@@ -5080,7 +5278,7 @@ tape_open_output:
         JNZ         tape_verify_usage_block
 tape_output_file_already_exists:
         MVI         A,ERROR_3C
-        JMP         device_driver_operation_exception
+        JMP         tape_operation_exception
 
 
 ;//////////////////////////////////////
@@ -5143,7 +5341,7 @@ tape_check_next_track_usage_2:
         ANA         A
         JNZ         tape_output_fitting_track_found
         MVI         A,ERROR_3D
-        JMP         device_driver_operation_exception
+        JMP         tape_operation_exception
 
 tape_output_track_not_full:
         ;
@@ -5217,13 +5415,13 @@ tape_output_fitting_track_found:
         CALL        CBSFW
         JNC         tape_open_output_at_start_of_file
         CPI         ERROR_48
-        JNZ         device_driver_operation_exception
+        JNZ         tape_operation_exception
 tape_open_output_at_start_of_file:
         ;
         ; Check for existing data-track end block where file will start on tape
         ;
         CALL        RD32
-        JC          device_driver_operation_exception
+        JC          tape_operation_exception
         LDA         BUF2
         CPI         '/'
         JNZ         tape_open_output_not_track_end_block
@@ -5234,7 +5432,7 @@ tape_open_output_at_start_of_file:
         LHLD        current_fcb_plus_022H
         MOV         B,M             ; FCB + 022H, track number of file start
         CALL        CBBSW
-        JC          device_driver_operation_exception
+        JC          tape_operation_exception
         ;
         ; Copy filename of file into new file header block
         ;
@@ -5259,15 +5457,24 @@ tape_open_output_copy_filename_loop:
         LXI         H,file_header_block
         LDA         UNIT
         CALL        CBWRW
-        JC          device_driver_operation_exception
-        JMP         device_driver_open_output_finalize_index
-
+        JC          tape_operation_exception
+tape_open_output_finalize_index:
+        ;
+        ; Reset new output file data index
+        ;
+        LHLD        CTLBLK
+        INX         H
+        INX         H
+        MVI         M,000H          ; FCB + FCB_BUFIDX
+        INX         H
+        MVI         M,000H
+        JMP         tape_operation_ok
 
 ;//////////////////////////////////////
 
 tape_open_output_not_track_end_block:
         MVI         A,ERROR_5A
-        JMP         device_driver_operation_exception
+        JMP         tape_operation_exception
 
 
 ;//////////////////////////////////////
@@ -5331,7 +5538,7 @@ tape_trailer_block_copy_filename_loop:
         MOV         M,D
         LHLD        CTLBLK
         CALL        WRITE
-        JC          device_driver_operation_exception
+        JC          tape_operation_exception
 tape_close_no_more_data_to_write:
         ;
         ; Write tape mark after final data-block block
@@ -5342,7 +5549,7 @@ tape_close_no_more_data_to_write:
         CALL        CBTMW
         JNC         end_of_data_tape_mark_exists
         CPI         ERROR_48
-        JNZ         device_driver_operation_exception
+        JNZ         tape_operation_exception
 end_of_data_tape_mark_exists:
         ;
         ; Write file trailer block
@@ -5351,7 +5558,7 @@ end_of_data_tape_mark_exists:
         LXI         D,32
         LDA         UNIT
         CALL        CBWRW
-        JC          device_driver_operation_exception
+        JC          tape_operation_exception
         ;
         ; Write tape mark after file trailer block
         ;
@@ -5359,7 +5566,7 @@ end_of_data_tape_mark_exists:
         CALL        CBTMW
         JNC         file_trailer_block_tape_mark_exists
         CPI         ERROR_48
-        JNZ         device_driver_operation_exception
+        JNZ         tape_operation_exception
 file_trailer_block_tape_mark_exists:
         ;
         ; Write new track-end block, and rewind tape
@@ -5367,10 +5574,10 @@ file_trailer_block_tape_mark_exists:
         LXI         H,track_end_block
         LDA         UNIT
         CALL        CBWRW
-        JC          device_driver_operation_exception
+        JC          tape_operation_exception
         LDA         UNIT
         CALL        CCAL
-        JC          device_driver_operation_exception
+        JC          tape_operation_exception
 
 
 ;//////////////////////////////////////
@@ -5383,7 +5590,7 @@ file_trailer_block_tape_mark_exists:
         DAD         D
         LDA         UNIT
         CALL        CLOCDIR
-        JC          device_driver_operation_exception
+        JC          tape_operation_exception
         ;
         ; Verify that it does not exist, and that we got the track usage block
         ;
@@ -5396,7 +5603,7 @@ file_trailer_block_tape_mark_exists:
         LDA         UNIT
         MVI         B,0
         CALL        CBBSW
-        JC          device_driver_operation_exception
+        JC          tape_operation_exception
         SHLD        cart_usage_block_ptr
         ;
         ; Update cartridge usage information with copy from file control block
@@ -5482,14 +5689,14 @@ tape_dir_block_copy_filename_loop:
         MVI         B,0
         LDA         UNIT
         CALL        CBWRW
-        JC          device_driver_operation_exception
+        JC          tape_operation_exception
         ;
         ; Write new updated cartridge usage block
         ;
         LHLD        cart_usage_block_ptr
         LDA         UNIT
         CALL        CBWRW
-        JC          device_driver_operation_exception
+        JC          tape_operation_exception
         ;
         ; Write tape mark following cartridge usage block
         ;
@@ -5497,15 +5704,15 @@ tape_dir_block_copy_filename_loop:
         CALL        CBTMW
         JNC         file_directory_block_tape_mark_exists
         CPI         ERROR_48
-        JNZ         device_driver_operation_exception
+        JNZ         tape_operation_exception
 file_directory_block_tape_mark_exists:
         ;
         ; Rewind tape and finish closing file control block
         ;
         LDA         UNIT
         CALL        CCAL
-        JC          device_driver_operation_exception
-        JMP         device_driver_finish_close
+        JC          tape_operation_exception
+        JMP         device_driver_close_input_file
 
 
 ;//////////////////////////////////////
@@ -5618,7 +5825,23 @@ tape_write_track_usage_ptr_ready:
         LXI         D,128
         LDA         UNIT
         CALL        CBWRW
-        JMP         device_driver_operation_end
+        JNC         tape_operation_ok
+        ;
+        ; On error, check for end of tape status
+        ;
+        CPI         ERROR_40
+        JNZ         tape_operation_exception
+        ;
+        ; If so, rewind one block and close output file immediately
+        ;
+        LDA         UNIT
+        CALL        CBBSW
+        JC          tape_operation_exception
+        POP         D
+        POP         B
+        POP         PSW
+        LHLD        CTLBLK
+        JMP         tape_close_output
 
 
 ;//////////////////////////////////////////////////////////////////////////////
@@ -5641,7 +5864,7 @@ tape_read_input:
         LHLD        CTLBLK
         INX         H
         MOV         A,M
-        ANI         FM_EOF_NEXT
+        ANI         FM_BINARY
         JNZ         tape_read_detect_eof
         DCX         H
         ;
@@ -5671,7 +5894,7 @@ tape_read_input:
         XCHG
         LDA         UNIT
         CALL        CBRDW
-        JC          device_driver_operation_exception
+        JC          tape_operation_exception
         ;
         ; Verify that tape overrun markers were untouched
         ;
@@ -5705,14 +5928,14 @@ tape_read_input:
         ;
         MOV         A,D
         ORA         E
-        JNZ         device_driver_open_output_finalize_index
+        JNZ         tape_open_output_finalize_index
         ;
         ; If so, set pending end of file flag in file control block
         ;
         LHLD        CTLBLK
         INX         H
         MOV         A,M
-        ORI         FM_EOF_NEXT
+        ORI         FM_BINARY
         MOV         M,A
         DCX         H
         ;
@@ -5729,14 +5952,14 @@ tape_read_input:
         MOV         M,E             ; FCB + FCB_BUFLEN
         INX         H
         MOV         M,D
-        JMP         device_driver_open_output_finalize_index
+        JMP         tape_open_output_finalize_index
 
 
 ;//////////////////////////////////////
 
 tape_read_overrun:
         MVI         A,ERROR_3E
-        JMP         device_driver_operation_exception
+        JMP         tape_operation_exception
 
 
 ;//////////////////////////////////////
@@ -5758,12 +5981,22 @@ tape_read_detect_eof:
         CALL        CBRDW
         JNC         tape_read_no_end_when_expected
         CPI         ERROR_48
-        JNZ         device_driver_operation_exception
-        JMP         device_driver_file_out_of_data
+        JNZ         tape_operation_exception
+        ;
+        ; Set end of file flag
+        ;
+        LHLD        CTLBLK
+        INX         H
+        MOV         A,M             ; FCB + FCB_MODE
+        ORI         FM_EOF
+        MOV         M,A
+        SUB         A
+        STC
+        JMP         tape_operation_exception
 
 tape_read_no_end_when_expected:
         MVI         A,ERROR_57
-        JMP         device_driver_operation_exception
+        JMP         tape_operation_exception
 
 
 ;//////////////////////////////////////////////////////////////////////////////
@@ -5783,6 +6016,11 @@ tape_read_no_end_when_expected:
 ;//             v1.3:
 ;//
 ;//                 -> First version I have
+;//
+;//             v1.4:
+;//
+;//                 -> Adds the :CE: and :RE: files to the list of system devices
+;//                    available for use
 ;//
 
 
@@ -5819,8 +6057,10 @@ system_device_list:
         DW          DEV_NF_FCB
         DB          'LP'
         DW          DEV_LP_FCB
-        DB          'CR'
-        DW          00000H
+        DB          'CE'
+        DW          DEV_CE_FCB
+        DB          'RE'
+        DW          DEV_RE_FCB
         DB          'XM'
         DW          DEV_XM_FCB
         DB          'RC'
@@ -5835,18 +6075,18 @@ intel_driver_set_list:
         ;
         ; Intel input device driver set
         ;
-        DW          T_TABIN + TAB_READ_I
+        DW          intel_read_input
         DW          00000H
-        DW          T_TABIN + TAB_OPEN_I
-        DW          T_TABIN + TAB_CLOSE_I
+        DW          intel_open_input
+        DW          intel_close_input
 
         ;
         ; Intel output device driver set
         ;
         DW          00000H
-        DW          T_TABIN + TAB_WRITE_O
-        DW          T_TABIN + TAB_OPEN_O
-        DW          T_TABIN + TAB_CLOSE_O
+        DW          intel_write_output
+        DW          intel_open_output
+        DW          intel_close_output
 
 
 ;//////////////////////////////////////
@@ -5856,18 +6096,18 @@ ibm_driver_set_list:
         ;
         ; IBM 3740 input device driver set
         ;
-        DW          T_TABIB + TAB_READ_I
+        DW          ibm_read_input
         DW          00000H
-        DW          T_TABIB + TAB_OPEN_I
-        DW          T_TABIB + TAB_CLOSE_I
+        DW          ibm_open_input
+        DW          ibm_close_input
 
         ;
         ; IBM 3740 output device driver set
         ;
         DW          00000H
-        DW          T_TABIB + TAB_WRITE_O
-        DW          T_TABIB + TAB_OPEN_O
-        DW          T_TABIB + TAB_CLOSE_O
+        DW          ibm_write_output
+        DW          ibm_open_output
+        DW          ibm_close_output
 
 
 ;//////////////////////////////////////
@@ -5877,18 +6117,18 @@ tape_driver_set_list:
         ;
         ; Tape cartridge input device driver set
         ;
-        DW          T_TABTC + TAB_READ_I
+        DW          tape_read_input
         DW          00000H
-        DW          T_TABTC + TAB_OPEN_I
-        DW          T_TABTC + TAB_CLOSE_I
+        DW          tape_open_input
+        DW          tape_close_input
 
         ;
         ; Tape cartridge output device driver set
         ;
         DW          00000H
-        DW          T_TABTC + TAB_WRITE_O
-        DW          T_TABTC + TAB_OPEN_O
-        DW          T_TABTC + TAB_CLOSE_O
+        DW          tape_write_output
+        DW          tape_open_output
+        DW          tape_close_output
 
 
 ;//////////////////////////////////////////////////////////////////////////////
@@ -6133,6 +6373,13 @@ phys_ibm_ebcdic_block_dev:
         ;
         MVI         A,ERROR_12
         STC
+        ;
+        ; But first de-allocate file
+        ;
+        PUSH        PSW
+        LHLD        phys_fcb_ptr
+        CALL        T_BUFDEALLOC
+        POP         PSW
         RET
 
 phys_set_ibm_disk_format:
@@ -6271,7 +6518,7 @@ phys_copy_assigned_file:
         ;
         CALL        get_tos_abstract_file_nr
         RC
-        CPI         0
+        ANA         A
         JZ          not_in_file_assignement
         ;
         ; Get pointer to previously assigned abstract file
@@ -6463,7 +6710,7 @@ check_next_device_file:
         ; Check for end of known device files list
         ;
         MOV         A,M
-        CPI         NULL
+        ANA         A
         JZ          device_file_not_found
         ;
         ; Compare first character of name
@@ -6780,6 +7027,15 @@ release_check_entry:
 ;//                 -> Bug where the no-autoscroll line counter does not reset when
 ;//                    a clear-screen or cursor-home control char is sent to :CO:
 ;//
+;//             v1.4:
+;//
+;//                 -> Now also checks for line-break continuation sign, and treats
+;//                    it as a valid deliminator between assignments
+;//                 -> If there is an error opening the newly assigned file, then
+;//                    the file in question will now immediately be unasigned
+;//                 -> Adds :RE: and :CE: device files for UART and console input
+;//                    with end-of-file on Ctrl-C
+;//
 
 
 ;//////////////////////////////////////////////////////////////////////////////
@@ -6804,6 +7060,8 @@ flush_ci_input:
 
 current_tos_abstract_file_nr:
         DB          000H
+assignement_abstract_file_ptr:
+        DS          2
 
 
 ;//////////////////////////////////////////////////////////////////////////////
@@ -6828,7 +7086,7 @@ assign_next_file:
         ;
         CALL        get_tos_abstract_file_nr
         RC
-        CPI         0
+        ANA         A
         JNZ         valid_assignement_file
         MVI         A,'$'
         RET
@@ -6853,6 +7111,8 @@ valid_assignement_file:
         ;
         CALL        INCHAR
         RC
+        CPI         '/'
+        JZ          assign_none
         CPI         ','
         JZ          assign_none
         CPI         '$'
@@ -6909,6 +7169,7 @@ assign_file:
         LXI         H,DEVTAB
         DAD         B
         DAD         B
+        SHLD        assignement_abstract_file_ptr
         ;
         ; Assign abstract file by having it reference the newly created fcb
         ;
@@ -6941,7 +7202,30 @@ assigned_file_open_mode_ready:
         ;
         MOV         A,B
         CALL        OPEN
-        JC          phys_memory_error
+        JNC         assign_file_done
+        ;
+        ; On error, de-allocate file if assigned from the command line
+        ;
+        PUSH        PSW
+        LHLD        phys_fcb_ptr
+        INX         H
+        MOV         A,M             ; FCB + FCB_MODE
+        ANI         FM_ASSIGNED
+        JZ          abort_assignement
+        DCX         H
+        CALL        T_BUFDEALLOC
+abort_assignement:
+        LHLD        assignement_abstract_file_ptr
+        MVI         M,000H
+        INX         H
+        MVI         M,000H
+        POP         H
+        POP         PSW
+        PUSH        H
+        CALL        flush_ci_input
+        POP         PSW
+        RET
+
 assign_file_done:
         ;
         ; Check if this is the final assignement or not
@@ -7207,6 +7491,8 @@ std_file_skip_whitespace_loop:
         RC
         CPI         CR
         JZ          std_file_skip_whitespace_loop
+        CPI         '/'
+        JZ          std_file_none
         CPI         ' '
         JZ          std_file_skip_whitespace_loop
         CPI         '$'
@@ -7382,7 +7668,7 @@ co_emulate_autoscroll:
         ;
         PUSH        PSW
         LDA         ROLLSW
-        CPI         NULL
+        ANA         A
         JZ          co_autoscroll_done
         ;
         ; Emulate autoscroll in case of newline from last line
@@ -7454,6 +7740,63 @@ DEV_CI_FCB:
         DW          TTI
         DW          00000H
 
+
+;//////////////////////////////////////////////////////////////////////////////
+
+        ;
+        ; Main UART input, with end-of-data Ctrl-C
+        ;
+DEV_RE_FCB:
+        DB          2
+        DB          FM_NO_CLOSE + FM_INPUT
+        DW          serial_text_polling_routine
+        DW          00000H
+
+
+;//////////////////////////////////////
+
+        ;
+        ; Console input, with end-of-data on Ctrl-C
+        ;
+DEV_CE_FCB:
+        DB          2
+        DB          FM_NO_CLOSE + FM_INPUT
+        DW          console_text_polling_routine
+        DW          00000H
+
+
+;//////////////////////////////////////
+
+serial_text_polling_routine:
+        CALL        RCVI
+        JMP         check_for_end_of_text
+
+
+;//////////////////////////////////////
+
+console_text_polling_routine:
+        CALL        TTI
+
+
+;//////////////////////////////////////
+
+check_for_end_of_text:
+        ;
+        ; Raise end-of-file on Ctrl-C
+        ;
+        CPI         ETX
+        JNZ         not_end_of_text
+        SUB         A
+        STC
+        RET
+
+not_end_of_text:
+        ANA         A
+        RET
+
+
+;//////////////////////////////////////////////////////////////////////////////
+
         DB          0FFH
 DEV_CI_buffer:
         DB          LF,LF
@@ -7474,6 +7817,11 @@ DEV_CI_buffer:
 ;//             v1.3:
 ;//
 ;//                 -> First version I have
+;//
+;//             v1.4:
+;//
+;//                 -> Quick-references to :LP:, :XM: and :RC: added
+;//                 -> Non-maintained constants removed
 ;//
 
 
@@ -7515,9 +7863,9 @@ T_TABIN:
         ;
 T_LOAD:
         CPI         4
-        JM          LOADD
+        JM          T_LOADD
         SUI         4
-        JMP         CLOAD
+        JMP         T_CLOAD
 
 
 ;//////////////////////////////////////////////////////////////////////////////
@@ -7574,100 +7922,100 @@ STIMER:
 ;//////////////////////////////////////////////////////////////////////////////
 
         ORG         0FD40H
-TTI:
-        JMP         X_TTI
-TTO:
-        JMP         X_TTO
-TTONC:
-        JMP         X_TTONC
-CURSOR:
-        JMP         X_CURSOR
-XMON:
-        JMP         X_XMON
-ERR:
-        JMP         X_ERR
-PRNT:
-        JMP         X_PRNT
-DTST:
-        JMP         X_DTST
-DCAL:
-        JMP         X_DCAL
-DSRD:
-        JMP         X_DSRD
-DSWR:
-        JMP         X_DSWR
-DSDL:
-        JMP         X_DSDL
-DSRDA:
-        JMP         X_DSRDA
-DSWRA:
-        JMP         X_DSWRA
-INDISP:
-        JMP         X_INDISP
-DSWT:
-        JMP         X_DSWT
-DCALW:
-        JMP         X_DCALW
-DSRDW:
-        JMP         X_DSRDW
-DSWRW:
-        JMP         X_DSWRW
-DSDLW:
-        JMP         X_DSDLW
-DSRAW:
-        JMP         X_DSRAW
-DSWAW:
-        JMP         X_DSWAW
-RCVI:
-        JMP         X_RCVI
-LOCDIR:
-        JMP         X_LOCDIR
-LOADD:
-        JMP         X_LOADD
-LINKD:
-        JMP         X_LINKD
-CTST:
-        JMP         X_CTST
-CCAL:
-        JMP         X_CCAL
-CBRD:
-        JMP         X_CBRD
-CBWR:
-        JMP         X_CBWR
-CBBS:
-        JMP         X_CBBS
-CBTM:
-        JMP         X_CBTM
-CBSF:
-        JMP         X_CBSF
-CBSB:
-        JMP         X_CBSB
-CUN:
-        JMP         X_CUN
-CRW:
-        JMP         X_CRW
-CWT:
-        JMP         X_CWT
-CBRDW:
-        JMP         X_CBRDW
-CBWRW:
-        JMP         X_CBWRW
-CBBSW:
-        JMP         X_CBBSW
-CBTMW:
-        JMP         X_CBTMW
-CBSFW:
-        JMP         X_CBSFW
-CBSBW:
-        JMP         X_CBSBW
-CLOCDIR:
-        JMP         X_CLOCDIR
-CLOAD:
-        JMP         X_CLOAD
-CLINK:
-        JMP         X_CLINK
-XMIO:
-        JMP         X_XMIO
+T_TTI:
+        JMP         TTI
+T_TTO:
+        JMP         TTO
+T_TTONC:
+        JMP         TTONC
+T_CURSOR:
+        JMP         CURSOR
+T_XMON:
+        JMP         XMON
+T_ERR:
+        JMP         ERR
+T_PRNT:
+        JMP         PRNT
+T_DTST:
+        JMP         DTST
+T_DCAL:
+        JMP         DCAL
+T_DSRD:
+        JMP         DSRD
+T_DSWR:
+        JMP         DSWR
+T_DSDL:
+        JMP         DSDL
+T_DSRDA:
+        JMP         DSRDA
+T_DSWRA:
+        JMP         DSWRA
+T_INDISP:
+        JMP         INDISP
+T_DSWT:
+        JMP         DSWT
+T_DCALW:
+        JMP         DCALW
+T_DSRDW:
+        JMP         DSRDW
+T_DSWRW:
+        JMP         DSWRW
+T_DSDLW:
+        JMP         DSDLW
+T_DSRAW:
+        JMP         DSRAW
+T_DSWAW:
+        JMP         DSWAW
+T_RCVI:
+        JMP         RCVI
+T_LOCDIR:
+        JMP         LOCDIR
+T_LOADD:
+        JMP         LOADD
+T_LINKD:
+        JMP         LINKD
+T_CTST:
+        JMP         CTST
+T_CCAL:
+        JMP         CCAL
+T_CBRD:
+        JMP         CBRD
+T_CBWR:
+        JMP         CBWR
+T_CBBS:
+        JMP         CBBS
+T_CBTM:
+        JMP         CBTM
+T_CBSF:
+        JMP         CBSF
+T_CBSB:
+        JMP         CBSB
+T_CUN:
+        JMP         CUN
+T_CRW:
+        JMP         CRW
+T_CWT:
+        JMP         CWT
+T_CBRDW:
+        JMP         CBRDW
+T_CBWRW:
+        JMP         CBWRW
+T_CBBSW:
+        JMP         CBBSW
+T_CBTMW:
+        JMP         CBTMW
+T_CBSFW:
+        JMP         CBSFW
+T_CBSBW:
+        JMP         CBSBW
+T_CLOCDIR:
+        JMP         CLOCDIR
+T_CLOAD:
+        JMP         CLOAD
+T_CLINK:
+        JMP         CLINK
+T_XMIO:
+        JMP         XMIO
 
 
 ;//////////////////////////////////////////////////////////////////////////////
@@ -7700,7 +8048,8 @@ TABIB:
 TABIN:
         DW          T_TABIN
         DW          00000H
-        DW          00000H
+DEV_LP:
+        DW          DEV_LP_FCB
 DEV_NF:
         DW          DEV_NF_FCB
 DEV_BB:
@@ -7709,10 +8058,10 @@ DEV_CO:
         DW          DEV_CO_FCB
 DEV_CI:
         DW          DEV_CI_FCB_buffered_echo
-        DW          00000H
-        DW          00000H
-        DW          08000H
-        DW          0F000H
+DEV_XM:
+        DW          DEV_XM_FCB
+DEV_RC:
+        DW          DEV_RC_FCB
 
 
 ;//////////////////////////////////////////////////////////////////////////////
@@ -7760,6 +8109,15 @@ AL_FCB:
 ;//             v1.3:
 ;//
 ;//                 -> First version I have
+;//                 -> Has a bug where a full directory prevents extended handling
+;//                    of program-loading issues.
+;//
+;//             v1.4:
+;//
+;//                 -> Beeps when linebreak-continuation character is used
+;//                 -> Verifies the value of the debug flag, it is ignored if not
+;//                    set to exactly the right value
+;//                 -> Fixes the file-loading handling bug from v1.3
 ;//
 
 
@@ -7891,7 +8249,7 @@ run_program:
         ; Check if TOS debug mode is active
         ;
         LDA         DEBUG
-        CPI         FALSE
+        ANA         A
         JNZ         run_with_debug
         ;
         ; If not, run program as-is
@@ -7900,12 +8258,25 @@ run_program:
 
 run_with_debug:
         ;
-        ; Else, clear TOS debug flag and start right into XMON ROM debugger
+        ; Else, verify TOS debug flag
+        ;
+        CPI         TRUE
+        JNZ         invalid_debug_flag
+        ;
+        ; Clear flag and start right into XMON ROM debugger if set correctly
         ;
         SUB         A
         STA         DEBUG
         PUSH        H
         JMP         RESET
+
+invalid_debug_flag:
+        ;
+        ; If the TOS debug flag has been set incorrectly, ignore and reset it
+        ;
+        SUB         A
+        STA         DEBUG
+        JMP         command_line_interpreter
 
 
 ;//////////////////////////////////////
@@ -7917,6 +8288,8 @@ cli_load_error:
         ;
         ; Check for program not found
         ;
+        CPI         ERROR_09
+        JZ          retry_uppercase_load
         CPI         ERROR_0B
         JZ          retry_uppercase_load
         STC
@@ -7935,8 +8308,15 @@ retry_uppercase_load:
         ;
         LDA         loading_drive_number
         CALL        LOAD
-        RC
-        JMP         cli_check_start_of_args
+        JNC         cli_check_start_of_args
+        ;
+        ; If still not found, flush CI input and return with exception
+        ;
+        PUSH        PSW
+        LDA         cli_next_char
+        CALL        flush_ci_input
+        POP         PSW
+        RET
 
 
 ;//////////////////////////////////////
@@ -7946,9 +8326,11 @@ retry_uppercase_load:
         ;
 cli_args_on_next_line:
         ;
-        ; Flush the remaining characters of current line
+        ; Beep and flush the remaining characters of current line
         ;
 cli_flush_remaining_line:
+        MVI         A,BEL
+        CALL        TTO
         LHLD        CI_FCB
         CALL        INCHAR
         RC
