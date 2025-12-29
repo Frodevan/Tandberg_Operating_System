@@ -505,12 +505,6 @@ init_first_pass:
         JMP         exit_to_tos
 
 
-;//////////////////////////////////////
-
-source_file_missing_str:
-        DB          'No source file',CR
-
-
 ;//////////////////////////////////////////////////////////////////////////////
 
         ;
@@ -536,12 +530,6 @@ check_buflim_addr_digit:
         LHLD        CO_FCB
         CALL        PUT
         RST         RST0
-
-
-;//////////////////////////////////////
-
-buffer_conflict_str:
-        DB          'Buffer conflict. Too many files assigned',CR
 
 
 ;//////////////////////////////////////////////////////////////////////////////
@@ -578,12 +566,6 @@ validate_output_file:
         LHLD        CO_FCB
         CALL        PUT
         JMP         exit_to_tos
-
-
-;//////////////////////////////////////
-
-invalid_output_file_str:
-        DB          'Illegal assignment on SO',CR
 
 
 ;//////////////////////////////////////////////////////////////////////////////
@@ -2617,12 +2599,6 @@ final_error_report_ready:
         JMP         list_symb_table
 
 
-;//////////////////////////////////////
-
-final_err_report_str:
-        DB          'NO ERROR MESSAGES',CR
-
-
 ;//////////////////////////////////////////////////////////////////////////////
 
         ;
@@ -4580,8 +4556,6 @@ get_next_input_file_line:
 
 ;//////////////////////////////////////
 
-end_error_str:
-        DB          '      ****ERROR**** END MISSING',CR,NULL
 end_str:
         DB          'END',NULL
 
@@ -6407,14 +6381,6 @@ blank_header_str_loop:
         RET
 
 
-;//////////////////////////////////////
-
-rasm_title_str:
-        DB          'TDV 2100 ASSEMBLER V.2.2',NULL,CR
-error_str:
-        DB          '****ERROR****: 00',CR,NULL
-
-
 ;//////////////////////////////////////////////////////////////////////////////
 
         ;
@@ -6971,4 +6937,26 @@ opcode_database:
         DB          IC_WI_MOVE
         DB          001H
         DB          NULL
+
+
+;//////////////////////////////////////////////////////////////////////////////
+;//
+;//     Strings
+;//
+;//////////////////////////////////////////////////////////////////////////////
+
+source_file_missing_str:
+        DB          'No source file',CR
+buffer_conflict_str:
+        DB          'Buffer conflict. Too many files assigned',CR
+invalid_output_file_str:
+        DB          'Illegal assignment on SO',CR
+final_err_report_str:
+        DB          'NO ERROR MESSAGES',CR
+end_error_str:
+        DB          '      ****ERROR**** END MISSING',CR,NULL
+rasm_title_str:
+        DB          'TDV 2100 ASSEMBLER V.2.3',NULL,CR
+error_str:
+        DB          '****ERROR****: 00',CR,NULL
 end_of_program:

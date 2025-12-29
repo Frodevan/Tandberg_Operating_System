@@ -27,6 +27,8 @@
 ;//                 -> Accepts uppercase letters at the prompt
 ;//                 -> Will never raise tape-mark-detected at the end of dump
 ;//
+;//             1.6: Entry at 0xC05D
+;//
 
 
 ;//////////////////////////////////////////////////////////////////////////////
@@ -61,12 +63,11 @@ ERROR_48    EQU     048H        ; TAPE MARK DETECTED
 
 ;//////////////////////////////////////////////////////////////////////////////
 ;//
-;//     Program entry
+;//     Legacy program entry
 ;//
 ;//////////////////////////////////////////////////////////////////////////////
 
         ORG         0C000H
-start:
         JMP         main_program
 
 
@@ -76,13 +77,13 @@ start:
 ;//
 ;//////////////////////////////////////////////////////////////////////////////
 
-current_track_nr:
-        DS          1
-
 welcome_prompt_str:
         DB          'DUMP FROM DISKETTE 0 TO CARTRIDGE 0 TRK 0  TYPE Y TO START',CR
 dump_done_str:
         DB          'END OF DUMP',CR
+
+current_track_nr:
+        DS          1
 
 
 ;//////////////////////////////////////////////////////////////////////////////
@@ -117,6 +118,7 @@ print_str_loop:
 ;//
 ;//////////////////////////////////////////////////////////////////////////////
 
+start:
 main_program:
         ;
         ; Print user prompt and expect a 'Y' to continue

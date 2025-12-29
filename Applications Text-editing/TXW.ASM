@@ -133,6 +133,8 @@
 ;//                 -> Right-alignment is recognized, but does not have any effect
 ;//                    on the output
 ;//
+;//             1.6: Entry at 0xC000
+;//
 
 
 ;//////////////////////////////////////////////////////////////////////////////
@@ -422,14 +424,6 @@ line_output_file_ok:
         LXI         H,00000H
         SHLD        SL_FCB
         RET
-
-
-;//////////////////////////////////////
-
-missing_si_str:
-        DB          'No SI assigned',CR
-multiple_outputs_str:
-        DB          'Both SO and SL',CR
 
 
 ;//////////////////////////////////////////////////////////////////////////////
@@ -2084,10 +2078,6 @@ copy_next_page_nr_char:
 
 page_nr_prefix_1_str:
         DB          '- ',NULL
-page_nr_prefix_2_str:
-        DB          'PAGE ',NULL
-page_nr_prefix_3_str:
-        DB          'Page ',NULL
 
 
 ;//////////////////////////////////////////////////////////////////////////////
@@ -2373,7 +2363,7 @@ right_align_output_line:
 
 ;//////////////////////////////////////////////////////////////////////////////
 ;//
-;//     Data
+;//     Strings and data
 ;//
 ;//////////////////////////////////////////////////////////////////////////////
 
@@ -2443,3 +2433,13 @@ target_line_nr:
         DS          1
 target_line_pos:
         DS          1
+
+missing_si_str:
+        DB          'No SI assigned',CR
+multiple_outputs_str:
+        DB          'Both SO and SL',CR
+
+page_nr_prefix_2_str:
+        DB          'PAGE ',NULL
+page_nr_prefix_3_str:
+        DB          'Page ',NULL

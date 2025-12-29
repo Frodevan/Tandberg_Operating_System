@@ -150,6 +150,8 @@
 ;//                    illegal undefined symbol
 ;//                 -> Fixes the source-code output bug from v1.4
 ;//
+;//             1.6: Entry at 0xC203
+;//
 
 
 ;//////////////////////////////////////////////////////////////////////////////
@@ -1147,21 +1149,6 @@ print_error_symbol_tables:
         ; Quit to TOS
         ;
         JMP         exit_to_tos
-
-
-;//////////////////////////////////////
-
-title_str:
-        DB          title_str_line_end - title_str_line_start
-title_str_line_start:
-        DB          'TANDBERG TDV 2100 ASSEMBLER V.1.5.',CR,LF
-title_str_line_end:
-build_errors_report_str:
-        DB          19
-        DB          'NO ERROR MESSAGES',CR,LF
-build_done_str:
-        DB          19
-        DB          'ASSEMBLY COMPLETE',CR,LF
 
 
 ;//////////////////////////////////////////////////////////////////////////////
@@ -5641,13 +5628,6 @@ setup_buffers:
         RET
 
 
-;//////////////////////////////////////
-
-symbols_table_str:
-        DB          20
-        DB          'SYMBOL TABLE AREA : '
-
-
 ;//////////////////////////////////////////////////////////////////////////////
 
         ;
@@ -6150,21 +6130,33 @@ flush_listing_output_loop:
         RET
 
 
-;//////////////////////////////////////
+;//////////////////////////////////////////////////////////////////////////////
+;//
+;//     Strings
+;//
+;//////////////////////////////////////////////////////////////////////////////
 
+title_str:
+        DB          title_str_line_end - title_str_line_start
+title_str_line_start:
+        DB          'TANDBERG TDV 2100 ASSEMBLER V.1.5.',CR,LF
+title_str_line_end:
+build_errors_report_str:
+        DB          19
+        DB          'NO ERROR MESSAGES',CR,LF
+build_done_str:
+        DB          19
+        DB          'ASSEMBLY COMPLETE',CR,LF
+
+symbols_table_str:
+        DB          20
+        DB          'SYMBOL TABLE AREA : '
 undefined_symbols_str:
         DB          20
         DB          'UNDEFINED SYMBOLS:',CR,LF
 symbols_str:
         DB          15
         DB          'SYMBOL TABLE:',CR,LF
-
-
-;//////////////////////////////////////////////////////////////////////////////
-;//
-;//     Strings
-;//
-;//////////////////////////////////////////////////////////////////////////////
 
 page_str:
         DB          ' PAGE',NULL
