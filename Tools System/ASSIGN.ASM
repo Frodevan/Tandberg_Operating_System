@@ -17,6 +17,10 @@
 ;//                 -> Version ID added
 ;//                 -> Has a bug where Version ID is not written to 0x2700
 ;//
+;//             1.6b: Entry at 0xC000
+;//
+;//                 -> Fixes Version ID bug from v1.6a
+;//
 
 
 ;//////////////////////////////////////////////////////////////////////////////
@@ -24,6 +28,11 @@
 ;//     Defines
 ;//
 ;//////////////////////////////////////////////////////////////////////////////
+
+;
+; XMON and TOS system data
+;
+SIGNATURE   EQU     02700H      ; Program signature
 
 ;
 ; TOS standard files
@@ -40,6 +49,17 @@ AL_FCB      EQU     0FF0EH      ; Auxilliary line-printer output abstract file F
 ;
 FM_ASSIGNED EQU     020H        ; Assigned and opened by command line flag
 FM_NO_CLOSE EQU     040H        ; Don't close file flag
+
+
+;//////////////////////////////////////////////////////////////////////////////
+;//
+;//     Signature
+;//
+;//////////////////////////////////////////////////////////////////////////////
+
+        ORG         SIGNATURE
+        DB          'ASSIGN'
+        DB          '106'
 
 
 ;//////////////////////////////////////////////////////////////////////////////
@@ -95,13 +115,3 @@ lock_assigned_fcb_open:
         ORI         FM_NO_CLOSE
         MOV         M,A
         RET
-
-
-;//////////////////////////////////////////////////////////////////////////////
-;//
-;//     Signature
-;//
-;//////////////////////////////////////////////////////////////////////////////
-
-        DB          'ASSIGN'
-        DB          '106'

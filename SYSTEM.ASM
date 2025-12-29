@@ -856,6 +856,46 @@ title_str:
 
 ;//////////////////////////////////////////////////////////////////////////////
 ;//
+;//     TIME module
+;//
+;//         A one-shot timer that can be set to trigger at a set time into the
+;//         future. This is a simple-to-use wrapper for the XMON timer function.
+;//
+;//
+;//         Changelog:
+;//
+;//             v1.3:
+;//
+;//                 -> First version I have
+;//
+
+
+;//////////////////////////////////////////////////////////////////////////////
+;//
+;//     Timer setup
+;//
+;//////////////////////////////////////////////////////////////////////////////
+
+        ;
+        ; Set oneshot-timer routine to HL and countdown to DE frames (50Hz)
+        ;
+T_STIMER:
+        DI
+        SHLD        TIMEAD
+        XCHG
+        SHLD        TIMER
+        XCHG
+        EI
+        RET
+
+
+;//////////////////////////////////////////////////////////////////////////////
+
+        DS          1
+
+
+;//////////////////////////////////////////////////////////////////////////////
+;//
 ;//     EDIT module
 ;//
 ;//         String editing module, containing helper-functions for string-
@@ -4651,41 +4691,6 @@ intel_mapfile_found:
 intel_mapfile_name:
         DB          'ISIS',NULL,NULL
         DB          'MAP'
-
-
-;//////////////////////////////////////////////////////////////////////////////
-;//
-;//     TIME module
-;//
-;//         A one-shot timer that can be set to trigger at a set time into the
-;//         future. This is a simple-to-use wrapper for the XMON timer function.
-;//
-;//
-;//         Changelog:
-;//
-;//             v1.3:
-;//
-;//                 -> First version I have
-;//
-
-
-;//////////////////////////////////////////////////////////////////////////////
-;//
-;//     Timer setup
-;//
-;//////////////////////////////////////////////////////////////////////////////
-
-        ;
-        ; Set oneshot-timer routine to HL and countdown to DE frames (50Hz)
-        ;
-T_STIMER:
-        DI
-        SHLD        TIMEAD
-        XCHG
-        SHLD        TIMER
-        XCHG
-        EI
-        RET
 
 
 ;//////////////////////////////////////////////////////////////////////////////
