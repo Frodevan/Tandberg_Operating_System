@@ -783,12 +783,6 @@ filename_print_last_part:
 
 drive_designator_str:
         DB          ':F0:',CR
-not_found_str:
-        DB          '  NOT FOUND',CR
-lost_str:
-        DB          '  LOST',CR
-reclaimed_str:
-        DB          '  RECLAIMED',CR
 
 drive_number:
         DB          0
@@ -834,3 +828,10 @@ mapfile_data_buffer:
         DS          256
 filename_str:
         DS          9+1
+
+not_found_str:
+        DB          '  NOT FOUND',CR
+lost_str:
+        DB          '  LOST',CR
+reclaimed_str:
+        DB          '  RECLAIMED',CR

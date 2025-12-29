@@ -112,6 +112,8 @@
 ;//                 -> Introduces a bug where drive types B and J are reported to
 ;//                    the user as type A and I respectively
 ;//
+;//             1.6: Entry at 0xC000
+;//
 
 
 ;//////////////////////////////////////////////////////////////////////////////
@@ -1488,22 +1490,6 @@ done_comparing_memory:
 ;//
 ;//////////////////////////////////////////////////////////////////////////////
 
-parameter_prompts_str:
-        DB          ERPAG
-        DB          'FILENAME: ',CR,LF
-        DB          'REPLACE/NEW: ',CR,LF
-        DB          'RECORD LENGTH: ',CR,LF
-        DB          'BOE (T/S): ',CR,LF
-        DB          'EOE (T/S): ',CR,LF,LF
-        DB          'REMAINDER DEFAULT (Y/N): ',CR,LF,LF
-        DB          'BYPASS: ',CR,LF
-        DB          'ACCESS CHAR: ',CR,LF
-        DB          'PROTECT: ',CR,LF
-        DB          'CREATION DATE: ',CR,LF
-        DB          'EXPIRATION DATE: ',CR,LF
-        DB          'VERIFY: ',CR,LF
-        DB          'EOD (T/S): ',CR,LF,ETX
-
 parameter_prompts_cursor_locations:
         DB          00AH, 000H
         DB          00DH, 001H
@@ -1569,6 +1555,27 @@ write_call:
 input_line_and_data_buffer:
         DS          128
 
+active_file_label_id:
+        DB          'HDR1'
+deleted_file_label_id:
+        DB          'DDR1'
+
+parameter_prompts_str:
+        DB          ERPAG
+        DB          'FILENAME: ',CR,LF
+        DB          'REPLACE/NEW: ',CR,LF
+        DB          'RECORD LENGTH: ',CR,LF
+        DB          'BOE (T/S): ',CR,LF
+        DB          'EOE (T/S): ',CR,LF,LF
+        DB          'REMAINDER DEFAULT (Y/N): ',CR,LF,LF
+        DB          'BYPASS: ',CR,LF
+        DB          'ACCESS CHAR: ',CR,LF
+        DB          'PROTECT: ',CR,LF
+        DB          'CREATION DATE: ',CR,LF
+        DB          'EXPIRATION DATE: ',CR,LF
+        DB          'VERIFY: ',CR,LF
+        DB          'EOD (T/S): ',CR,LF,ETX
+
 filename_error_str:
         DB          'FILENAME ERROR',CR,LF,ETX
 unrecognized_file_label_found_id_str:
@@ -1581,8 +1588,3 @@ not_found_str:
         DB          ', NOT FOUND',CR,LF,ETX
 established_str:
         DB          ', ESTABLISHED',CR,LF,ETX
-
-active_file_label_id:
-        DB          'HDR1'
-deleted_file_label_id:
-        DB          'DDR1'
