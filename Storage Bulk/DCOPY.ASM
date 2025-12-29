@@ -50,6 +50,8 @@
 ;//                 -> Introduces a bug where the track-buffer may overrun into TOS
 ;//                    by up to 26 bytes
 ;//
+;//             1.6a: Entry at 0x2000
+;//
 
 
 ;//////////////////////////////////////////////////////////////////////////////
@@ -610,21 +612,6 @@ line_already_clear:
 ;//
 ;//////////////////////////////////////////////////////////////////////////////
 
-welcome_prompt_str:
-        DB          'Copy from 0 to 1 - Type Y to start : ',NULL
-verification_ok_str:
-        DB          'EQUAL. More ? ',NULL
-change_to_copy_str:
-        DB          'Change to copy diskette',BEL,NULL
-change_to_original_str:
-        DB          'Change to original diskette',BEL,NULL
-drive_not_ready_str:
-        DB          'Drive not ready. ',BEL,NULL
-read_error_str:
-        DB          'Read error',BEL,NULL
-write_error_str:
-        DB          'Write error',BEL,NULL
-
 saved_stack_ptr:
         DW          00000H
 
@@ -648,3 +635,18 @@ current_track_buffer_ptr:
         DW          00000H
 retry_counter:
         DB          000H
+
+welcome_prompt_str:
+        DB          'Copy from 0 to 1 - Type Y to start : ',NULL
+verification_ok_str:
+        DB          'EQUAL. More ? ',NULL
+change_to_copy_str:
+        DB          'Change to copy diskette',BEL,NULL
+change_to_original_str:
+        DB          'Change to original diskette',BEL,NULL
+drive_not_ready_str:
+        DB          'Drive not ready. ',BEL,NULL
+read_error_str:
+        DB          'Read error',BEL,NULL
+write_error_str:
+        DB          'Write error',BEL,NULL

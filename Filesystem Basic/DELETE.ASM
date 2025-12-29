@@ -56,6 +56,8 @@
 ;//                 -> Introduces a bug where drive types B and J are reported to
 ;//                    the user as type A and I respectively
 ;//
+;//             1.6a: Entry at 0xC0AD
+;//
 
 
 ;//////////////////////////////////////////////////////////////////////////////
@@ -159,7 +161,7 @@ ATTR_F      EQU     080H        ; Format file
 
 ;//////////////////////////////////////////////////////////////////////////////
 ;//
-;//     Strings and data
+;//     Data
 ;//
 ;//////////////////////////////////////////////////////////////////////////////
 
@@ -182,20 +184,6 @@ mapfile_name:
         DB          'ISIS',NULL,NULL
         DB          'MAP'
 
-not_found_str:
-        DB          'NOT FOUND',CR
-deleted_str:
-        DB          'DELETED',CR
-protected_str:
-        DB          'PROTECTED',CR
-alias_str:
-        DB          'ALIAS',CR
-deleted_alias_str:
-        DB          'DELETED ALIAS',CR
-improper_unit_str:
-        DB          'IMPROPER UNIT SPECIFICATION',CR
-improper_params_str:
-        DB          'IMPROPER PARAMETER LIST',CR
 drive_designator:
         DB          ':F*:',CR
 
@@ -907,3 +895,25 @@ print_next_ibm_filename_char:
         MVI         A,' '
         CALL        OUTCHAR
         RET
+
+
+;//////////////////////////////////////////////////////////////////////////////
+;//
+;//     Strings
+;//
+;//////////////////////////////////////////////////////////////////////////////
+
+not_found_str:
+        DB          'NOT FOUND',CR
+deleted_str:
+        DB          'DELETED',CR
+protected_str:
+        DB          'PROTECTED',CR
+alias_str:
+        DB          'ALIAS',CR
+deleted_alias_str:
+        DB          'DELETED ALIAS',CR
+improper_unit_str:
+        DB          'IMPROPER UNIT SPECIFICATION',CR
+improper_params_str:
+        DB          'IMPROPER PARAMETER LIST',CR

@@ -337,7 +337,15 @@ TAB_CLOSE   EQU     00CH        ; Device driver close routines
 ;//
 ;//////////////////////////////////////////////////////////////////////////////
 
-        ORG         0DC00H
+        ORG         0DB00H
+buffer_list_next_ptr:
+        DW          00000H
+buffer_list_tail:
+        DB          BUFLST_HEAD
+
+
+;//////////////////////////////////////////////////////////////////////////////
+
 start:
         ;
         ; Init and run main command line prompt program
@@ -392,14 +400,6 @@ scroll_mode_found:
         XRA         A
         STA         EXSW
         RET
-
-
-;//////////////////////////////////////////////////////////////////////////////
-
-buffer_list_next_ptr:
-        DW          00000H
-buffer_list_tail:
-        DB          BUFLST_HEAD
 
 
 ;//////////////////////////////////////////////////////////////////////////////

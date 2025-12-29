@@ -28,6 +28,8 @@
 ;//                 -> Accepts lower-case input to the prompt
 ;//                 -> Minor optimization in code after a file has been copied
 ;//
+;//             1.6: Entry at 0xC2FD
+;//
 
 
 ;//////////////////////////////////////////////////////////////////////////////
@@ -97,18 +99,17 @@ FM_BINARY   EQU     004H        ; Binary flag
 
 ;//////////////////////////////////////////////////////////////////////////////
 ;//
-;//     Program entry
+;//     Legacy program entry
 ;//
 ;//////////////////////////////////////////////////////////////////////////////
 
         ORG         0C000H
-start:
         JMP         beginning
 
 
 ;//////////////////////////////////////////////////////////////////////////////
 ;//
-;//     Strings and data
+;//     Data
 ;//
 ;//////////////////////////////////////////////////////////////////////////////
 
@@ -196,13 +197,6 @@ out_file_linking_block_buffer:
 flush_outlet:
         DS          16
 
-welcome_prompt_str:
-        DB          'DATASET COPY FROM DISKETTE 0 TO DISKETTE 1 - TYPE Y TO START',CR
-not_copied_str:
-        DB          ' NOT'
-copied_ok_str:
-        DB          ' COPIED',CR
-
 
 ;//////////////////////////////////////////////////////////////////////////////
 ;//
@@ -210,6 +204,7 @@ copied_ok_str:
 ;//
 ;//////////////////////////////////////////////////////////////////////////////
 
+start:
 beginning:
         ;
         ; Print welcome prompt and check response
@@ -450,3 +445,17 @@ copying_done:
         RZ
         STC
         RET
+
+
+;//////////////////////////////////////////////////////////////////////////////
+;//
+;//     Strings
+;//
+;//////////////////////////////////////////////////////////////////////////////
+
+welcome_prompt_str:
+        DB          'DATASET COPY FROM DISKETTE 0 TO DISKETTE 1 - TYPE Y TO START',CR
+not_copied_str:
+        DB          ' NOT'
+copied_ok_str:
+        DB          ' COPIED',CR

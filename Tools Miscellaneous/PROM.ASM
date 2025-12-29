@@ -89,6 +89,13 @@
 ;//                 -> Introduces sanitycheck to prevent overwriting anything when
 ;//                    loading data from file
 ;//
+;//             1.6: Entry at 0xC2D7
+;//
+;//                 -> Introduces a bug where the strings used by the program may
+;//                    be overwritten by a load using the L command. Should this
+;//                    happen, the program will start to print garbage instead of
+;//                    the expected text.
+;//
 
 
 ;//////////////////////////////////////////////////////////////////////////////
@@ -162,18 +169,17 @@ FM_BINARY   EQU     004H        ; Binary flag
 
 ;//////////////////////////////////////////////////////////////////////////////
 ;//
-;//     Program entry
+;//     Legacy program entry
 ;//
 ;//////////////////////////////////////////////////////////////////////////////
 
         ORG         0C000H
-start:
         JMP         beginning
 
 
 ;//////////////////////////////////////////////////////////////////////////////
 ;//
-;//     Strings and data
+;//     Data
 ;//
 ;//////////////////////////////////////////////////////////////////////////////
 
@@ -235,18 +241,6 @@ output_file_fcb:
 
 command_prompt_str:
         DB          ':',CR
-command_error_str:
-        DB          ' COMMAND ERROR',CR
-program_prompt_str:
-        DB          ' SET UP FOR LOAD I/O EXECUTE',CR
-press_cr_str:
-        DB          ' PRESS CR',CR
-eof_error_str:
-        DB          ' UNEXPECTED END-OF-FILE',CR
-start_transfer_str:
-        DB          ' SET UP FOR PROGRAM I/O EXECUTE',CR
-load_out_of_range_str:
-        DB          ' LOAD AREA OUT OF RANGE',CR
 
 
 ;//////////////////////////////////////////////////////////////////////////////
@@ -592,6 +586,7 @@ end_of_hex_number:
 ;//
 ;//////////////////////////////////////////////////////////////////////////////
 
+start:
 beginning:
         ;
         ; Set up input file control block driver to Intel floppy
@@ -1322,3 +1317,23 @@ write_next_entrypoint_byte:
 ;//////////////////////////////////////////////////////////////////////////////
 
 unused_program_memory:
+
+
+;//////////////////////////////////////////////////////////////////////////////
+;//
+;//     Strings
+;//
+;//////////////////////////////////////////////////////////////////////////////
+
+command_error_str:
+        DB          ' COMMAND ERROR',CR
+program_prompt_str:
+        DB          ' SET UP FOR LOAD I/O EXECUTE',CR
+press_cr_str:
+        DB          ' PRESS CR',CR
+eof_error_str:
+        DB          ' UNEXPECTED END-OF-FILE',CR
+start_transfer_str:
+        DB          ' SET UP FOR PROGRAM I/O EXECUTE',CR
+load_out_of_range_str:
+        DB          ' LOAD AREA OUT OF RANGE',CR
