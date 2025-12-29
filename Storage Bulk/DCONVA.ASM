@@ -31,6 +31,8 @@
 ;//
 ;//                 -> First version I have
 ;//
+;//             1.6: Entry at 0xC000
+;//
 
 
 ;//////////////////////////////////////////////////////////////////////////////
@@ -264,14 +266,15 @@ to_uppercase:
 ;//
 ;//////////////////////////////////////////////////////////////////////////////
 
-welcome_prompt_str:
-        DB          'CONVERT FROM EBCDIC TO ASCII (UNIT 0) - TYPE Y TO START',CR
-aborted_str:
-        DB          'DISKETTE IS ONLY PARTLY CONVERTED',CR
-
 sector_type_list_ptr:
         DS          2
 sector_type_list:
         DS          26
 track_data_buffer:
         DS          26*128
+        DS          26*128
+
+welcome_prompt_str:
+        DB          'CONVERT FROM EBCDIC TO ASCII (UNIT 0) - TYPE Y TO START',CR
+aborted_str:
+        DB          'DISKETTE IS ONLY PARTLY CONVERTED',CR

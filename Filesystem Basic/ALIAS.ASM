@@ -59,6 +59,8 @@
 ;//                 -> Adds a bug where the last 9 bytes of the tape buffer does
 ;//                    not get cleared to zero on program start
 ;//
+;//             1.6a: Entry at 0xC000
+;//
 
 
 ;//////////////////////////////////////////////////////////////////////////////
@@ -477,20 +479,6 @@ print_filename_final_part:
 ;//
 ;//////////////////////////////////////////////////////////////////////////////
 
-drive_designator_str:
-        DB          ':F0:',CR
-
-improper_unit_str:
-        DB          'IMPROPER UNIT SPECIFICATION',CR
-improper_parameters_str:
-        DB          'IMPROPER PARAMETER LIST',CR
-not_found_str:
-        DB          '   NOT FOUND',CR
-already_exists_str:
-        DB          '   EXISTS',CR
-made_alias_str:
-        DB          '   MADE ALIAS',CR
-
 previous_input_char:
         DB          NULL
 drive_number:
@@ -505,3 +493,17 @@ tape_cart_usage_block_buffer:
 alias_filetable_entry:
         DB          000H
         DS          31
+
+drive_designator_str:
+        DB          ':F0:',CR
+
+improper_unit_str:
+        DB          'IMPROPER UNIT SPECIFICATION',CR
+improper_parameters_str:
+        DB          'IMPROPER PARAMETER LIST',CR
+not_found_str:
+        DB          '   NOT FOUND',CR
+already_exists_str:
+        DB          '   EXISTS',CR
+made_alias_str:
+        DB          '   MADE ALIAS',CR

@@ -84,6 +84,8 @@
 ;//
 ;//                 -> Recognizes new drive type J
 ;//
+;//             v1.7: Entry at 0x8000
+;//
 
 
 ;//////////////////////////////////////////////////////////////////////////////
@@ -1158,6 +1160,13 @@ reload_system_and_exit:
 
 ;//////////////////////////////////////
 
+system_filename_str:
+        DB          'SYSTEM'
+        DB          NULL,NULL,NULL
+
+
+;//////////////////////////////////////
+
 operation_aborted:
         LXI         D,operation_aborted_str
         JMP         print_and_quit
@@ -1287,10 +1296,6 @@ operation_completed_str:
         DB          'OPERATION COMPLETED',CR,ETX
 sys_disk_prompt_str:
         DB          'CHANGE TO SYSTEM DISKETTE, TYPE "C" TO CONTINUE',BEL,CR,ETX
-
-system_filename_str:
-        DB          'SYSTEM'
-        DB          NULL,NULL,NULL
 
 
 ;//////////////////////////////////////////////////////////////////////////////
