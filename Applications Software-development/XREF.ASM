@@ -69,6 +69,8 @@
 ;//                    the explicit PL prefix. The most significant digit will be
 ;//                    incorrectly ignored in this case.
 ;//
+;//             1.5: Entry at 0xC800
+;//
 
 
 ;//////////////////////////////////////////////////////////////////////////////
@@ -1674,25 +1676,6 @@ print_and_quit:
 ;//
 ;//////////////////////////////////////////////////////////////////////////////
 
-four_newline_str:
-        DB          LF,LF,LF,LF,CR
-program_title_str:
-        DB          'TOS21 SYMBOL CROSS REFERENCE, V1.4'
-program_title_str_end:
-        DB          CR
-page_number_str:
-        DB          'PAGE 00',CR
-out_of_ram_str:
-        DB          'INSUFFICIENT RAM AREA AVAILABLE',CR
-operation_aborted_str:
-        DB          'OPERATION ABORTED',CR
-seven_space_str:
-        DB          '     '
-two_space_str:
-        DB          '  '
-newline_str:
-        DB          CR
-
 page_width_arg_name_str:
         DB          '$PW '
 page_length_arg_name_str:
@@ -1888,3 +1871,22 @@ input_line_buffer:
 header_str:
         DB          CR
         DS          131
+
+four_newline_str:
+        DB          LF,LF,LF,LF,CR
+program_title_str:
+        DB          'TOS21 SYMBOL CROSS REFERENCE, V1.4'
+program_title_str_end:
+        DB          CR
+page_number_str:
+        DB          'PAGE 00',CR
+out_of_ram_str:
+        DB          'INSUFFICIENT RAM AREA AVAILABLE',CR
+operation_aborted_str:
+        DB          'OPERATION ABORTED',CR
+seven_space_str:
+        DB          '     '
+two_space_str:
+        DB          '  '
+newline_str:
+        DB          CR

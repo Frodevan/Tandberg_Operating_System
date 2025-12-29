@@ -61,6 +61,8 @@
 ;//                 -> Only writes file-entry back when all changes are made
 ;//                 -> Fixes file-extension deliminer bug from v1.3
 ;//
+;//             1.6: Entry at 0xC09F
+;//
 
 
 ;//////////////////////////////////////////////////////////////////////////////
@@ -130,18 +132,17 @@ ATTR_A      EQU     008H        ; Alias file
 
 ;//////////////////////////////////////////////////////////////////////////////
 ;//
-;//     Program entry
+;//     Legacy program entry
 ;//
 ;//////////////////////////////////////////////////////////////////////////////
 
         ORG         0C000H
-start:
         JMP         beginning
 
 
 ;//////////////////////////////////////////////////////////////////////////////
 ;//
-;//     Strings and data
+;//     Data
 ;//
 ;//////////////////////////////////////////////////////////////////////////////
 
@@ -158,19 +159,6 @@ input_char:
         DB          000H
 file_entry_attribute_byte_ptr:
         DB          000H
-
-not_found_str:
-        DB          'NOT FOUND',CR
-attributes_altered_str:
-        DB          'ATTRIBUTES ALTERED',CR
-system_alias_error_str:
-        DB          'SYSTEM ATTRIBUTE ON ALIAS FILE NOT ALLOWED',CR
-improper_unit_str:
-        DB          'IMPROPER UNIT SPECIFICATION',CR
-improper_params_str:
-        DB          'IMPROPER PARAMETER LIST',CR
-unknown_attribute_str:
-        DB          'ATTRIBUTE UNKNOWN',CR
 
 drive_designator_str:
         DB          ':F0:',CR
@@ -202,6 +190,7 @@ to_uppercase:
 ;//
 ;//////////////////////////////////////////////////////////////////////////////
 
+start:
 beginning:
         ;
         ; Set default drive number
@@ -580,3 +569,23 @@ wait_for_ready_bit:
         JNZ         wait_for_ready_bit
         POP         PSW
         RET
+
+
+;//////////////////////////////////////////////////////////////////////////////
+;//
+;//     Strings
+;//
+;//////////////////////////////////////////////////////////////////////////////
+
+not_found_str:
+        DB          'NOT FOUND',CR
+attributes_altered_str:
+        DB          'ATTRIBUTES ALTERED',CR
+system_alias_error_str:
+        DB          'SYSTEM ATTRIBUTE ON ALIAS FILE NOT ALLOWED',CR
+improper_unit_str:
+        DB          'IMPROPER UNIT SPECIFICATION',CR
+improper_params_str:
+        DB          'IMPROPER PARAMETER LIST',CR
+unknown_attribute_str:
+        DB          'ATTRIBUTE UNKNOWN',CR

@@ -49,6 +49,8 @@
 ;//                    up to the last two digits of the number are parsed
 ;//                 -> Default number of reads changed to 10
 ;//
+;//             1.6: Entry at 0xC000
+;//
 
 
 ;//////////////////////////////////////////////////////////////////////////////
@@ -601,9 +603,6 @@ digit_ready:
 ;//
 ;//////////////////////////////////////////////////////////////////////////////
 
-bad_sectors_str:
-        DB          '  NO BAD SECTORS FOUND',CR
-
 drive_number:
         DB          0
 number_of_reads:
@@ -623,3 +622,6 @@ final_report_line_buffer:
         DS          62
 disk_read_buffer:
         DS          128
+
+bad_sectors_str:
+        DB          '  NO BAD SECTORS FOUND',CR

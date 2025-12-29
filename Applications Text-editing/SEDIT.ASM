@@ -89,6 +89,9 @@
 ;//
 ;//                 -> First version I have
 ;//
+;//             1.6: Entry at 0xC26D
+;//
+;//
 
 
 ;//////////////////////////////////////////////////////////////////////////////
@@ -129,41 +132,19 @@ SO_FCB      EQU     0FF06H      ; Standard output abstract file FCB pointer
 
 ;//////////////////////////////////////////////////////////////////////////////
 ;//
-;//     Program entry
+;//     Legacy program entry
 ;//
 ;//////////////////////////////////////////////////////////////////////////////
 
         ORG         0C000H
-start:
         JMP         beginning
 
 
 ;//////////////////////////////////////////////////////////////////////////////
 ;//
-;//     Strings and data
+;//     Data
 ;//
 ;//////////////////////////////////////////////////////////////////////////////
-
-welcome_title_str:
-        DB          '*** TANDBERG LINE EDITOR VER. 1.1 ***',CR
-command_prompt_str:
-        DB          'COMMAND: ',CR
-command_error_str:
-        DB          'COMMAND ERROR',CR
-ok_str:
-        DB          'OK',CR
-exit_str:
-        DB          'END EDIT',CR
-quote_inserted_str:
-        DB          'QUOTE INSERTED',CR
-eof_str:
-        DB          'END-OF-FILE ON INPUT',CR
-newline_str:
-        DB          CR
-insert_mode_str:
-        DB          'INSERT MODE ENTERED',CR
-insert_mode_exit_str:
-        DB          'END EDIT',CR
 
 input_buffer:
         DS          132
@@ -338,6 +319,7 @@ to_uppercase:
 ;//
 ;//////////////////////////////////////////////////////////////////////////////
 
+start:
 beginning:
         ;
         ; Print welcome message
@@ -1291,3 +1273,31 @@ line_end_replace_quote:
         LHLD        output_buffer_ptr
         XCHG
         JMP         next_char_insert_quote
+
+
+;//////////////////////////////////////////////////////////////////////////////
+;//
+;//     Strings
+;//
+;//////////////////////////////////////////////////////////////////////////////
+
+welcome_title_str:
+        DB          '*** TANDBERG LINE EDITOR VER. 1.1 ***',CR
+command_prompt_str:
+        DB          'COMMAND: ',CR
+command_error_str:
+        DB          'COMMAND ERROR',CR
+ok_str:
+        DB          'OK',CR
+exit_str:
+        DB          'END EDIT',CR
+quote_inserted_str:
+        DB          'QUOTE INSERTED',CR
+eof_str:
+        DB          'END-OF-FILE ON INPUT',CR
+newline_str:
+        DB          CR
+insert_mode_str:
+        DB          'INSERT MODE ENTERED',CR
+insert_mode_exit_str:
+        DB          'END EDIT',CR

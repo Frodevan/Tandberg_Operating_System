@@ -138,6 +138,8 @@
 ;//                 -> Has a bug where manually setting the start address to 0x0000
 ;//                    will not protect it from being automatically changed later
 ;//
+;//             1.1: Entry at 0xC800
+;//
 
 
 ;//////////////////////////////////////////////////////////////////////////////
@@ -407,12 +409,6 @@ setup_environment:
 
 ;//////////////////////////////////////
 
-invalid_output_file_str:
-        DB          'Bad assignment on SO',CR,LF,NULL
-
-
-;//////////////////////////////////////
-
 use_default_output_file:
         ;
         ; Use default output
@@ -675,14 +671,6 @@ blank_operation_from_cmd_loop:
         DCR         B
         JNZ         blank_operation_from_cmd_loop
         RET
-
-
-;//////////////////////////////////////
-
-ignored_str:
-        DB          'IGNORED: ',NULL
-newline_str:
-        DB          CR,LF,NULL
 
 
 ;//////////////////////////////////////////////////////////////////////////////
@@ -1192,12 +1180,6 @@ objectfile_driver_ready:
         RET
 
 
-;//////////////////////////////////////
-
-file_not_found_str:
-        DB          'NOT FOUND: ',NULL
-
-
 ;//////////////////////////////////////////////////////////////////////////////
 
         ;
@@ -1248,12 +1230,6 @@ invalid_objectfile:
         CALL        print_str
         STC
         RET
-
-
-;//////////////////////////////////////
-
-invalid_objectfile_str:
-        DB          'NOT RELOC.: ',NULL
 
 
 ;//////////////////////////////////////
@@ -2126,12 +2102,6 @@ double_public_status_str_done:
         RET
 
 
-;//////////////////////////////////////
-
-double_symbols_str:
-        DB          'Doubly defined symbols:',CR
-
-
 ;//////////////////////////////////////////////////////////////////////////////
 
 public_label_missing_fault:
@@ -2215,12 +2185,6 @@ public_missing_status_str_done:
         CALL        PUT
         POP         H
         RET
-
-
-;//////////////////////////////////////
-
-externals_missing_str:
-        DB          'Undefined externals:',CR
 
 
 ;//////////////////////////////////////////////////////////////////////////////
@@ -2442,16 +2406,6 @@ output_file_ext_done:
         ; Start linking pass 2
         ;
         JMP         link_next_object_file
-
-
-;//////////////////////////////////////
-
-routine_table_header_str:
-        DB          'Routine table',CR
-program_title_str:
-        DB          'TDV 2100 LINKER V.1.0',CR
-program_str:
-        DB          'Program: ',NULL
 
 
 ;//////////////////////////////////////////////////////////////////////////////
@@ -2711,12 +2665,6 @@ check_for_other_records:
         JMP         break_quit
 
 
-;//////////////////////////////////////
-
-bad_record_str:
-        DB          'Bad record encountered',CR,LF,NULL
-
-
 ;//////////////////////////////////////////////////////////////////////////////
 
         ;
@@ -2841,12 +2789,6 @@ ext_ref_ext_label_entry_ready:
         LXI         H,symbol_missing_str
         CALL        print_str
         JMP         break_quit
-
-
-;//////////////////////////////////////
-
-symbol_missing_str:
-        DB          'Symbol not found in pass2. Linker error.',CR,LF,NULL
 
 
 ;//////////////////////////////////////
@@ -3088,12 +3030,6 @@ label_summary_next_line_ready:
         POP         H
         MVI         M,0FFH
         JMP         print_next_xref
-
-
-;//////////////////////////////////////
-
-xref_header_str:
-        DB          'Symbol Addr   Defined      Used',CR
 
 
 ;//////////////////////////////////////////////////////////////////////////////
@@ -3558,3 +3494,37 @@ SRC_FILE_FCB:
         DB          000H
         DB          000H
         DW          file_linking_buffer
+
+
+;//////////////////////////////////////////////////////////////////////////////
+;//
+;//     Strings
+;//
+;//////////////////////////////////////////////////////////////////////////////
+
+invalid_output_file_str:
+        DB          'Bad assignment on SO',CR,LF,NULL
+ignored_str:
+        DB          'IGNORED: ',NULL
+newline_str:
+        DB          CR,LF,NULL
+file_not_found_str:
+        DB          'NOT FOUND: ',NULL
+invalid_objectfile_str:
+        DB          'NOT RELOC.: ',NULL
+double_symbols_str:
+        DB          'Doubly defined symbols:',CR
+externals_missing_str:
+        DB          'Undefined externals:',CR
+routine_table_header_str:
+        DB          'Routine table',CR
+program_title_str:
+        DB          'TDV 2100 LINKER V.1.0',CR
+program_str:
+        DB          'Program: ',NULL
+bad_record_str:
+        DB          'Bad record encountered',CR,LF,NULL
+symbol_missing_str:
+        DB          'Symbol not found in pass2. Linker error.',CR,LF,NULL
+xref_header_str:
+        DB          'Symbol Addr   Defined      Used',CR

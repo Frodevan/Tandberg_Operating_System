@@ -78,6 +78,8 @@
 ;//
 ;//                 -> Recognizes B and J as valid drive types
 ;//
+;//             1.6a: Entry at 0xC165
+;//
 
 
 ;//////////////////////////////////////////////////////////////////////////////
@@ -188,34 +190,9 @@ FM_BINARY   EQU     004H        ; Binary flag
 
 ;//////////////////////////////////////////////////////////////////////////////
 ;//
-;//     Strings and data
+;//     Data
 ;//
 ;//////////////////////////////////////////////////////////////////////////////
-
-dir_label_str:
-        DB          'DIRECTORY OF '
-        DS          10
-        DB          CR
-intel_dir_header_str:
-        DB          'NAME  .EXT   BLKS    LENGTH ATTR'
-newline_str:
-        DB          CR
-invalid_drive_str:
-        DB          'IMPROPER UNIT SPECIFICATION',CR
-illegal_tape_fmt_str:
-        DB          'ILLEGAL TAPE FORMAT',CR
-tape_dir_header_str:
-        DB          'NAME  .EXT    TRK   FILE   BLKS LENGTH ATTR',CR
-tracks_usage_str:
-        DB          'TRACK USAGE:  TRK   BLKS  FILES',CR
-ibm_dir_header_str:
-        DB          ' SECTOR   FILENAME  REC   BOE    EOE   P  CRDATE  EXDATE   EOD',CR
-map_status_str:
-        DB          'MAP STATUS',CR
-blocks_used_str:
-        DB          '/2002 BLOCKS USED',CR
-invalid_disk_format_str:
-        DB          'UNRECOGNIZED DISKETTE FORMAT',CR
 
 intel_mapfile_name:
         DB          'ISIS',NULL,NULL
@@ -1555,3 +1532,35 @@ done_counting_bit:
         DAD         D
         SHLD        total_block_count
         RET
+
+
+;//////////////////////////////////////////////////////////////////////////////
+;//
+;//     Strings
+;//
+;//////////////////////////////////////////////////////////////////////////////
+
+dir_label_str:
+        DB          'DIRECTORY OF '
+        DS          10
+        DB          CR
+intel_dir_header_str:
+        DB          'NAME  .EXT   BLKS    LENGTH ATTR'
+newline_str:
+        DB          CR
+invalid_drive_str:
+        DB          'IMPROPER UNIT SPECIFICATION',CR
+illegal_tape_fmt_str:
+        DB          'ILLEGAL TAPE FORMAT',CR
+tape_dir_header_str:
+        DB          'NAME  .EXT    TRK   FILE   BLKS LENGTH ATTR',CR
+tracks_usage_str:
+        DB          'TRACK USAGE:  TRK   BLKS  FILES',CR
+ibm_dir_header_str:
+        DB          ' SECTOR   FILENAME  REC   BOE    EOE   P  CRDATE  EXDATE   EOD',CR
+map_status_str:
+        DB          'MAP STATUS',CR
+blocks_used_str:
+        DB          '/2002 BLOCKS USED',CR
+invalid_disk_format_str:
+        DB          'UNRECOGNIZED DISKETTE FORMAT',CR

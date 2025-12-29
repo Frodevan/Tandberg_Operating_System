@@ -53,6 +53,8 @@
 ;//                 -> Introduces a bug where drive types B and J are reported to
 ;//                    the user as type A and I respectively
 ;//
+;//             1.6a: Entry at 0xC0AA
+;//
 
 
 ;//////////////////////////////////////////////////////////////////////////////
@@ -148,7 +150,7 @@ ATTR_F      EQU     080H        ; Format file
 
 ;//////////////////////////////////////////////////////////////////////////////
 ;//
-;//     Strings and data
+;//     Data
 ;//
 ;//////////////////////////////////////////////////////////////////////////////
 
@@ -170,18 +172,6 @@ old_filename:
 new_filename:
         DS          9
 
-not_found_str:
-        DB          'NOT FOUND',CR
-renamed_str:
-        DB          'RENAMED',CR
-protected_str:
-        DB          'PROTECTED',CR
-exists_str:
-        DB          'EXISTS',CR
-invalid_drive_str:
-        DB          'IMPROPER UNIT SPECIFICATION',CR
-invalid_args_str:
-        DB          'IMPROPER PARAMETER LIST',CR
 drive_designator_str:
         DB          ':F0:',CR
 
@@ -883,3 +873,23 @@ wait_for_ready_bit:
         JNZ         wait_for_ready_bit
         POP         PSW
         RET
+
+
+;//////////////////////////////////////////////////////////////////////////////
+;//
+;//     Strings
+;//
+;//////////////////////////////////////////////////////////////////////////////
+
+not_found_str:
+        DB          'NOT FOUND',CR
+renamed_str:
+        DB          'RENAMED',CR
+protected_str:
+        DB          'PROTECTED',CR
+exists_str:
+        DB          'EXISTS',CR
+invalid_drive_str:
+        DB          'IMPROPER UNIT SPECIFICATION',CR
+invalid_args_str:
+        DB          'IMPROPER PARAMETER LIST',CR
