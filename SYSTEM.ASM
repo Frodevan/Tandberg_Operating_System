@@ -302,7 +302,7 @@ BUFLST_INAC EQU     0FFH        ; Released element of chained list
 ;//
 ;//////////////////////////////////////////////////////////////////////////////
 
-        ORG         0E000H
+        ORG         0DC00H
 start:
         ;
         ; Reset one-shot timer routine
@@ -362,13 +362,6 @@ buffer_list_tail:
 ;//     TOS command line main program
 ;//
 ;//////////////////////////////////////////////////////////////////////////////
-
-error_str:
-        DB          'ERROR ',NULL,NULL
-newline_str:
-        DB          CR
-title_str:
-        DB          'TOS21 VER. 1.4',CR
 
 error_number:
         DB          000H
@@ -622,6 +615,16 @@ error_print_str_loop:
         LXI         H,DEV_CO_FCB
         SHLD        CO_FCB
         RET
+
+
+;//////////////////////////////////////////////////////////////////////////////
+
+error_str:
+        DB          'ERROR ',NULL,NULL
+newline_str:
+        DB          CR
+title_str:
+        DB          'TOS21 VER. 1.4',CR
 
 
 ;//////////////////////////////////////////////////////////////////////////////
@@ -4130,101 +4133,6 @@ intel_mapfile_name:
 
 ;//////////////////////////////////////////////////////////////////////////////
 ;//
-;//     CTAB module
-;//
-;//         Translation tables for converting between EBCDIC and ASCII
-;//
-;//
-;//         Changelog:
-;//
-;//             v1.3:
-;//
-;//                 -> First version I have
-;//
-;//             v1.4:
-;//
-;//                 -> Corrects ASCII to EBCDIC table index 07H, 3CH, 60H, C3H
-;//                 -> Corrects EBCDIC to ASCII table index 4AH, 58H, 79H
-;//
-
-
-;//////////////////////////////////////////////////////////////////////////////
-;//
-;//     EBCDIC Translation tables
-;//
-;//////////////////////////////////////////////////////////////////////////////
-
-ascii_to_ebcdic_table:
-        DB          000H, 001H, 002H, 003H, 037H, 02DH, 02EH, 02FH
-        DB          016H, 005H, 025H, 00BH, 00CH, 00DH, 00EH, 00FH
-        DB          010H, 011H, 012H, 013H, 03CH, 03DH, 032H, 026H
-        DB          018H, 019H, 03FH, 027H, 01CH, 01DH, 01EH, 01FH
-        DB          040H, 05AH, 07FH, 07BH, 05BH, 06CH, 050H, 07DH
-        DB          04DH, 05DH, 05CH, 04EH, 06BH, 060H, 04BH, 061H
-        DB          0F0H, 0F1H, 0F2H, 0F3H, 0F4H, 0F5H, 0F6H, 0F7H
-        DB          0F8H, 0F9H, 07AH, 05EH, 04CH, 07EH, 06EH, 06FH
-        DB          07CH, 0C1H, 0C2H, 0C3H, 0C4H, 0C5H, 0C6H, 0C7H
-        DB          0C8H, 0C9H, 0D1H, 0D2H, 0D3H, 0D4H, 0D5H, 0D6H
-        DB          0D7H, 0D8H, 0D9H, 0E2H, 0E3H, 0E4H, 0E5H, 0E6H
-        DB          0E7H, 0E8H, 0E9H, 0EAH, 0EBH, 0ECH, 05FH, 06DH
-        DB          079H, 081H, 082H, 083H, 084H, 085H, 086H, 087H
-        DB          088H, 089H, 091H, 092H, 093H, 094H, 095H, 096H
-        DB          097H, 098H, 099H, 0A2H, 0A3H, 0A4H, 0A5H, 0A6H
-        DB          0A7H, 0A8H, 0A9H, 0AAH, 0ABH, 0ACH, 04FH, 007H
-        DB          004H, 006H, 008H, 009H, 00AH, 014H, 015H, 017H
-        DB          01AH, 01BH, 020H, 021H, 022H, 023H, 024H, 028H
-        DB          029H, 02AH, 02BH, 02CH, 030H, 031H, 033H, 034H
-        DB          035H, 036H, 038H, 039H, 03AH, 03BH, 03EH, 041H
-        DB          042H, 043H, 044H, 045H, 046H, 047H, 048H, 049H
-        DB          051H, 052H, 053H, 054H, 055H, 056H, 057H, 058H
-        DB          059H, 062H, 063H, 064H, 065H, 066H, 067H, 068H
-        DB          069H, 06AH, 070H, 071H, 072H, 073H, 074H, 075H
-        DB          076H, 077H, 078H, 04AH, 080H, 08AH, 08BH, 08CH
-        DB          08DH, 08EH, 08FH, 090H, 09AH, 09BH, 09CH, 09DH
-        DB          09EH, 09FH, 0A0H, 0A1H, 0ADH, 0AEH, 0AFH, 0B0H
-        DB          0B1H, 0B2H, 0B3H, 0B4H, 0B5H, 0B6H, 0B7H, 0B8H
-        DB          0B9H, 0BAH, 0BBH, 0BCH, 0BDH, 0BEH, 0BFH, 0C0H
-        DB          0CAH, 0CBH, 0CCH, 0CDH, 0CEH, 0CFH, 0D0H, 0DAH
-        DB          0DBH, 0DCH, 0DDH, 0DEH, 0DFH, 0E0H, 0E1H, 0EDH
-        DB          0EEH, 0EFH, 0FAH, 0FBH, 0FCH, 0FDH, 0FEH, 0FFH
-
-ebcdic_to_ascii_table:
-        DB          000H, 001H, 002H, 003H, 080H, 009H, 081H, 07FH
-        DB          082H, 083H, 084H, 00BH, 00CH, 00DH, 00EH, 00FH
-        DB          010H, 011H, 012H, 013H, 085H, 086H, 008H, 087H
-        DB          018H, 019H, 088H, 089H, 01CH, 01DH, 01EH, 01FH
-        DB          08AH, 08BH, 08CH, 08DH, 08EH, 00AH, 017H, 01BH
-        DB          08FH, 090H, 091H, 092H, 093H, 005H, 006H, 007H
-        DB          094H, 095H, 016H, 096H, 097H, 098H, 099H, 004H
-        DB          09AH, 09BH, 09CH, 09DH, 014H, 015H, 09EH, 01AH
-        DB          020H, 09FH, 0A0H, 0A1H, 0A2H, 0A3H, 0A4H, 0A5H
-        DB          0A6H, 0A7H, 0C3H, 02EH, 03CH, 028H, 02BH, 07EH
-        DB          026H, 0A8H, 0A9H, 0AAH, 0ABH, 0ACH, 0ADH, 0AEH
-        DB          0AFH, 0B0H, 021H, 024H, 02AH, 029H, 03BH, 05EH
-        DB          02DH, 02FH, 0B1H, 0B2H, 0B3H, 0B4H, 0B5H, 0B6H
-        DB          0B7H, 0B8H, 0B9H, 02CH, 025H, 05FH, 03EH, 03FH
-        DB          0BAH, 0BBH, 0BCH, 0BDH, 0BEH, 0BFH, 0C0H, 0C1H
-        DB          0C2H, 060H, 03AH, 023H, 040H, 027H, 03DH, 022H
-        DB          0C4H, 061H, 062H, 063H, 064H, 065H, 066H, 067H
-        DB          068H, 069H, 0C5H, 0C6H, 0C7H, 0C8H, 0C9H, 0CAH
-        DB          0CBH, 06AH, 06BH, 06CH, 06DH, 06EH, 06FH, 070H
-        DB          071H, 072H, 0CCH, 0CDH, 0CEH, 0CFH, 0D0H, 0D1H
-        DB          0D2H, 0D3H, 073H, 074H, 075H, 076H, 077H, 078H
-        DB          079H, 07AH, 07BH, 07CH, 07DH, 0D4H, 0D5H, 0D6H
-        DB          0D7H, 0D8H, 0D9H, 0DAH, 0DBH, 0DCH, 0DDH, 0DEH
-        DB          0DFH, 0E0H, 0E1H, 0E2H, 0E3H, 0E4H, 0E5H, 0E6H
-        DB          0E7H, 041H, 042H, 043H, 044H, 045H, 046H, 047H
-        DB          048H, 049H, 0E8H, 0E9H, 0EAH, 0EBH, 0ECH, 0EDH
-        DB          0EEH, 04AH, 04BH, 04CH, 04DH, 04EH, 04FH, 050h
-        DB          051H, 052H, 0EFH, 0F0H, 0F1H, 0F2H, 0F3H, 0F4H
-        DB          0F5H, 0F6H, 053H, 054H, 055H, 056H, 057H, 058H
-        DB          059H, 05AH, 05BH, 05CH, 05DH, 0F7H, 0F8H, 0F9H
-        DB          030H, 031H, 032H, 033H, 034H, 035H, 036H, 037H
-        DB          038H, 039H, 0FAH, 0FBH, 0FCH, 0FDH, 0FEH, 0FFH
-
-
-;//////////////////////////////////////////////////////////////////////////////
-;//
 ;//     TIME module
 ;//
 ;//         A one-shot timer that can be set to trigger at a set time into the
@@ -6001,6 +5909,313 @@ tape_read_no_end_when_expected:
 
 ;//////////////////////////////////////////////////////////////////////////////
 ;//
+;//     BUFR module
+;//
+;//         Module for handling dynamic buffers. This is used by, for instance, the
+;//         assignement interpreter when generating file control blocks.
+;//
+;//         It is important that all buffers assigned by a host program are all
+;//         released before the program ends. Failure to do so may cause unused
+;//         orphaned buffers to still reserve memory, leaving less memory for other
+;//         programs run afterwards.
+;//
+;//
+;//         Changelog:
+;//
+;//             v1.3:
+;//
+;//                 -> First version I have
+;//
+
+
+;//////////////////////////////////////////////////////////////////////////////
+;//
+;//     Buffer-handling routines
+;//
+;//////////////////////////////////////////////////////////////////////////////
+
+        ;
+        ; Allocate a new buffer onto the buffer chained list
+        ;
+T_BUFALLOC:
+        PUSH        B
+        PUSH        D
+        PUSH        H
+        ;
+        ; Scan to head of buffers chained list
+        ;
+        LXI         H,buffer_list_tail
+alloc_check_buffer_list_item:
+        ;
+        ; Check if this item is the head of the buffers chained list
+        ;
+        MOV         A,M
+        CPI         BUFLST_HEAD
+        JZ          add_new_buffer
+        ;
+        ; Otherwise verify item status and go on to check next item in list
+        ;
+        ANA         A
+        JZ          alloc_check_next_buffer_list_item
+        CPI         BUFLST_INAC
+        JZ          alloc_check_next_buffer_list_item
+buffer_error:
+        ;
+        ; On error, reset the entire buffer list, de-allocating everything
+        ;
+        MVI         A,ERROR_2B
+        STC
+        LXI         H,buffer_list_tail
+        MVI         M,BUFLST_HEAD
+        DCX         H
+        MVI         M,000H
+        DCX         H
+        MVI         M,000H
+bufalloc_end:
+        POP         H
+        POP         D
+        POP         B
+        RET
+
+alloc_check_next_buffer_list_item:
+        ;
+        ; Get pointer to next item in the chained list
+        ;
+        DCX         H
+        MOV         D,M
+        DCX         H
+        MOV         E,M
+        XCHG
+        JMP         alloc_check_buffer_list_item
+
+
+;//////////////////////////////////////
+
+add_new_buffer:
+        ;
+        ; Convert previous buffer head item into a regular active item
+        ;
+        MVI         M,BUFLST_ACTV
+        ;
+        ; Point to last byte of forwards-reference in old head item
+        ;
+        DCX         H
+        ;
+        ; Recover buffer size and save pointer to forwards-reference
+        ;
+        POP         B
+        PUSH        H
+        ;
+        ; Point to last byte of data-area in new buffer list item
+        ;
+        DCX         H
+        DCX         H
+        ;
+        ; Subtract buffer size to point to first byte of new data buffer
+        ;
+        MOV         A,B
+        XRI         0FFH
+        MOV         B,A
+        MOV         A,C
+        XRI         0FFH
+        MOV         C,A
+        INX         B
+        DAD         B
+        ;
+        ; Recover forward-reference pointer, save pointer to new data buffer
+        ;
+        POP         D
+        PUSH        H
+        ;
+        ; Point to byte just before data buffer: status byte of new list entry
+        ;
+        DCX         H
+        ;
+        ; Have forward-reference of previous list item point to new entry
+        ;
+        XCHG
+        MOV         M,D
+        DCX         H
+        MOV         M,E
+        XCHG
+        ;
+        ; Make new list entry the chained list head
+        ;
+        MVI         M,BUFLST_HEAD
+        DCX         H
+        MVI         M,000H
+        DCX         H
+        MVI         M,000H
+        DCX         H
+        ;
+        ; Update start-of-TOS-buffers reference to reflect new start of buffers
+        ;
+        SHLD        BUFLIM
+        ANA         A
+        JMP         bufalloc_end
+
+
+;//////////////////////////////////////////////////////////////////////////////
+
+        ;
+        ; Deallocate a buffer from the buffer chained list
+        ;
+T_BUFDEALLOC:
+        PUSH        B
+        PUSH        D
+        PUSH        H
+        ;
+        ; Get and check status-byte of buffer to release
+        ;
+        DCX         H
+        MOV         A,M
+        ANA         A
+        JZ          release_in_chain_buffer
+        CPI         BUFLST_HEAD
+        JZ          release_chain_head_buffer
+        ;
+        ; Raise exception if list entry status of buffer was not proper
+        ;
+        MVI         A,ERROR_2C
+        STC
+bufdealloc_end:
+        POP         H
+        POP         D
+        POP         B
+        RET
+
+release_in_chain_buffer:
+        ;
+        ; Set in-chain buffer entry to inactive and nothing more
+        ;
+        MVI         M,BUFLST_INAC
+        ANA         A
+        JMP         bufdealloc_end
+
+
+;//////////////////////////////////////
+
+release_chain_head_buffer:
+        ;
+        ; Scan to head of buffers chained list
+        ;
+        LXI         H,buffer_list_tail
+        LXI         B,buffer_list_tail
+release_alloc_check_buffer_list_item:
+        ;
+        ; Check if the current entry is a regular active entry
+        ;
+        MOV         A,M
+        ANA         A
+        JNZ         release_check_entry
+        ;
+        ; If so, save a pointer to it for later
+        ;
+        MOV         B,H
+        MOV         C,L
+release_check_next_buffer_list_item:
+        ;
+        ; Advance to the next entry in chained list of buffers
+        ;
+        DCX         H
+        MOV         D,M
+        DCX         H
+        MOV         E,M
+        XCHG
+        JMP         release_alloc_check_buffer_list_item
+
+release_check_entry:
+        ;
+        ; Check if entry is truly the head entry of the chained list
+        ;
+        CPI         BUFLST_INAC
+        JZ          release_check_next_buffer_list_item
+        CPI         BUFLST_HEAD
+        JNZ         buffer_error
+        ;
+        ; Make last active list entry into the chained list head
+        ;
+        MOV         H,B
+        MOV         L,C
+        MVI         M,BUFLST_HEAD
+        DCX         H
+        MVI         M,000H
+        DCX         H
+        MVI         M,000H
+        DCX         H
+        ;
+        ; Update start-of-TOS-buffers reference to reflect released buffers
+        ;
+        SHLD        BUFLIM
+        ANA         A
+        JMP         bufdealloc_end
+
+
+;//////////////////////////////////////////////////////////////////////////////
+;//
+;//     JTAB module, part 1
+;//
+;//         API jump-tables for Tandberg OS device drivers
+;//
+;//
+;//         Changelog:
+;//
+;//             v1.3:
+;//
+;//                 -> First version I have
+;//
+;//             v1.4:
+;//
+;//                 -> Quick-references to :LP:, :XM: and :RC: added
+;//                 -> Non-maintained constants removed
+;//
+
+
+;//////////////////////////////////////////////////////////////////////////////
+;//
+;//     Device driver jump tables
+;//
+;//////////////////////////////////////////////////////////////////////////////
+
+T_TABTC:
+        JMP         tape_open_input
+        JMP         tape_open_output
+        JMP         tape_read_input
+        JMP         tape_write_output
+        JMP         tape_close_input
+        JMP         tape_close_output
+
+T_TABIB:
+        JMP         ibm_open_input
+        JMP         ibm_open_output
+        JMP         ibm_read_input
+        JMP         ibm_write_output
+        JMP         ibm_close_input
+        JMP         ibm_close_output
+
+T_TABIN:
+        JMP         intel_open_input
+        JMP         intel_open_output
+        JMP         intel_read_input
+        JMP         intel_write_output
+        JMP         intel_close_input
+        JMP         intel_close_output
+
+
+;//////////////////////////////////////////////////////////////////////////////
+
+        ;
+        ; TOS file load, from drive nr A (0-3 floppy or 4-7 tape), name at HL
+        ;
+T_LOAD:
+        CPI         4
+        JM          T_LOADD
+        SUI         4
+        JMP         T_CLOAD
+
+
+;//////////////////////////////////////////////////////////////////////////////
+;//
 ;//     PHYS module
 ;//
 ;//         This module will generate one file control block based on a string
@@ -6762,250 +6977,6 @@ device_file_found:
         CPI         ':'
         JNZ         invalid_drive_error
         JMP         phys_file_ready
-
-
-;//////////////////////////////////////////////////////////////////////////////
-;//
-;//     BUFR module
-;//
-;//         Module for handling dynamic buffers. This is used by, for instance, the
-;//         assignement interpreter when generating file control blocks.
-;//
-;//         It is important that all buffers assigned by a host program are all
-;//         released before the program ends. Failure to do so may cause unused
-;//         orphaned buffers to still reserve memory, leaving less memory for other
-;//         programs run afterwards.
-;//
-;//
-;//         Changelog:
-;//
-;//             v1.3:
-;//
-;//                 -> First version I have
-;//
-
-
-;//////////////////////////////////////////////////////////////////////////////
-;//
-;//     Buffer-handling routines
-;//
-;//////////////////////////////////////////////////////////////////////////////
-
-        ;
-        ; Allocate a new buffer onto the buffer chained list
-        ;
-T_BUFALLOC:
-        PUSH        B
-        PUSH        D
-        PUSH        H
-        ;
-        ; Scan to head of buffers chained list
-        ;
-        LXI         H,buffer_list_tail
-alloc_check_buffer_list_item:
-        ;
-        ; Check if this item is the head of the buffers chained list
-        ;
-        MOV         A,M
-        CPI         BUFLST_HEAD
-        JZ          add_new_buffer
-        ;
-        ; Otherwise verify item status and go on to check next item in list
-        ;
-        ANA         A
-        JZ          alloc_check_next_buffer_list_item
-        CPI         BUFLST_INAC
-        JZ          alloc_check_next_buffer_list_item
-buffer_error:
-        ;
-        ; On error, reset the entire buffer list, de-allocating everything
-        ;
-        MVI         A,ERROR_2B
-        STC
-        LXI         H,buffer_list_tail
-        MVI         M,BUFLST_HEAD
-        DCX         H
-        MVI         M,000H
-        DCX         H
-        MVI         M,000H
-bufalloc_end:
-        POP         H
-        POP         D
-        POP         B
-        RET
-
-alloc_check_next_buffer_list_item:
-        ;
-        ; Get pointer to next item in the chained list
-        ;
-        DCX         H
-        MOV         D,M
-        DCX         H
-        MOV         E,M
-        XCHG
-        JMP         alloc_check_buffer_list_item
-
-
-;//////////////////////////////////////
-
-add_new_buffer:
-        ;
-        ; Convert previous buffer head item into a regular active item
-        ;
-        MVI         M,BUFLST_ACTV
-        ;
-        ; Point to last byte of forwards-reference in old head item
-        ;
-        DCX         H
-        ;
-        ; Recover buffer size and save pointer to forwards-reference
-        ;
-        POP         B
-        PUSH        H
-        ;
-        ; Point to last byte of data-area in new buffer list item
-        ;
-        DCX         H
-        DCX         H
-        ;
-        ; Subtract buffer size to point to first byte of new data buffer
-        ;
-        MOV         A,B
-        XRI         0FFH
-        MOV         B,A
-        MOV         A,C
-        XRI         0FFH
-        MOV         C,A
-        INX         B
-        DAD         B
-        ;
-        ; Recover forward-reference pointer, save pointer to new data buffer
-        ;
-        POP         D
-        PUSH        H
-        ;
-        ; Point to byte just before data buffer: status byte of new list entry
-        ;
-        DCX         H
-        ;
-        ; Have forward-reference of previous list item point to new entry
-        ;
-        XCHG
-        MOV         M,D
-        DCX         H
-        MOV         M,E
-        XCHG
-        ;
-        ; Make new list entry the chained list head
-        ;
-        MVI         M,BUFLST_HEAD
-        DCX         H
-        MVI         M,000H
-        DCX         H
-        MVI         M,000H
-        DCX         H
-        ;
-        ; Update start-of-TOS-buffers reference to reflect new start of buffers
-        ;
-        SHLD        BUFLIM
-        ANA         A
-        JMP         bufalloc_end
-
-
-;//////////////////////////////////////////////////////////////////////////////
-
-        ;
-        ; Deallocate a buffer from the buffer chained list
-        ;
-T_BUFDEALLOC:
-        PUSH        B
-        PUSH        D
-        PUSH        H
-        ;
-        ; Get and check status-byte of buffer to release
-        ;
-        DCX         H
-        MOV         A,M
-        ANA         A
-        JZ          release_in_chain_buffer
-        CPI         BUFLST_HEAD
-        JZ          release_chain_head_buffer
-        ;
-        ; Raise exception if list entry status of buffer was not proper
-        ;
-        MVI         A,ERROR_2C
-        STC
-bufdealloc_end:
-        POP         H
-        POP         D
-        POP         B
-        RET
-
-release_in_chain_buffer:
-        ;
-        ; Set in-chain buffer entry to inactive and nothing more
-        ;
-        MVI         M,BUFLST_INAC
-        ANA         A
-        JMP         bufdealloc_end
-
-
-;//////////////////////////////////////
-
-release_chain_head_buffer:
-        ;
-        ; Scan to head of buffers chained list
-        ;
-        LXI         H,buffer_list_tail
-        LXI         B,buffer_list_tail
-release_alloc_check_buffer_list_item:
-        ;
-        ; Check if the current entry is a regular active entry
-        ;
-        MOV         A,M
-        ANA         A
-        JNZ         release_check_entry
-        ;
-        ; If so, save a pointer to it for later
-        ;
-        MOV         B,H
-        MOV         C,L
-release_check_next_buffer_list_item:
-        ;
-        ; Advance to the next entry in chained list of buffers
-        ;
-        DCX         H
-        MOV         D,M
-        DCX         H
-        MOV         E,M
-        XCHG
-        JMP         release_alloc_check_buffer_list_item
-
-release_check_entry:
-        ;
-        ; Check if entry is truly the head entry of the chained list
-        ;
-        CPI         BUFLST_INAC
-        JZ          release_check_next_buffer_list_item
-        CPI         BUFLST_HEAD
-        JNZ         buffer_error
-        ;
-        ; Make last active list entry into the chained list head
-        ;
-        MOV         H,B
-        MOV         L,C
-        MVI         M,BUFLST_HEAD
-        DCX         H
-        MVI         M,000H
-        DCX         H
-        MVI         M,000H
-        DCX         H
-        ;
-        ; Update start-of-TOS-buffers reference to reflect released buffers
-        ;
-        SHLD        BUFLIM
-        ANA         A
-        JMP         bufdealloc_end
 
 
 ;//////////////////////////////////////////////////////////////////////////////
@@ -7805,7 +7776,102 @@ DEV_CI_buffer:
 
 ;//////////////////////////////////////////////////////////////////////////////
 ;//
-;//     JTAB module
+;//     CTAB module
+;//
+;//         Translation tables for converting between EBCDIC and ASCII
+;//
+;//
+;//         Changelog:
+;//
+;//             v1.3:
+;//
+;//                 -> First version I have
+;//
+;//             v1.4:
+;//
+;//                 -> Corrects ASCII to EBCDIC table index 07H, 3CH, 60H, C3H
+;//                 -> Corrects EBCDIC to ASCII table index 4AH, 58H, 79H
+;//
+
+
+;//////////////////////////////////////////////////////////////////////////////
+;//
+;//     EBCDIC Translation tables
+;//
+;//////////////////////////////////////////////////////////////////////////////
+
+ascii_to_ebcdic_table:
+        DB          000H, 001H, 002H, 003H, 037H, 02DH, 02EH, 02FH
+        DB          016H, 005H, 025H, 00BH, 00CH, 00DH, 00EH, 00FH
+        DB          010H, 011H, 012H, 013H, 03CH, 03DH, 032H, 026H
+        DB          018H, 019H, 03FH, 027H, 01CH, 01DH, 01EH, 01FH
+        DB          040H, 05AH, 07FH, 07BH, 05BH, 06CH, 050H, 07DH
+        DB          04DH, 05DH, 05CH, 04EH, 06BH, 060H, 04BH, 061H
+        DB          0F0H, 0F1H, 0F2H, 0F3H, 0F4H, 0F5H, 0F6H, 0F7H
+        DB          0F8H, 0F9H, 07AH, 05EH, 04CH, 07EH, 06EH, 06FH
+        DB          07CH, 0C1H, 0C2H, 0C3H, 0C4H, 0C5H, 0C6H, 0C7H
+        DB          0C8H, 0C9H, 0D1H, 0D2H, 0D3H, 0D4H, 0D5H, 0D6H
+        DB          0D7H, 0D8H, 0D9H, 0E2H, 0E3H, 0E4H, 0E5H, 0E6H
+        DB          0E7H, 0E8H, 0E9H, 0EAH, 0EBH, 0ECH, 05FH, 06DH
+        DB          079H, 081H, 082H, 083H, 084H, 085H, 086H, 087H
+        DB          088H, 089H, 091H, 092H, 093H, 094H, 095H, 096H
+        DB          097H, 098H, 099H, 0A2H, 0A3H, 0A4H, 0A5H, 0A6H
+        DB          0A7H, 0A8H, 0A9H, 0AAH, 0ABH, 0ACH, 04FH, 007H
+        DB          004H, 006H, 008H, 009H, 00AH, 014H, 015H, 017H
+        DB          01AH, 01BH, 020H, 021H, 022H, 023H, 024H, 028H
+        DB          029H, 02AH, 02BH, 02CH, 030H, 031H, 033H, 034H
+        DB          035H, 036H, 038H, 039H, 03AH, 03BH, 03EH, 041H
+        DB          042H, 043H, 044H, 045H, 046H, 047H, 048H, 049H
+        DB          051H, 052H, 053H, 054H, 055H, 056H, 057H, 058H
+        DB          059H, 062H, 063H, 064H, 065H, 066H, 067H, 068H
+        DB          069H, 06AH, 070H, 071H, 072H, 073H, 074H, 075H
+        DB          076H, 077H, 078H, 04AH, 080H, 08AH, 08BH, 08CH
+        DB          08DH, 08EH, 08FH, 090H, 09AH, 09BH, 09CH, 09DH
+        DB          09EH, 09FH, 0A0H, 0A1H, 0ADH, 0AEH, 0AFH, 0B0H
+        DB          0B1H, 0B2H, 0B3H, 0B4H, 0B5H, 0B6H, 0B7H, 0B8H
+        DB          0B9H, 0BAH, 0BBH, 0BCH, 0BDH, 0BEH, 0BFH, 0C0H
+        DB          0CAH, 0CBH, 0CCH, 0CDH, 0CEH, 0CFH, 0D0H, 0DAH
+        DB          0DBH, 0DCH, 0DDH, 0DEH, 0DFH, 0E0H, 0E1H, 0EDH
+        DB          0EEH, 0EFH, 0FAH, 0FBH, 0FCH, 0FDH, 0FEH, 0FFH
+
+ebcdic_to_ascii_table:
+        DB          000H, 001H, 002H, 003H, 080H, 009H, 081H, 07FH
+        DB          082H, 083H, 084H, 00BH, 00CH, 00DH, 00EH, 00FH
+        DB          010H, 011H, 012H, 013H, 085H, 086H, 008H, 087H
+        DB          018H, 019H, 088H, 089H, 01CH, 01DH, 01EH, 01FH
+        DB          08AH, 08BH, 08CH, 08DH, 08EH, 00AH, 017H, 01BH
+        DB          08FH, 090H, 091H, 092H, 093H, 005H, 006H, 007H
+        DB          094H, 095H, 016H, 096H, 097H, 098H, 099H, 004H
+        DB          09AH, 09BH, 09CH, 09DH, 014H, 015H, 09EH, 01AH
+        DB          020H, 09FH, 0A0H, 0A1H, 0A2H, 0A3H, 0A4H, 0A5H
+        DB          0A6H, 0A7H, 0C3H, 02EH, 03CH, 028H, 02BH, 07EH
+        DB          026H, 0A8H, 0A9H, 0AAH, 0ABH, 0ACH, 0ADH, 0AEH
+        DB          0AFH, 0B0H, 021H, 024H, 02AH, 029H, 03BH, 05EH
+        DB          02DH, 02FH, 0B1H, 0B2H, 0B3H, 0B4H, 0B5H, 0B6H
+        DB          0B7H, 0B8H, 0B9H, 02CH, 025H, 05FH, 03EH, 03FH
+        DB          0BAH, 0BBH, 0BCH, 0BDH, 0BEH, 0BFH, 0C0H, 0C1H
+        DB          0C2H, 060H, 03AH, 023H, 040H, 027H, 03DH, 022H
+        DB          0C4H, 061H, 062H, 063H, 064H, 065H, 066H, 067H
+        DB          068H, 069H, 0C5H, 0C6H, 0C7H, 0C8H, 0C9H, 0CAH
+        DB          0CBH, 06AH, 06BH, 06CH, 06DH, 06EH, 06FH, 070H
+        DB          071H, 072H, 0CCH, 0CDH, 0CEH, 0CFH, 0D0H, 0D1H
+        DB          0D2H, 0D3H, 073H, 074H, 075H, 076H, 077H, 078H
+        DB          079H, 07AH, 07BH, 07CH, 07DH, 0D4H, 0D5H, 0D6H
+        DB          0D7H, 0D8H, 0D9H, 0DAH, 0DBH, 0DCH, 0DDH, 0DEH
+        DB          0DFH, 0E0H, 0E1H, 0E2H, 0E3H, 0E4H, 0E5H, 0E6H
+        DB          0E7H, 041H, 042H, 043H, 044H, 045H, 046H, 047H
+        DB          048H, 049H, 0E8H, 0E9H, 0EAH, 0EBH, 0ECH, 0EDH
+        DB          0EEH, 04AH, 04BH, 04CH, 04DH, 04EH, 04FH, 050h
+        DB          051H, 052H, 0EFH, 0F0H, 0F1H, 0F2H, 0F3H, 0F4H
+        DB          0F5H, 0F6H, 053H, 054H, 055H, 056H, 057H, 058H
+        DB          059H, 05AH, 05BH, 05CH, 05DH, 0F7H, 0F8H, 0F9H
+        DB          030H, 031H, 032H, 033H, 034H, 035H, 036H, 037H
+        DB          038H, 039H, 0FAH, 0FBH, 0FCH, 0FDH, 0FEH, 0FFH
+
+
+;//////////////////////////////////////////////////////////////////////////////
+;//
+;//     JTAB module, part 2
 ;//
 ;//         API jump-tables for interfacing with Tandberg OS, as well as some
 ;//         constants and lists for use. There is also a jump-table with aliases
@@ -7823,49 +7889,6 @@ DEV_CI_buffer:
 ;//                 -> Quick-references to :LP:, :XM: and :RC: added
 ;//                 -> Non-maintained constants removed
 ;//
-
-
-;//////////////////////////////////////////////////////////////////////////////
-;//
-;//     Device driver jump tables
-;//
-;//////////////////////////////////////////////////////////////////////////////
-
-T_TABTC:
-        JMP         tape_open_input
-        JMP         tape_open_output
-        JMP         tape_read_input
-        JMP         tape_write_output
-        JMP         tape_close_input
-        JMP         tape_close_output
-
-T_TABIB:
-        JMP         ibm_open_input
-        JMP         ibm_open_output
-        JMP         ibm_read_input
-        JMP         ibm_write_output
-        JMP         ibm_close_input
-        JMP         ibm_close_output
-
-T_TABIN:
-        JMP         intel_open_input
-        JMP         intel_open_output
-        JMP         intel_read_input
-        JMP         intel_write_output
-        JMP         intel_close_input
-        JMP         intel_close_output
-
-
-;//////////////////////////////////////////////////////////////////////////////
-
-        ;
-        ; TOS file load, from drive nr A (0-3 floppy or 4-7 tape), name at HL
-        ;
-T_LOAD:
-        CPI         4
-        JM          T_LOADD
-        SUI         4
-        JMP         T_CLOAD
 
 
 ;//////////////////////////////////////////////////////////////////////////////
@@ -8127,6 +8150,7 @@ AL_FCB:
 ;//
 ;//////////////////////////////////////////////////////////////////////////////
 
+        ORG         0FE00H
 loading_drive_number:
         DB          000H
 cli_next_char:
