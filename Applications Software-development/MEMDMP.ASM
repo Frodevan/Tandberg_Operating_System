@@ -69,6 +69,10 @@
 ;//                    instead of TOS API call. This local implementation supports
 ;//                    lowercase input.
 ;//
+;//             1.6: Entry at 0x2000
+;//
+;//                 -> Version ID written to 0x2700
+;//
 
 
 ;//////////////////////////////////////////////////////////////////////////////
@@ -91,6 +95,11 @@ CR          EQU     00DH        ; Cartridge Return
 TTO         EQU     00043H      ; Console output
 DSRDW       EQU     00073H      ; Read from disk with wait
 DSWRW       EQU     00076H      ; Write to disk with wait
+
+;
+; XMON and TOS system data
+;
+SIGNATURE   EQU     02700H      ; Program signature
 
 ;
 ; TOS system calls
@@ -670,3 +679,14 @@ readback_data_buffer:
         DS          128
 data_buffer:
         DS          129
+
+
+;//////////////////////////////////////////////////////////////////////////////
+;//
+;//     Signature
+;//
+;//////////////////////////////////////////////////////////////////////////////
+
+        ORG         SIGNATURE
+        DB          'MEMDMP'
+        DB          '106'

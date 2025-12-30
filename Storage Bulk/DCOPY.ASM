@@ -52,6 +52,8 @@
 ;//
 ;//             1.6a: Entry at 0x2000
 ;//
+;//                 -> Version ID written to 0x2700
+;//
 
 
 ;//////////////////////////////////////////////////////////////////////////////
@@ -84,8 +86,20 @@ DSWRW       EQU     00076H      ; Write to disk with wait
 ;
 ; XMON and TOS system data
 ;
+SIGNATURE   EQU     02700H      ; Program signature
 BUFLIM      EQU     0272EH      ; Lowest address of current TOS buffers
 KEYBUF      EQU     02780H      ; Console input buffer
+
+
+;//////////////////////////////////////////////////////////////////////////////
+;//
+;//     Signature
+;//
+;//////////////////////////////////////////////////////////////////////////////
+
+        ORG         SIGNATURE
+        DB          'DCOPY',NULL
+        DB          '106'
 
 
 ;//////////////////////////////////////////////////////////////////////////////

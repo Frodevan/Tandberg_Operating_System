@@ -114,6 +114,8 @@
 ;//
 ;//             1.6: Entry at 0xC000
 ;//
+;//                 -> Version ID written to 0x2700
+;//
 
 
 ;//////////////////////////////////////////////////////////////////////////////
@@ -152,6 +154,7 @@ DSWAW       EQU     0007FH      ; Translate ASCII to EBCDIC and write to disk wi
 ;
 ; XMON and TOS system data
 ;
+SIGNATURE   EQU     02700H      ; Program signature
 ROLLSW      EQU     0271FH      ; Cursor line number if no hardware autoscroll
 ASCI        EQU     0277EH      ; EBCDIC to ASCII translation table reference
 
@@ -171,6 +174,17 @@ CI_FCB      EQU     0FF00H      ; Console input abstract file FCB pointer
 ERROR_11    EQU     011H        ; IMPROPER UNIT SPECIFICATION
 ERROR_13    EQU     013H        ; DRIVE NUMBER NOT 0-3
 ERROR_20    EQU     020H        ; DELETED DATA RECORD
+
+
+;//////////////////////////////////////////////////////////////////////////////
+;//
+;//     Signature
+;//
+;//////////////////////////////////////////////////////////////////////////////
+
+        ORG         SIGNATURE
+        DB          'ALLOC',NULL
+        DB          '106'
 
 
 ;//////////////////////////////////////////////////////////////////////////////

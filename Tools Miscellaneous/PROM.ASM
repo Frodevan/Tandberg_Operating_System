@@ -91,6 +91,7 @@
 ;//
 ;//             1.6: Entry at 0xC2D7
 ;//
+;//                 -> Version ID written to 0x2700
 ;//                 -> Introduces a bug where the strings used by the program may
 ;//                    be overwritten by a load using the L command. Should this
 ;//                    happen, the program will start to print garbage instead of
@@ -107,6 +108,7 @@
 ;
 ; ASCII control characters
 ;
+NULL        EQU     000H        ; Null character
 STX         EQU     002H        ; Start of text
 ETX         EQU     003H        ; End of text
 CR          EQU     00DH        ; Cartridge Return
@@ -122,6 +124,7 @@ XMIO        EQU     000CAH      ; Main UART output
 ; XMON and TOS system data
 ;
 RCVBUF      EQU     025E0H      ; Main UART input buffer
+SIGNATURE   EQU     02700H      ; Program signature
 BUFLIM      EQU     0272EH      ; Lowest address of current TOS buffers
 
 ;
@@ -165,6 +168,17 @@ FCB_DRVFMT  EQU     01BH        ; Media format
 FM_INPUT    EQU     001H        ; File open for reading flag
 FM_OUTPUT   EQU     002H        ; File open for writing flag
 FM_BINARY   EQU     004H        ; Binary flag
+
+
+;//////////////////////////////////////////////////////////////////////////////
+;//
+;//     Signature
+;//
+;//////////////////////////////////////////////////////////////////////////////
+
+        ORG         SIGNATURE
+        DB          'PROM',NULL,NULL
+        DB          '106'
 
 
 ;//////////////////////////////////////////////////////////////////////////////

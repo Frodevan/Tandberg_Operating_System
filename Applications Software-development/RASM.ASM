@@ -78,6 +78,10 @@
 ;//
 ;//                 -> Fixes the dw external reference bug from v2.2a
 ;//
+;//             v2.3: Entry at 0xBC00
+;//
+;//                 -> Version ID written to 0x2700
+;//
 
 ;//////////////////////////////////////////////////////////////////////////////
 ;//
@@ -115,6 +119,7 @@ SEMICOLON   EQU     03BH        ; Semicolon
 ;
 ; XMON and TOS system data
 ;
+SIGNATURE   EQU     02700H      ; Program signature
 BUFLIM      EQU     0272EH      ; Lowest address of current TOS buffers
 
 ;
@@ -438,6 +443,17 @@ name_nr_in_line_count:
 emergency_buffer_start:
         DS          611
 emergency_buffer_end:
+
+
+;//////////////////////////////////////////////////////////////////////////////
+;//
+;//     Signature
+;//
+;//////////////////////////////////////////////////////////////////////////////
+
+        ORG         SIGNATURE
+        DB          'RASM',NULL,NULL
+        DB          '203'
 
 
 ;//////////////////////////////////////////////////////////////////////////////

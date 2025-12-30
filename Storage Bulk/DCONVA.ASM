@@ -33,6 +33,8 @@
 ;//
 ;//             1.6: Entry at 0xC000
 ;//
+;//                 -> Version ID written to 0x2700
+;//
 
 
 ;//////////////////////////////////////////////////////////////////////////////
@@ -54,6 +56,7 @@ DSDLW       EQU     00079H      ; Write deleted to disk with wait
 ;
 ; XMON and TOS system data
 ;
+SIGNATURE   EQU     02700H      ; Program signature
 ASCI        EQU     0277EH      ; EBCDIC to ASCII translation table reference
 
 ;
@@ -75,6 +78,17 @@ CO_FCB      EQU     0FF02H      ; Console output abstract file FCB pointer
 ; TOS Errors
 ;
 ERROR_20    EQU     020H        ; DELETED DATA RECORD
+
+
+;//////////////////////////////////////////////////////////////////////////////
+;//
+;//     Signature
+;//
+;//////////////////////////////////////////////////////////////////////////////
+
+        ORG         SIGNATURE
+        DB          'DCONVA'
+        DB          '106'
 
 
 ;//////////////////////////////////////////////////////////////////////////////

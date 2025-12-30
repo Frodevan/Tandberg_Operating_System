@@ -30,6 +30,10 @@
 ;//
 ;//                 -> First version I have
 ;//
+;//             1.6: Entry at 0xC10B
+;//
+;//                 -> Version ID written to 0x2700
+;//
 
 
 ;//////////////////////////////////////////////////////////////////////////////
@@ -50,6 +54,11 @@ DISK_TRACK  EQU     00100H      ; Multiplier for floppy disk track
 DISK_SECTOR EQU     00001H      ; Multiplier for floppy disk sector
 
 ;
+; XMON and TOS system data
+;
+SIGNATURE   EQU     02700H      ; Program signature
+
+;
 ; TOS system calls
 ;
 INCHAR      EQU     0FD09H      ; Input single character
@@ -63,6 +72,17 @@ DSWRW       EQU     0FD76H      ; Write to disk with wait
 ;
 CI_FCB      EQU     0FF00H      ; Console input abstract file FCB pointer
 CO_FCB      EQU     0FF02H      ; Console output abstract file FCB pointer
+
+
+;//////////////////////////////////////////////////////////////////////////////
+;//
+;//     Signature
+;//
+;//////////////////////////////////////////////////////////////////////////////
+
+        ORG         SIGNATURE
+        DB          'DIRPAC'
+        DB          '106'
 
 
 ;//////////////////////////////////////////////////////////////////////////////

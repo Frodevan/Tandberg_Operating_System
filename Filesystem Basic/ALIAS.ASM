@@ -61,6 +61,8 @@
 ;//
 ;//             1.6a: Entry at 0xC000
 ;//
+;//                 -> Version ID written to 0x2700
+;//
 
 
 ;//////////////////////////////////////////////////////////////////////////////
@@ -90,6 +92,7 @@ CLOCDIR     EQU     000C1H      ; Look up filetable entry of filename on tape
 ; XMON and TOS system data
 ;
 BUF2        EQU     02600H      ; Sector data of last filesystem operation
+SIGNATURE   EQU     02700H      ; Program signature
 TRK         EQU     02731H      ; Pointer to block address of next directory data block
 
 ;
@@ -119,6 +122,17 @@ ERROR_48    EQU     048H        ; TAPE MARK DETECTED
 ;
 ATTR_S      EQU     002H        ; System file
 ATTR_A      EQU     008H        ; Alias file
+
+
+;//////////////////////////////////////////////////////////////////////////////
+;//
+;//     Signature
+;//
+;//////////////////////////////////////////////////////////////////////////////
+
+        ORG         SIGNATURE
+        DB          'ALIAS',NULL
+        DB          '106'
 
 
 ;//////////////////////////////////////////////////////////////////////////////

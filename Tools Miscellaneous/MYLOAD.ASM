@@ -25,6 +25,10 @@
 ;//
 ;//                 -> First version I have
 ;//
+;//             1.6: Entry at 0x2000
+;//
+;//                 -> Version ID written to 0x2700
+;//
 
 
 ;//////////////////////////////////////////////////////////////////////////////
@@ -49,6 +53,11 @@ DISK_SECTOR EQU     00001H      ; Multiplier for floppy disk sector
 ;
 DCALW       EQU     00070H      ; Reset disk drive with wait
 DSRDW       EQU     00073H      ; Read from disk with wait
+
+;
+; XMON and TOS system data
+;
+SIGNATURE   EQU     02700H      ; Program signature
 
 ;
 ; TOS system calls
@@ -331,3 +340,14 @@ check_next_dir_entry:
         DCR         C
         JNZ         check_dir_entry
         JMP         scan_next_directory_block
+
+
+;//////////////////////////////////////////////////////////////////////////////
+;//
+;//     Signature
+;//
+;//////////////////////////////////////////////////////////////////////////////
+
+        ORG         SIGNATURE
+        DB          'MYLOAD'
+        DB          '106'
