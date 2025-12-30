@@ -29,6 +29,8 @@
 ;//
 ;//             1.6: Entry at 0xC05D
 ;//
+;//                 -> Version ID written to 0x2700
+;//
 
 
 ;//////////////////////////////////////////////////////////////////////////////
@@ -40,6 +42,7 @@
 ;
 ; ASCII control characters
 ;
+NULL        EQU     000H        ; Null character
 LF          EQU     00AH        ; Line Feed
 CR          EQU     00DH        ; Cartridge Return
 
@@ -56,9 +59,25 @@ CBWRW       EQU     000B2H      ; Write data to tape cartridge with wait
 CBTMW       EQU     000B8H      ; Write tape mark to tape cartridge with wait
 
 ;
+; XMON and TOS system data
+;
+SIGNATURE   EQU     02700H      ; Program signature
+
+;
 ; TOS Errors
 ;
 ERROR_48    EQU     048H        ; TAPE MARK DETECTED
+
+
+;//////////////////////////////////////////////////////////////////////////////
+;//
+;//     Signature
+;//
+;//////////////////////////////////////////////////////////////////////////////
+
+        ORG         SIGNATURE
+        DB          'DDUMC',NULL
+        DB          '106'
 
 
 ;//////////////////////////////////////////////////////////////////////////////

@@ -77,6 +77,10 @@
 ;//                    However, this remains in the unused portion of the template,
 ;//                    and is as such never actually written to disk.
 ;//
+;//             1.6: Entry at 0xC261
+;//
+;//                 -> Version ID written to 0x2700
+;//
 
 
 ;//////////////////////////////////////////////////////////////////////////////
@@ -130,6 +134,7 @@ CLOCDIR     EQU     000C1H      ; Look up filetable entry of filename on tape
 ; XMON and TOS system data
 ;
 BUF2        EQU     02600H      ; Sector data of last filesystem operation
+SIGNATURE   EQU     02700H      ; Program signature
 TRK         EQU     02731H      ; Pointer to block address of next directory data block
 CPROG       EQU     02741H      ; Tape prog status
 CUNIT       EQU     02742H      ; Tape unit number
@@ -225,6 +230,17 @@ dir_file_linking_block_buffer:
         DS          128
 scratchpad_ram:
         DS          16
+
+
+;//////////////////////////////////////////////////////////////////////////////
+;//
+;//     Signature
+;//
+;//////////////////////////////////////////////////////////////////////////////
+
+        ORG         SIGNATURE
+        DB          'FORMAT'
+        DB          '106'
 
 
 ;//////////////////////////////////////////////////////////////////////////////

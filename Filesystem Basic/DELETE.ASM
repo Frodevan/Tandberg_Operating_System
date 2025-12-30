@@ -58,6 +58,8 @@
 ;//
 ;//             1.6a: Entry at 0xC0AD
 ;//
+;//                 -> Version ID written to 0x2700
+;//
 
 
 ;//////////////////////////////////////////////////////////////////////////////
@@ -104,6 +106,7 @@ CLOCDIR     EQU     000C1H      ; Look up filetable entry of filename on tape
 ; XMON and TOS system data
 ;
 BUF2        EQU     02600H      ; Sector data of last filesystem operation
+SIGNATURE   EQU     02700H      ; Program signature
 SSWITCH     EQU     0272CH      ; TOS system switch
 TRK         EQU     02731H      ; Pointer to block address of next directory data block
 MAP1        EQU     02739H      ; Block address of first half of mapfile data
@@ -147,6 +150,17 @@ ATTR_S      EQU     002H        ; System file
 ATTR_W      EQU     004H        ; Write-protected file
 ATTR_A      EQU     008H        ; Alias file
 ATTR_F      EQU     080H        ; Format file
+
+
+;//////////////////////////////////////////////////////////////////////////////
+;//
+;//     Signature
+;//
+;//////////////////////////////////////////////////////////////////////////////
+
+        ORG         SIGNATURE
+        DB          'DELETE'
+        DB          '106'
 
 
 ;//////////////////////////////////////////////////////////////////////////////

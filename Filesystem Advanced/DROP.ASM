@@ -69,6 +69,10 @@
 ;//                    instead of the status-message for "Illegal input parameter".
 ;//                 -> Ignores leading spaces before numbers
 ;//
+;//             1.6a: Entry at 0xC000
+;//
+;//                 -> Version ID written to 0x2700
+;//
 
 
 ;//////////////////////////////////////////////////////////////////////////////
@@ -95,6 +99,7 @@ DSWRW       EQU     00076H      ; Write to disk with wait
 ;
 BUF2        EQU     02600H      ; Sector data of last filesystem operation
 BUF1        EQU     02680H      ; Additional sector data for filesysyem operation
+SIGNATURE   EQU     02700H      ; Program signature
 MAP1        EQU     02739H      ; Block address of first half of mapfile data
 MAP2        EQU     0273BH      ; Block address of last half of mapfile data
 
@@ -119,6 +124,17 @@ ERROR_13    EQU     013H        ; DRIVE NUMBER NOT 0-3
 ERROR_1D    EQU     01DH        ; COMMAND UNIT NOT :FN: OR :MN:
 ERROR_35    EQU     035H        ; TRACK NUMBER > 76
 ERROR_36    EQU     036H        ; SECTOR NUMBER = 0 OR > 26
+
+
+;//////////////////////////////////////////////////////////////////////////////
+;//
+;//     Signature
+;//
+;//////////////////////////////////////////////////////////////////////////////
+
+        ORG         SIGNATURE
+        DB          'DROP',NULL,NULL
+        DB          '106'
 
 
 ;//////////////////////////////////////////////////////////////////////////////
