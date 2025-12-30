@@ -57,11 +57,6 @@
 ;//               were to be run on a systeme like this, the TOS and XMON data area
 ;//               would be overwritten by the defined symbols table.
 ;//
-;//         NOTE: Due to the size of this program, it will overwrite parts of TOS
-;//               if run on TOS version v1.8x. Running this on v1.6x will work,
-;//               however there will be limited room for complex assignement of
-;//               input/output TOS standard files.
-;//
 ;//
 ;//         Changelog:
 ;//
@@ -83,6 +78,8 @@
 ;//                 -> Version ID written to 0x2700
 ;//                 -> EQU can now use symbols in the code- or data-segment
 ;//                 -> Asserts on long-line cases for DB instructions
+;//
+;//             v2.4: Entry at 0xB800
 ;//
 
 ;//////////////////////////////////////////////////////////////////////////////
@@ -464,7 +461,7 @@ emergency_buffer_end:
 ;//
 ;//////////////////////////////////////////////////////////////////////////////
 
-        ORG         0BC00H
+        ORG         0B800H
 start:
 beginning:
         ;

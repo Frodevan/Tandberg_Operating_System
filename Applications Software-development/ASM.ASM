@@ -89,11 +89,6 @@
 ;//               bounds for the symbol-tables are manually changed using the .I
 ;//               control code.
 ;//
-;//         NOTE: Due to the size of this program, it will overwrite parts of TOS
-;//               if run on TOS version v1.7 or later. Running this on v1.6x will
-;//               work, however there will be limited room for complex assignement
-;//               of input/output TOS standard files.
-;//
 ;//         NOTE: This program takes keyboard input directly from the XMON API, and
 ;//               as such a batch-file can't be used with CI to emulate keyboard-
 ;//               input.
@@ -153,6 +148,8 @@
 ;//             1.6: Entry at 0xC203
 ;//
 ;//                 -> Version ID written to 0x2700
+;//
+;//             1.7: Entry at 0xB803
 ;//
 
 
@@ -440,22 +437,13 @@ hexfile_str_buffer:
 
 ;//////////////////////////////////////////////////////////////////////////////
 ;//
-;//     Dynamic data-buffers
-;//
-;//////////////////////////////////////////////////////////////////////////////
-
-        ORG         0C000H
-symbol_buffers:
-        DS          00200H
-symbol_buffers_end:
-
-
-;//////////////////////////////////////////////////////////////////////////////
-;//
 ;//     Program re-entry
 ;//
 ;//////////////////////////////////////////////////////////////////////////////
 
+        ORG         0B800H
+symbol_buffers:
+symbol_buffers_end:
         ;
         ; Manual re-entry from debugger
         ;
