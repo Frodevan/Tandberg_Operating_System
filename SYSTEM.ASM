@@ -357,17 +357,48 @@ TAB_CLOSE   EQU     00CH        ; Device driver close routines
 
 ;//////////////////////////////////////////////////////////////////////////////
 ;//
-;//     TOS initialization routine
+;//     Data
 ;//
 ;//////////////////////////////////////////////////////////////////////////////
 
-        ORG         0DB00H
+        ORG         0D800H
 buffer_list_next_ptr:
         DW          00000H
 buffer_list_tail:
         DB          BUFLST_HEAD
 
 
+;//////////////////////////////////////////////////////////////////////////////
+
+error_number:
+        DB          000H
+
+
+;//////////////////////////////////////////////////////////////////////////////
+
+DEV_EXEC_FCB_buffered_echo:
+        DB          4
+        DB          FM_INPUT + FM_EXEC_CI + FM_NO_CLOSE
+        DW          0
+        DW          128
+        DW          DEV_CI_buffer
+        DW          DEV_EXEC_FCB_echo
+
+
+;//////////////////////////////////////
+
+DEV_EXEC_FCB_echo:
+        DB          3
+        DB          FM_INPUT + FM_NO_CLOSE
+EXEC_FCB:
+        DW          00000H
+        DW          DEV_CO_FCB
+
+
+;//////////////////////////////////////////////////////////////////////////////
+;//
+;//     TOS initialization routine
+;//
 ;//////////////////////////////////////////////////////////////////////////////
 
 start:
@@ -379,105 +410,9 @@ start:
 
 
 ;//////////////////////////////////////////////////////////////////////////////
-
-T_TOSINIT:
-        ;
-        ; Reset one-shot timer routine
-        ;
-        LXI         H,00000H
-        SHLD        TIMEAD
-        ;
-        ; Set lower memory boundary of TOS
-        ;
-        LXI         H,buffer_list_next_ptr
-        SHLD        BUFLIM
-        ;
-        ; Try to trigger autoscroll, if active
-        ;
-        LXI         H,24*CURSOR_ROW + 79*CURSOR_COL
-        CALL        CURSOR
-        MVI         A,'A'
-        CALL        TTO
-        ;
-        ; Read back same cursor position to check if autoscroll activated
-        ;
-        CALL        CURSOR
-        MVI         A,' '
-        CALL        INDISP
-        CPI         'A'
-        JZ          scroll_mode_found
-        SUB         A
-scroll_mode_found:
-        STA         ROLLSW
-        MVI         A,ERPAG
-        CALL        TTO
-        ;
-        ; Set up IBM EBCDIC translation tables for XMON
-        ;
-        LXI         H,ascii_to_ebcdic_table
-        SHLD        EBCD
-        LXI         H,ebcdic_to_ascii_table
-        SHLD        ASCI
-        ;
-        ; Clear TOS batch file flag
-        ;
-        XRA         A
-        STA         EXSW
-        RET
-
-
-;//////////////////////////////////////////////////////////////////////////////
 ;//
 ;//     TOS command line main program
 ;//
-;//////////////////////////////////////////////////////////////////////////////
-
-error_number:
-        DB          000H
-
-
-;//////////////////////////////////////////////////////////////////////////////
-
-        ;
-        ; Clean up assigned file after use
-        ;
-cli_close_assigned_file:
-        ;
-        ; Get and check if file reference is set
-        ;
-        MOV         E,M
-        INX         H
-        MOV         D,M
-        MOV         A,D
-        ORA         E
-        RZ
-        ;
-        ; Check if file is assigned at the command line and if it's locked open
-        ;
-        INX         D
-        LDAX        D               ; FCB + FCB_MODE
-        ANI         FM_ASSIGNED + FM_NO_CLOSE
-        CPI         FM_ASSIGNED + FM_NO_CLOSE
-        RZ
-        ;
-        ; If not, unassign file
-        ;
-        MVI         M,000H
-        DCX         H
-        MVI         M,000H
-        XCHG
-        ;
-        ; Close unassigned file if it was previously assigned from command line
-        ;
-        MOV         A,M             ; FCB + FCB_MODE
-        ANI         FM_ASSIGNED
-        RZ
-        DCX         H
-        CALL        CLOSE
-        CC          T_ERROR
-        RET
-
-
 ;//////////////////////////////////////////////////////////////////////////////
 
         ;
@@ -661,28 +596,7 @@ cli_prompt_cleanup:
         JMP         parse_command_line_prompt
 
 
-;//////////////////////////////////////////////////////////////////////////////
-
-DEV_EXEC_FCB_buffered_echo:
-        DB          4
-        DB          FM_INPUT + FM_EXEC_CI + FM_NO_CLOSE
-        DW          0
-        DW          128
-        DW          DEV_CI_buffer
-        DW          DEV_EXEC_FCB_echo
-
-
 ;//////////////////////////////////////
-
-DEV_EXEC_FCB_echo:
-        DB          3
-        DB          FM_INPUT + FM_NO_CLOSE
-EXEC_FCB:
-        DW          00000H
-        DW          DEV_CO_FCB
-
-
-;//////////////////////////////////////////////////////////////////////////////
 
 cli_force_cleanup:
         ;
@@ -701,6 +615,96 @@ cli_force_cleanup:
         LXI         H,AL_FCB
         CALL        cli_close_assigned_file
         JMP         main
+
+
+;//////////////////////////////////////////////////////////////////////////////
+
+        ;
+        ; Clean up assigned file after use
+        ;
+cli_close_assigned_file:
+        ;
+        ; Get and check if file reference is set
+        ;
+        MOV         E,M
+        INX         H
+        MOV         D,M
+        MOV         A,D
+        ORA         E
+        RZ
+        ;
+        ; Check if file is assigned at the command line and if it's locked open
+        ;
+        INX         D
+        LDAX        D               ; FCB + FCB_MODE
+        ANI         FM_ASSIGNED + FM_NO_CLOSE
+        CPI         FM_ASSIGNED + FM_NO_CLOSE
+        RZ
+        ;
+        ; If not, unassign file
+        ;
+        MVI         M,000H
+        DCX         H
+        MVI         M,000H
+        XCHG
+        ;
+        ; Close unassigned file if it was previously assigned from command line
+        ;
+        MOV         A,M             ; FCB + FCB_MODE
+        ANI         FM_ASSIGNED
+        RZ
+        DCX         H
+        CALL        CLOSE
+        CC          T_ERROR
+        RET
+
+
+;//////////////////////////////////////////////////////////////////////////////
+
+T_TOSINIT:
+        ;
+        ; Reset one-shot timer routine
+        ;
+        LXI         H,00000H
+        SHLD        TIMEAD
+        ;
+        ; Set lower memory boundary of TOS
+        ;
+        LXI         H,buffer_list_next_ptr
+        SHLD        BUFLIM
+        ;
+        ; Try to trigger autoscroll, if active
+        ;
+        LXI         H,24*CURSOR_ROW + 79*CURSOR_COL
+        CALL        CURSOR
+        MVI         A,'A'
+        CALL        TTO
+        ;
+        ; Read back same cursor position to check if autoscroll activated
+        ;
+        CALL        CURSOR
+        MVI         A,' '
+        CALL        INDISP
+        CPI         'A'
+        JZ          scroll_mode_found
+        SUB         A
+scroll_mode_found:
+        STA         ROLLSW
+        MVI         A,ERPAG
+        CALL        TTO
+        ;
+        ; Set up IBM EBCDIC translation tables for XMON
+        ;
+        LXI         H,ascii_to_ebcdic_table
+        SHLD        EBCD
+        LXI         H,ebcdic_to_ascii_table
+        SHLD        ASCI
+        ;
+        ; Clear TOS batch file flag
+        ;
+        XRA         A
+        STA         EXSW
+        RET
 
 
 ;//////////////////////////////////////////////////////////////////////////////
@@ -893,11 +897,6 @@ T_STIMER:
         XCHG
         EI
         RET
-
-
-;//////////////////////////////////////////////////////////////////////////////
-
-        DS          1
 
 
 ;//////////////////////////////////////////////////////////////////////////////
@@ -2655,120 +2654,6 @@ close_file_error:
 
 ;//////////////////////////////////////////////////////////////////////////////
 ;//
-;//     WRIT module
-;//
-;//         Module for writing the current block to block device output file. This
-;//         will only operate on block devices.
-;//
-;//
-;//         Changelog:
-;//
-;//             v1.3:
-;//
-;//                 -> First version I have
-;//
-
-
-;//////////////////////////////////////////////////////////////////////////////
-;//
-;//     File IO routines
-;//
-;//////////////////////////////////////////////////////////////////////////////
-
-        ;
-        ; Write block to block-device
-        ;
-T_WRITE:
-        ;
-        ; Verify that the file is ready, and that it is a block-device
-        ;
-        CALL        check_file_control_block
-        RC
-        MOV         A,M             ; FCB + FCB_TYPE
-        CPI         5
-        JNZ         write_not_a_block_device
-        ;
-        ; Call file device-driver WRITE
-        ;
-        PUSH        D
-        LXI         D,FCB_WRITE
-read_write_type_5_driver_call:
-        ;
-        ; Get selected driver routine from FCB, and verify that it is set
-        ;
-        PUSH        H
-        DAD         D
-        MOV         E,M             ; FCB + DE
-        INX         H
-        MOV         D,M
-        MOV         A,D
-        ORA         E
-        JZ          read_write_routine_not_set
-        ;
-        ; Set up stack to run delected device driver routine
-        ;
-        LXI         H,read_write_driver_call_return
-        XTHL
-        PUSH        D
-        RET
-
-read_write_driver_call_return:
-        JC          read_write_driver_call_failed
-        ;
-        ; Reset index of block buffer, since old data has now been written
-        ;
-        PUSH        H
-        INX         H
-        INX         H
-        MVI         M,000H          ; FCB + FCB_BUFIDX
-        INX         H
-        MVI         M,000H
-        POP         H
-        POP         D
-        ANA         A
-        RET
-
-
-;//////////////////////////////////////
-
-write_not_a_block_device:
-        MVI         A,ERROR_22
-        STC
-        RET
-
-read_write_routine_not_set:
-        POP         H
-        POP         D
-        MVI         A,ERROR_23
-        STC
-        RET
-
-
-;//////////////////////////////////////
-
-read_write_driver_call_failed:
-        ;
-        ; Check for end of file
-        ;
-        POP         D
-        ANA         A
-        JNZ         read_write_return
-        ;
-        ; If so, mark file as end of file
-        ;
-        INX         H
-        MOV         A,M             ; FCB + FCB_MODE
-        ORI         FM_EOF
-        MOV         M,A
-        DCX         H
-        SUB         A
-read_write_return:
-        STC
-        RET
-
-
-;//////////////////////////////////////////////////////////////////////////////
-;//
 ;//     READ module
 ;//
 ;//         Module for reading the next block/line from block devices and buffered
@@ -3146,6 +3031,120 @@ read_type_4_erase_char:
         CALL        OUTCHAR
         JC          read_type_4_end
         JMP         read_type_4_get_next_char
+
+
+;//////////////////////////////////////////////////////////////////////////////
+;//
+;//     WRIT module
+;//
+;//         Module for writing the current block to block device output file. This
+;//         will only operate on block devices.
+;//
+;//
+;//         Changelog:
+;//
+;//             v1.3:
+;//
+;//                 -> First version I have
+;//
+
+
+;//////////////////////////////////////////////////////////////////////////////
+;//
+;//     File IO routines
+;//
+;//////////////////////////////////////////////////////////////////////////////
+
+        ;
+        ; Write block to block-device
+        ;
+T_WRITE:
+        ;
+        ; Verify that the file is ready, and that it is a block-device
+        ;
+        CALL        check_file_control_block
+        RC
+        MOV         A,M             ; FCB + FCB_TYPE
+        CPI         5
+        JNZ         write_not_a_block_device
+        ;
+        ; Call file device-driver WRITE
+        ;
+        PUSH        D
+        LXI         D,FCB_WRITE
+read_write_type_5_driver_call:
+        ;
+        ; Get selected driver routine from FCB, and verify that it is set
+        ;
+        PUSH        H
+        DAD         D
+        MOV         E,M             ; FCB + DE
+        INX         H
+        MOV         D,M
+        MOV         A,D
+        ORA         E
+        JZ          read_write_routine_not_set
+        ;
+        ; Set up stack to run delected device driver routine
+        ;
+        LXI         H,read_write_driver_call_return
+        XTHL
+        PUSH        D
+        RET
+
+read_write_driver_call_return:
+        JC          read_write_driver_call_failed
+        ;
+        ; Reset index of block buffer, since old data has now been written
+        ;
+        PUSH        H
+        INX         H
+        INX         H
+        MVI         M,000H          ; FCB + FCB_BUFIDX
+        INX         H
+        MVI         M,000H
+        POP         H
+        POP         D
+        ANA         A
+        RET
+
+
+;//////////////////////////////////////
+
+write_not_a_block_device:
+        MVI         A,ERROR_22
+        STC
+        RET
+
+read_write_routine_not_set:
+        POP         H
+        POP         D
+        MVI         A,ERROR_23
+        STC
+        RET
+
+
+;//////////////////////////////////////
+
+read_write_driver_call_failed:
+        ;
+        ; Check for end of file
+        ;
+        POP         D
+        ANA         A
+        JNZ         read_write_return
+        ;
+        ; If so, mark file as end of file
+        ;
+        INX         H
+        MOV         A,M             ; FCB + FCB_MODE
+        ORI         FM_EOF
+        MOV         M,A
+        DCX         H
+        SUB         A
+read_write_return:
+        STC
+        RET
 
 
 ;//////////////////////////////////////////////////////////////////////////////
@@ -4877,6 +4876,18 @@ intel_mapfile_name:
 
 ;//////////////////////////////////////////////////////////////////////////////
 ;//
+;//     Data
+;//
+;//////////////////////////////////////////////////////////////////////////////
+
+ibm_current_file_sector:
+        DB          000H
+ibm_bad_track_list:
+        DB          000H, 000H
+
+
+;//////////////////////////////////////////////////////////////////////////////
+;//
 ;//     Subroutines
 ;//
 ;//////////////////////////////////////////////////////////////////////////////
@@ -5022,14 +5033,6 @@ ascii_3_digit_decimal_conversion_done:
         POP         H
         POP         B
         RET
-
-
-;//////////////////////////////////////////////////////////////////////////////
-
-ibm_current_file_sector:
-        DB          000H
-ibm_bad_track_list:
-        DB          000H, 000H
 
 
 ;//////////////////////////////////////////////////////////////////////////////
@@ -9191,6 +9194,13 @@ DEV_RE_FCB:
 
 ;//////////////////////////////////////
 
+serial_text_polling_routine:
+        CALL        RCVI
+        JMP         check_for_end_of_text
+
+
+;//////////////////////////////////////
+
         ;
         ; Console input, with end-of-data on Ctrl-C
         ;
@@ -9199,13 +9209,6 @@ DEV_CE_FCB:
         DB          FM_NO_CLOSE + FM_INPUT
         DW          console_text_polling_routine
         DW          00000H
-
-
-;//////////////////////////////////////
-
-serial_text_polling_routine:
-        CALL        RCVI
-        JMP         check_for_end_of_text
 
 
 ;//////////////////////////////////////
