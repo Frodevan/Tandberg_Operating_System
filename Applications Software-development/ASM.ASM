@@ -152,6 +152,8 @@
 ;//
 ;//             1.6: Entry at 0xC203
 ;//
+;//                 -> Version ID written to 0x2700
+;//
 
 
 ;//////////////////////////////////////////////////////////////////////////////
@@ -200,6 +202,7 @@ TTI         EQU     00040H      ; Console input
 ;
 ; XMON and TOS system data
 ;
+SIGNATURE   EQU     02700H      ; Program signature
 BUFLIM      EQU     0272EH      ; Lowest address of current TOS buffers
 
 ;
@@ -422,6 +425,17 @@ current_asm_bin_byte:
         DS          1
 hexfile_str_buffer:
         DS          1+64
+
+
+;//////////////////////////////////////////////////////////////////////////////
+;//
+;//     Signature
+;//
+;//////////////////////////////////////////////////////////////////////////////
+
+        ORG         SIGNATURE
+        DB          'ASM',NULL,NULL,NULL
+        DB          '106'
 
 
 ;//////////////////////////////////////////////////////////////////////////////
