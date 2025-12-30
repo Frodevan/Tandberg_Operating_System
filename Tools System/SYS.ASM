@@ -28,6 +28,10 @@
 ;//
 ;//                 -> Adds support for lowercase input
 ;//
+;//             1.6: Entry at 0xC000
+;//
+;//                 -> Version ID written to 0x2700
+;//
 
 
 ;//////////////////////////////////////////////////////////////////////////////
@@ -37,8 +41,14 @@
 ;//////////////////////////////////////////////////////////////////////////////
 
 ;
+; ASCII control characters
+;
+NULL        EQU     000H        ; Null character
+
+;
 ; XMON and TOS system data
 ;
+SIGNATURE   EQU     02700H      ; Program signature
 SSWITCH     EQU     0272CH      ; TOS system switch
 
 ;
@@ -50,6 +60,17 @@ INCHAR      EQU     0FD09H      ; Input single character
 ; TOS standard files
 ;
 CI_FCB      EQU     0FF00H      ; Console input abstract file FCB pointer
+
+
+;//////////////////////////////////////////////////////////////////////////////
+;//
+;//     Signature
+;//
+;//////////////////////////////////////////////////////////////////////////////
+
+        ORG         SIGNATURE
+        DB          'SYS',NULL,NULL,NULL
+        DB          '106'
 
 
 ;//////////////////////////////////////////////////////////////////////////////

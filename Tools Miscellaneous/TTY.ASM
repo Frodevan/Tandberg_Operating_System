@@ -23,6 +23,10 @@
 ;//                 -> First version I have
 ;//                 -> Hardcoded to use Rx buffer at 0x25E0
 ;//
+;//             1.6: Entry at 0xC000
+;//
+;//                 -> Version ID written to 0x2700
+;//
 
 
 ;//////////////////////////////////////////////////////////////////////////////
@@ -34,6 +38,7 @@
 ;
 ; ASCII control characters
 ;
+NULL        EQU     000H        ; Null character
 ROLUP       EQU     00CH        ; Scroll screen up one row
 ERPAG       EQU     019H        ; Clear screen
 CURH        EQU     01DH        ; Cursor home
@@ -58,7 +63,19 @@ XMIO        EQU     000CAH      ; Main UART output
 ; XMON and TOS system data
 ;
 RCVBUF      EQU     025E0H      ; Main UART input buffer
+SIGNATURE   EQU     02700H      ; Program signature
 KEYBUF      EQU     02780H      ; Console input buffer
+
+
+;//////////////////////////////////////////////////////////////////////////////
+;//
+;//     Signature
+;//
+;//////////////////////////////////////////////////////////////////////////////
+
+        ORG         SIGNATURE
+        DB          'TTY',NULL,NULL,NULL
+        DB          '106'
 
 
 ;//////////////////////////////////////////////////////////////////////////////

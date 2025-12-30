@@ -80,6 +80,8 @@
 ;//
 ;//             1.6a: Entry at 0xC165
 ;//
+;//                 -> Version ID written to 0x2700
+;//
 
 
 ;//////////////////////////////////////////////////////////////////////////////
@@ -119,6 +121,7 @@ CBRDW       EQU     000AFH      ; Read data from tape cartridge with wait
 ;
 ; XMON and TOS system data
 ;
+SIGNATURE   EQU     02700H      ; Program signature
 MAP1        EQU     02739H      ; Block address of first half of mapfile data
 MAP2        EQU     0273BH      ; Block address of last half of mapfile data
 
@@ -176,6 +179,17 @@ FCB_DRVNR   EQU     011H        ; Drive number
 ;
 FM_INPUT    EQU     001H        ; File open for reading flag
 FM_BINARY   EQU     004H        ; Binary flag
+
+
+;//////////////////////////////////////////////////////////////////////////////
+;//
+;//     Signature
+;//
+;//////////////////////////////////////////////////////////////////////////////
+
+        ORG         SIGNATURE
+        DB          'DIR',NULL,NULL,NULL
+        DB          '106'
 
 
 ;//////////////////////////////////////////////////////////////////////////////

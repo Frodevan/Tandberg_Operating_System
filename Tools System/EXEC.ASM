@@ -22,6 +22,10 @@
 ;//
 ;//                 -> Sets flag used to enable batch-file execution on TOS v1.5+
 ;//
+;//             1.6: Entry at 0xC000
+;//
+;//                 -> Version ID written to 0x2700
+;//
 
 
 ;//////////////////////////////////////////////////////////////////////////////
@@ -36,8 +40,14 @@
 TRUE        EQU     -1          ; Boolean True
 
 ;
+; ASCII control characters
+;
+NULL        EQU     000H        ; Null character
+
+;
 ; XMON and TOS system data
 ;
+SIGNATURE   EQU     02700H      ; Program signature
 EXSW        EQU     027B2H      ; TOS EXEC batch-file assigned switch
 
 ;
@@ -55,6 +65,17 @@ AL_FCB      EQU     0FF0EH      ; Auxilliary line-printer output abstract file F
 ;
 FM_ASSIGNED EQU     020H        ; Assigned and opened by command line flag
 FM_NO_CLOSE EQU     040H        ; Don't close file flag
+
+
+;//////////////////////////////////////////////////////////////////////////////
+;//
+;//     Signature
+;//
+;//////////////////////////////////////////////////////////////////////////////
+
+        ORG         SIGNATURE
+        DB          'EXEC',NULL,NULL
+        DB          '106'
 
 
 ;//////////////////////////////////////////////////////////////////////////////

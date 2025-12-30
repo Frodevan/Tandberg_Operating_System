@@ -86,6 +86,8 @@
 ;//
 ;//             v1.7: Entry at 0x8000
 ;//
+;//                 -> Version ID written to 0x2700
+;//
 
 
 ;//////////////////////////////////////////////////////////////////////////////
@@ -129,6 +131,7 @@ LOADD       EQU     00088H      ; Load and unpack file from floppy disk to memor
 ;
 ; XMON and TOS system data
 ;
+SIGNATURE   EQU     02700H      ; Program signature
 ROLLSW      EQU     0271FH      ; Cursor line number if no hardware autoscroll
 DPROG       EQU     02761H      ; Floppy prog status
 DCONT       EQU     02763H      ; Floppy cont address
@@ -148,6 +151,17 @@ PUTSTR      EQU     0FD15H      ; Output string of characters, exclusive CR
 ;
 CI_FCB      EQU     0FF00H      ; Console input abstract file FCB pointer
 CO_FCB      EQU     0FF02H      ; Console output abstract file FCB pointer
+
+
+;//////////////////////////////////////////////////////////////////////////////
+;//
+;//     Signature
+;//
+;//////////////////////////////////////////////////////////////////////////////
+
+        ORG         SIGNATURE
+        DB          'INIT',NULL,NULL
+        DB          '107'
 
 
 ;//////////////////////////////////////////////////////////////////////////////

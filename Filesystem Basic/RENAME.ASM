@@ -55,6 +55,8 @@
 ;//
 ;//             1.6a: Entry at 0xC0AA
 ;//
+;//                 -> Version ID written to 0x2700
+;//
 
 
 ;//////////////////////////////////////////////////////////////////////////////
@@ -99,6 +101,7 @@ CLOCDIR     EQU     000C1H      ; Look up filetable entry of filename on tape
 ; XMON and TOS system data
 ;
 BUF2        EQU     02600H      ; Sector data of last filesystem operation
+SIGNATURE   EQU     02700H      ; Program signature
 SSWITCH     EQU     0272CH      ; TOS system switch
 TRK         EQU     02731H      ; Pointer to block address of next directory data block
 CPROG       EQU     02741H      ; Tape prog status
@@ -136,6 +139,17 @@ ERROR_20    EQU     020H        ; DELETED DATA RECORD
 ATTR_S      EQU     002H        ; System file
 ATTR_W      EQU     004H        ; Write-protected file
 ATTR_F      EQU     080H        ; Format file
+
+
+;//////////////////////////////////////////////////////////////////////////////
+;//
+;//     Signature
+;//
+;//////////////////////////////////////////////////////////////////////////////
+
+        ORG         SIGNATURE
+        DB          'RENAME'
+        DB          '106'
 
 
 ;//////////////////////////////////////////////////////////////////////////////

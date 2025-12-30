@@ -140,6 +140,8 @@
 ;//
 ;//             1.1: Entry at 0xC800
 ;//
+;//                 -> Version ID written to 0x2700
+;//
 
 
 ;//////////////////////////////////////////////////////////////////////////////
@@ -164,6 +166,11 @@ CR          EQU     00DH        ; Cartridge Return
 ; XMON system calls
 ;
 TTO         EQU     00043H      ; Console output
+
+;
+; XMON and TOS system data
+;
+SIGNATURE   EQU     02700H      ; Program signature
 
 ;
 ; TOS system calls
@@ -320,6 +327,17 @@ max_external_label_count:
 ;
 ;       DS  6   Label name
 ;
+
+
+;//////////////////////////////////////////////////////////////////////////////
+;//
+;//     Signature
+;//
+;//////////////////////////////////////////////////////////////////////////////
+
+        ORG         SIGNATURE
+        DB          'LINK',NULL,NULL
+        DB          '101'
 
 
 ;//////////////////////////////////////////////////////////////////////////////

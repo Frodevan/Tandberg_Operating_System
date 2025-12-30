@@ -30,6 +30,8 @@
 ;//
 ;//             1.6: Entry at 0xC2FD
 ;//
+;//                 -> Version ID written to 0x2700
+;//
 
 
 ;//////////////////////////////////////////////////////////////////////////////
@@ -43,6 +45,11 @@
 ;
 NULL        EQU     000H        ; Null character
 CR          EQU     00DH        ; Cartridge Return
+
+;
+; XMON and TOS system data
+;
+SIGNATURE   EQU     02700H      ; Program signature
 
 ;
 ; TOS system calls
@@ -95,6 +102,17 @@ FCB_FNAME   EQU     012H        ; Filename string
 FM_INPUT    EQU     001H        ; File open for reading flag
 FM_OUTPUT   EQU     002H        ; File open for writing flag
 FM_BINARY   EQU     004H        ; Binary flag
+
+
+;//////////////////////////////////////////////////////////////////////////////
+;//
+;//     Signature
+;//
+;//////////////////////////////////////////////////////////////////////////////
+
+        ORG         SIGNATURE
+        DB          'DGEN',NULL,NULL
+        DB          '106'
 
 
 ;//////////////////////////////////////////////////////////////////////////////

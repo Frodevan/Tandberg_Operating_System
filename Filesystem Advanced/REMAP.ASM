@@ -35,6 +35,10 @@
 ;//                 -> Accepts lowercase input
 ;//                 -> Adds a status print after remapping is done
 ;//
+;//             1.6: Entry at 0xC000
+;//
+;//                 -> Version ID written to 0x2700
+;//
 
 
 ;//////////////////////////////////////////////////////////////////////////////
@@ -54,6 +58,11 @@ CR          EQU     00DH        ; Cartridge Return
 ;
 DSRDW       EQU     00073H      ; Read from disk with wait
 DSWRW       EQU     00076H      ; Write to disk with wait
+
+;
+; XMON and TOS system data
+;
+SIGNATURE   EQU     02700H      ; Program signature
 
 ;
 ; TOS system calls
@@ -76,6 +85,17 @@ ERROR_13    EQU     013H        ; DRIVE NUMBER NOT 0-3
 ERROR_1D    EQU     01DH        ; COMMAND UNIT NOT :FN: OR :MN:
 ERROR_35    EQU     035H        ; TRACK NUMBER > 76
 ERROR_36    EQU     036H        ; SECTOR NUMBER = 0 OR > 26
+
+
+;//////////////////////////////////////////////////////////////////////////////
+;//
+;//     Signature
+;//
+;//////////////////////////////////////////////////////////////////////////////
+
+        ORG         SIGNATURE
+        DB          'REMAP',NULL
+        DB          '106'
 
 
 ;//////////////////////////////////////////////////////////////////////////////

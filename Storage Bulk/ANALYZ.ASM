@@ -51,6 +51,8 @@
 ;//
 ;//             1.6: Entry at 0xC000
 ;//
+;//                 -> Version ID written to 0x2700
+;//
 
 
 ;//////////////////////////////////////////////////////////////////////////////
@@ -77,6 +79,11 @@ CR          EQU     00DH        ; Cartridge Return
 DSRDW       EQU     00073H      ; Read from disk with wait
 
 ;
+; XMON and TOS system data
+;
+SIGNATURE   EQU     02700H      ; Program signature
+
+;
 ; TOS system calls
 ;
 INCHAR      EQU     0FD09H      ; Input single character
@@ -94,6 +101,17 @@ SO_FCB      EQU     0FF06H      ; Standard output abstract file FCB pointer
 ;
 ERROR_02    EQU     002H        ; CRC ERROR
 ERROR_10    EQU     010H        ; NON-VALID DISKETTE COMMAND
+
+
+;//////////////////////////////////////////////////////////////////////////////
+;//
+;//     Signature
+;//
+;//////////////////////////////////////////////////////////////////////////////
+
+        ORG         SIGNATURE
+        DB          'ANALYZ'
+        DB          '106'
 
 
 ;//////////////////////////////////////////////////////////////////////////////
