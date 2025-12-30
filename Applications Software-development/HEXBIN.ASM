@@ -37,7 +37,7 @@
 ;//
 ;//                 -> First version I have
 ;//
-;//             1.6: Entry at 0xC061
+;//             1.6: Entry at 0xC061, 0xBC61
 ;//
 ;//                 -> Version ID written to 0x2700
 ;//
@@ -95,7 +95,7 @@ SL_FCB      EQU     0FF08H      ; Standard line-printer output abstract file FCB
 ;//
 ;//////////////////////////////////////////////////////////////////////////////
 
-        ORG         0C000H
+        ORG         0BC00H
 input_buffer:
         DS          80
 
