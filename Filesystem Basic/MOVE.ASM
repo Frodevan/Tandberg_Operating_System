@@ -79,6 +79,8 @@
 ;//
 ;//             1.6a: Entry at 0xC000
 ;//
+;//                 -> Version ID written to 0x2700
+;//
 
 
 ;//////////////////////////////////////////////////////////////////////////////
@@ -114,6 +116,7 @@ DCALW       EQU     00070H      ; Reset disk drive with wait
 ;
 ; XMON and TOS system data
 ;
+SIGNATURE   EQU     02700H      ; Program signature
 BUFLIM      EQU     0272EH      ; Lowest address of current TOS buffers
 KEYBUF      EQU     02780H      ; Console input buffer
 
@@ -1058,6 +1061,17 @@ input_file_prompt_str:
         DB          'Input file ?',CR
 page_ength_prompt_str:
         DB          'Page length ?',CR
+
+
+;//////////////////////////////////////////////////////////////////////////////
+;//
+;//     Signature
+;//
+;//////////////////////////////////////////////////////////////////////////////
+
+        ORG         SIGNATURE
+        DB          'MOVE',NULL,NULL
+        DB          '106'
 
 
 ;//////////////////////////////////////////////////////////////////////////////

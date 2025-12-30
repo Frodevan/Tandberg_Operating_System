@@ -71,6 +71,8 @@
 ;//
 ;//             1.5: Entry at 0xC800
 ;//
+;//                 -> Version ID written to 0x2700
+;//
 
 
 ;//////////////////////////////////////////////////////////////////////////////
@@ -97,6 +99,11 @@ APOSTROPHE  EQU     027H        ; Aphostrophe
 SEMICOLON   EQU     03BH        ; Semicolon
 
 ;
+; XMON and TOS system data
+;
+SIGNATURE   EQU     02700H      ; Program signature
+
+;
 ; TOS system calls
 ;
 OUTCHAR     EQU     0FD0CH      ; Output single character
@@ -117,6 +124,17 @@ SL_FCB      EQU     0FF08H      ; Standard line-printer output abstract file FCB
 ; TOS Errors
 ;
 ERROR_2E    EQU     02EH        ; IMPROPER ASSIGNMENT FORMAT
+
+
+;//////////////////////////////////////////////////////////////////////////////
+;//
+;//     Signature
+;//
+;//////////////////////////////////////////////////////////////////////////////
+
+        ORG         SIGNATURE
+        DB          'XREF',NULL,NULL
+        DB          '105'
 
 
 ;//////////////////////////////////////////////////////////////////////////////

@@ -29,6 +29,8 @@
 ;//
 ;//             1.6: Entry at 0xC063
 ;//
+;//                 -> Version ID written to 0x2700
+;//
 
 
 ;//////////////////////////////////////////////////////////////////////////////
@@ -40,6 +42,7 @@
 ;
 ; ASCII control characters
 ;
+NULL        EQU     000H        ; Null character
 LF          EQU     00AH        ; Line Feed
 CR          EQU     00DH        ; Cartridge Return
 
@@ -53,6 +56,22 @@ DSWRW       EQU     00076H      ; Write to disk with wait
 CCAL        EQU     00091H      ; Reset tape cartridge
 CUN         EQU     000A6H      ; Rewind and unload tape cartridge
 CBRDW       EQU     000AFH      ; Read data from tape cartridge with wait
+
+;
+; XMON and TOS system data
+;
+SIGNATURE   EQU     02700H      ; Program signature
+
+
+;//////////////////////////////////////////////////////////////////////////////
+;//
+;//     Signature
+;//
+;//////////////////////////////////////////////////////////////////////////////
+
+        ORG         SIGNATURE
+        DB          'DRSTC',NULL
+        DB          '106'
 
 
 ;//////////////////////////////////////////////////////////////////////////////

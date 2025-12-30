@@ -91,6 +91,7 @@
 ;//
 ;//             1.6: Entry at 0xC26D
 ;//
+;//                 -> Version ID written to 0x2700
 ;//
 
 
@@ -109,9 +110,15 @@ TRUE        EQU     1           ; Boolean True
 ;
 ; ASCII control characters
 ;
+NULL        EQU     000H        ; Null character
 ETX         EQU     003H        ; End of text
 LF          EQU     00AH        ; Line Feed
 CR          EQU     00DH        ; Cartridge Return
+
+;
+; XMON and TOS system data
+;
+SIGNATURE   EQU     02700H      ; Program signature
 
 ;
 ; TOS system calls
@@ -128,6 +135,17 @@ CI_FCB      EQU     0FF00H      ; Console input abstract file FCB pointer
 CO_FCB      EQU     0FF02H      ; Console output abstract file FCB pointer
 SI_FCB      EQU     0FF04H      ; Standard input abstract file FCB pointer
 SO_FCB      EQU     0FF06H      ; Standard output abstract file FCB pointer
+
+
+;//////////////////////////////////////////////////////////////////////////////
+;//
+;//     Signature
+;//
+;//////////////////////////////////////////////////////////////////////////////
+
+        ORG         SIGNATURE
+        DB          'SEDIT',NULL
+        DB          '106'
 
 
 ;//////////////////////////////////////////////////////////////////////////////

@@ -135,6 +135,8 @@
 ;//
 ;//             1.6: Entry at 0xC000
 ;//
+;//                 -> Version ID written to 0x2700
+;//
 
 
 ;//////////////////////////////////////////////////////////////////////////////
@@ -160,6 +162,11 @@ ERPAG       EQU     019H        ; Clear screen
 ;
 TTI         EQU     00040H      ; Console input
 TTO         EQU     00043H      ; Console output
+
+;
+; XMON and TOS system data
+;
+SIGNATURE   EQU     02700H      ; Program signature
 
 ;
 ; TOS system calls
@@ -195,6 +202,17 @@ PN_LDZERO_F EQU     001H        ; Include leading zeroes flag
 PN_TYPE_1   EQU     002H        ; Page number format: - #### -
 PN_TYPE_2   EQU     004H        ; Page number format: PAGE ####
 PN_TYPE_3   EQU     008H        ; Page number format: Page ####
+
+
+;//////////////////////////////////////////////////////////////////////////////
+;//
+;//     Signature
+;//
+;//////////////////////////////////////////////////////////////////////////////
+
+        ORG         SIGNATURE
+        DB          'TXW',NULL,NULL,NULL
+        DB          '106'
 
 
 ;//////////////////////////////////////////////////////////////////////////////

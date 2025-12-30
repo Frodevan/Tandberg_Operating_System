@@ -52,6 +52,8 @@
 ;//
 ;//             1.6a: Entry at 0x2000
 ;//
+;//                 -> Version ID written to 0x2700
+;//
 
 
 ;//////////////////////////////////////////////////////////////////////////////
@@ -85,6 +87,7 @@ DSDLW       EQU     00079H      ; Write deleted to disk with wait
 ;
 ; XMON and TOS system data
 ;
+SIGNATURE   EQU     02700H      ; Program signature
 BUFLIM      EQU     0272EH      ; Lowest address of current TOS buffers
 KEYBUF      EQU     02780H      ; Console input buffer
 
@@ -92,6 +95,17 @@ KEYBUF      EQU     02780H      ; Console input buffer
 ; TOS Errors
 ;
 ERROR_20    EQU     020H        ; DELETED DATA RECORD
+
+
+;//////////////////////////////////////////////////////////////////////////////
+;//
+;//     Signature
+;//
+;//////////////////////////////////////////////////////////////////////////////
+
+        ORG         SIGNATURE
+        DB          'DCOPY',NULL
+        DB          '106'
 
 
 ;//////////////////////////////////////////////////////////////////////////////

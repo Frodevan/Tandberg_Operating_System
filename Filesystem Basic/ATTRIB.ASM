@@ -63,6 +63,8 @@
 ;//
 ;//             1.6: Entry at 0xC09F
 ;//
+;//                 -> Version ID written to 0x2700
+;//
 
 
 ;//////////////////////////////////////////////////////////////////////////////
@@ -97,6 +99,7 @@ CLOCDIR     EQU     000C1H      ; Look up filetable entry of filename on tape
 ; XMON and TOS system data
 ;
 BUF2        EQU     02600H      ; Sector data of last filesystem operation
+SIGNATURE   EQU     02700H      ; Program signature
 TRK         EQU     02731H      ; Pointer to block address of next directory data block
 CPROG       EQU     02741H      ; Tape prog status
 CUNIT       EQU     02742H      ; Tape unit number
@@ -128,6 +131,17 @@ ATTR_I      EQU     001H        ; Invisible file
 ATTR_S      EQU     002H        ; System file
 ATTR_W      EQU     004H        ; Write-protected file
 ATTR_A      EQU     008H        ; Alias file
+
+
+;//////////////////////////////////////////////////////////////////////////////
+;//
+;//     Signature
+;//
+;//////////////////////////////////////////////////////////////////////////////
+
+        ORG         SIGNATURE
+        DB          'ATTRIB'
+        DB          '106'
 
 
 ;//////////////////////////////////////////////////////////////////////////////
