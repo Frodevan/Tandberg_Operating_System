@@ -45,6 +45,8 @@
 ;//                 -> Only prints file extension deliminer if filename has an
 ;//                    extension
 ;//
+;//             1.5b: Entry at 0xC104
+;//
 
 
 ;//////////////////////////////////////////////////////////////////////////////
@@ -130,12 +132,11 @@ ATTR_F      EQU     080H        ; Format file
 
 ;//////////////////////////////////////////////////////////////////////////////
 ;//
-;//     Program entry
+;//     Legacy program entry
 ;//
 ;//////////////////////////////////////////////////////////////////////////////
 
         ORG         0C000H
-start:
         JMP         beginning
 
 
@@ -201,6 +202,7 @@ to_uppercase:
 
 ;//////////////////////////////////////////////////////////////////////////////
 
+start:
 beginning:
         ;
         ; Scan for first character of mandatory command line argument
