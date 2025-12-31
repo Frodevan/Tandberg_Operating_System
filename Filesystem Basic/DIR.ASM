@@ -72,6 +72,8 @@
 ;//                 -> Fixes tape-track 2-4 summary bug from v1.3
 ;//                 -> Fixes file-size bug of empty intel-files
 ;//
+;//             1.5b: Entry at 0xC293
+;//
 
 
 ;//////////////////////////////////////////////////////////////////////////////
@@ -172,11 +174,10 @@ FM_BINARY   EQU     004H        ; Binary flag
 
 ;//////////////////////////////////////////////////////////////////////////////
 ;//
-;//     Program entry
+;//     Legacy program entry
 ;//
 ;//////////////////////////////////////////////////////////////////////////////
 
-start:
         ORG         0C000H
         JMP         beginning
 
@@ -307,6 +308,7 @@ to_uppercase:
 
 ;//////////////////////////////////////////////////////////////////////////////
 
+start:
 beginning:
         ;
         ; Save stack pointer for easy breaking out of program from subroutines
