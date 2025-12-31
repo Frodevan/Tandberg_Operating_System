@@ -57,7 +57,7 @@
 ;//                 -> Only has skeleton-code for parsing the system attribute in a
 ;//                    directory instead of code to actually transfer the system
 ;//
-;//             1.5a: Entry at 0xC000
+;//             1.5a: Entry at 0xC000, 0xC25E
 ;//
 ;//                 -> Optimizes parsing of drive type
 ;//                 -> Gets system drive from command line buffer instead of
@@ -222,41 +222,19 @@ scratchpad_ram:
 
 ;//////////////////////////////////////////////////////////////////////////////
 ;//
-;//     Program entry
+;//     Legacy program entry
 ;//
 ;//////////////////////////////////////////////////////////////////////////////
 
         ORG         0C000H
-start:
         JMP         beginning
 
 
 ;//////////////////////////////////////////////////////////////////////////////
 ;//
-;//     Strings and data
+;//     Data
 ;//
 ;//////////////////////////////////////////////////////////////////////////////
-
-rewrite_filesys_prompt_str:
-        DB          'REINITIALIZATION DESIRED (Y/N) ',CR
-non_sys_disk_str:
-        DB          'NON - SYSTEM DISKETTE',CR
-format_sys_disk_ok_str:
-        DB          'SYSTEM DISKETTE CREATED',CR
-invalid_drive_str:
-        DB          'IMPROPER UNIT SPECIFICATION',CR
-invalid_cli_args_str:
-        DB          'IMPROPER PARAMETER LIST',CR
-same_sys_disk_str:
-        DB          'SYSTEM DISKETTE FORMATTING UNIT 0 NOT ALLOWED',CR
-format_non_sys_tape_ok_str:
-        DB          'NON - SYSTEM CARTRIDGE',CR
-format_sys_tape_ok_str:
-        DB          'SYSTEM CARTRIDGE CREATED',CR
-copying_system_str:
-        DB          'COPYING SYSTEM FILES',CR
-same_sys_tape_str:
-        DB          'SYSTEM CARTRIDGE FORMATTING UNIT 0 NOT ALLOWED',CR
 
 input_char:
         DB          NULL
@@ -508,7 +486,7 @@ quit_program:
 
 ;//////////////////////////////////////
 
-beginning:
+start:
         ;
         ; Set default disk drive to drive :F0:
         ;
@@ -1466,6 +1444,34 @@ clear_next_byte:
         DCR         B
         JNZ         clear_next_byte
         RET
+
+
+;//////////////////////////////////////////////////////////////////////////////
+;//
+;//     Strings and data
+;//
+;//////////////////////////////////////////////////////////////////////////////
+
+rewrite_filesys_prompt_str:
+        DB          'REINITIALIZATION DESIRED (Y/N) ',CR
+non_sys_disk_str:
+        DB          'NON - SYSTEM DISKETTE',CR
+format_sys_disk_ok_str:
+        DB          'SYSTEM DISKETTE CREATED',CR
+invalid_drive_str:
+        DB          'IMPROPER UNIT SPECIFICATION',CR
+invalid_cli_args_str:
+        DB          'IMPROPER PARAMETER LIST',CR
+same_sys_disk_str:
+        DB          'SYSTEM DISKETTE FORMATTING UNIT 0 NOT ALLOWED',CR
+format_non_sys_tape_ok_str:
+        DB          'NON - SYSTEM CARTRIDGE',CR
+format_sys_tape_ok_str:
+        DB          'SYSTEM CARTRIDGE CREATED',CR
+copying_system_str:
+        DB          'COPYING SYSTEM FILES',CR
+same_sys_tape_str:
+        DB          'SYSTEM CARTRIDGE FORMATTING UNIT 0 NOT ALLOWED',CR
 
 
 ;//////////////////////////////////////////////////////////////////////////////
