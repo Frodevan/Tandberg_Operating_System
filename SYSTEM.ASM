@@ -385,7 +385,7 @@ TAB_CLOSE   EQU     00CH        ; Device driver close routines
 ;//
 ;//////////////////////////////////////////////////////////////////////////////
 
-        ORG         0D800H
+        ORG         0D500H
 
 program_origo:
 buffer_list_next_ptr:
@@ -9910,6 +9910,287 @@ ebcdic_to_ascii_table:
 
 ;//////////////////////////////////////////////////////////////////////////////
 ;//
+;//     COMI module
+;//
+;//         The command line argument interpreter. This will identify and parse the
+;//         different parts and arguments of the command line input string. In
+;//         general the string consists of three parts, a command filename, the
+;//         abstract file assignements, and the arguments which will remain in CI
+;//         for the program to be run to parse.
+;//
+;//         If the TOS debug flag is set, the program will be loaded, and the XMON
+;//         debugger in ROM will be started with the program-entry preset.
+;//
+;//
+;//         Changelog:
+;//
+;//             v1.3:
+;//
+;//                 -> First version I have
+;//                 -> Has a bug where a full directory prevents extended handling
+;//                    of program-loading issues.
+;//
+;//             v1.4:
+;//
+;//                 -> Beeps when linebreak-continuation character is used
+;//                 -> Verifies the value of the debug flag, it is ignored if not
+;//                    set to exactly the right value
+;//                 -> Fixes the file-loading handling bug from v1.3
+;//
+;//             v1.5a:
+;//
+;//                 -> Program loader will only accept one line-continuation with
+;//                    the / character at the end of the commnand filename
+;//
+;//             v1.6:
+;//
+;//                 -> Empty input to the command line now brings up a new prompt
+;//                    instead of just being ignored
+;//                 -> Cursor-home and clear-screen control characters can now be
+;//                    used when entering a command at the command line prompt
+;//                    without voiding the input
+;//
+
+
+;//////////////////////////////////////////////////////////////////////////////
+;//
+;//     Command line interpreter routine
+;//
+;//////////////////////////////////////////////////////////////////////////////
+
+loading_drive_number:
+        DB          000H
+cli_next_char:
+        DB          000H
+
+
+;//////////////////////////////////////
+
+        ;
+        ; Parse the different parts of the command line
+        ;
+command_line_interpreter:
+        ;
+        ; Skip any leading whitespace of command line input
+        ;
+skip_cli_whitespace:
+        ;
+        ; Set default load drive to :F0:
+        ;
+        SUB         A
+        STA         loading_drive_number
+        ;
+        ; Get first character of command line content
+        ;
+        LHLD        CI_FCB
+        CALL        INCHAR
+        RC
+        CPI         ' '
+        JZ          skip_cli_whitespace
+        CPI         CR
+        RZ
+        CPI         CURH
+        JZ          skip_cli_whitespace
+        CPI         ERPAG
+        JZ          skip_cli_whitespace
+        ;
+        ; Check if a drive designator is provided, otherwise assume default
+        ;
+        CPI         ':'
+        JNZ         cli_get_program_filename
+        ;
+        ; Parse drive designator
+        ;
+        CALL        INCHAR
+        RC
+        CALL        to_uppercase
+        CPI         'M'
+        JNZ         cli_not_tape_drive
+        CALL        parse_device_nr
+        RC
+        ADI         4
+        STA         loading_drive_number
+        JMP         cli_drive_number_ready
+
+cli_not_tape_drive:
+        CPI         'F'
+        JNZ         invalid_drive_type
+        CALL        parse_device_nr
+        RC
+        STA         loading_drive_number
+cli_drive_number_ready:
+        ;
+        ; Get first character of program name, after drive designator
+        ;
+        CALL        INCHAR
+        RC
+cli_get_program_filename:
+        ;
+        ; Save program filename
+        ;
+        LXI         D,PRGNAM
+        CALL        FILENAME
+        RC
+        STA         cli_next_char
+        ;
+        ; Load program file to run
+        ;
+        LXI         H,PRGNAM
+        LDA         loading_drive_number
+        CALL        LOAD
+        JC          cli_load_error
+cli_check_start_of_args:
+        LDA         cli_next_char
+        ;
+        ; Check if the character after command name is a linebreak continuation
+        ;
+        CPI         '/'
+        JZ          cli_args_on_next_line
+cli_check_next_arg_char:
+        ;
+        ; Check first character of next part of command line arguments
+        ;
+        CPI         CR
+        JZ          run_program
+        CPI         '$'
+        JZ          run_program
+        CPI         ' '
+        JZ          cli_interpret_assignment
+        ;
+        ; If invalid character, raise an error
+        ;
+        CALL        flush_ci_input
+        MVI         A,ERROR_1F
+        STC
+        RET
+
+
+;//////////////////////////////////////
+
+        ;
+        ; Assign standard abstract files
+        ;
+cli_interpret_assignment:
+        CALL        assignement_interpreter
+        RC
+        JMP         cli_check_next_arg_char
+
+
+;//////////////////////////////////////
+
+        ;
+        ; Run a loaded program
+        ;
+run_program:
+        LHLD        PSTART
+        ;
+        ; Check if TOS debug mode is active
+        ;
+        LDA         DEBUG
+        ANA         A
+        JNZ         run_with_debug
+        ;
+        ; If not, run program as-is
+        ;
+        PCHL
+
+run_with_debug:
+        ;
+        ; Else, verify TOS debug flag
+        ;
+        CPI         TRUE
+        JNZ         invalid_debug_flag
+        ;
+        ; Clear flag and start right into XMON ROM debugger if set correctly
+        ;
+        SUB         A
+        STA         DEBUG
+        PUSH        H
+        JMP         RESET
+
+invalid_debug_flag:
+        ;
+        ; If the TOS debug flag has been set incorrectly, ignore and reset it
+        ;
+        SUB         A
+        STA         DEBUG
+        JMP         command_line_interpreter
+
+
+;//////////////////////////////////////
+
+        ;
+        ; Error loading program handler
+        ;
+cli_load_error:
+        ;
+        ; Check for program not found
+        ;
+        CPI         ERROR_09
+        JZ          retry_uppercase_load
+        CPI         ERROR_0B
+        JZ          retry_uppercase_load
+        STC
+        RET
+
+retry_uppercase_load:
+        ;
+        ; Convert filename to uppercase
+        ;
+        LXI         H,PRGNAM
+        MVI         B,9
+        CALL        str_to_uppercase
+        RC
+        ;
+        ; Try to load program again
+        ;
+        LDA         loading_drive_number
+        CALL        LOAD
+        JNC         cli_check_start_of_args
+        ;
+        ; If still not found, flush CI input and return with exception
+        ;
+        PUSH        PSW
+        LDA         cli_next_char
+        CALL        flush_ci_input
+        POP         PSW
+        RET
+
+
+;//////////////////////////////////////
+
+        ;
+        ; Abstract file assignements starts on next line
+        ;
+cli_args_on_next_line:
+        ;
+        ; Beep and flush the remaining characters of current line
+        ;
+cli_flush_remaining_line:
+        MVI         A,BEL
+        CALL        TTO
+        LHLD        CI_FCB
+        CALL        INCHAR
+        RC
+        CPI         CR
+        JNZ         cli_flush_remaining_line
+        ;
+        ; Parse assignements of abstract files
+        ;
+        JMP         cli_interpret_assignment
+
+
+;//////////////////////////////////////
+
+invalid_drive_type:
+        CALL        flush_ci_input
+        MVI         A,ERROR_1D
+        STC
+        RET
+
+
+;//////////////////////////////////////////////////////////////////////////////
+;//
 ;//     JTAB module, part 2
 ;//
 ;//         API jump-tables for interfacing with Tandberg OS, as well as some
@@ -10169,285 +10450,3 @@ AO_FCB:
         DW          00000H
 AL_FCB:
         DW          00000H
-
-
-;//////////////////////////////////////////////////////////////////////////////
-;//
-;//     COMI module
-;//
-;//         The command line argument interpreter. This will identify and parse the
-;//         different parts and arguments of the command line input string. In
-;//         general the string consists of three parts, a command filename, the
-;//         abstract file assignements, and the arguments which will remain in CI
-;//         for the program to be run to parse.
-;//
-;//         If the TOS debug flag is set, the program will be loaded, and the XMON
-;//         debugger in ROM will be started with the program-entry preset.
-;//
-;//
-;//         Changelog:
-;//
-;//             v1.3:
-;//
-;//                 -> First version I have
-;//                 -> Has a bug where a full directory prevents extended handling
-;//                    of program-loading issues.
-;//
-;//             v1.4:
-;//
-;//                 -> Beeps when linebreak-continuation character is used
-;//                 -> Verifies the value of the debug flag, it is ignored if not
-;//                    set to exactly the right value
-;//                 -> Fixes the file-loading handling bug from v1.3
-;//
-;//             v1.5a:
-;//
-;//                 -> Program loader will only accept one line-continuation with
-;//                    the / character at the end of the commnand filename
-;//
-;//             v1.6:
-;//
-;//                 -> Empty input to the command line now brings up a new prompt
-;//                    instead of just being ignored
-;//                 -> Cursor-home and clear-screen control characters can now be
-;//                    used when entering a command at the command line prompt
-;//                    without voiding the input
-;//
-
-
-;//////////////////////////////////////////////////////////////////////////////
-;//
-;//     Command line interpreter routine
-;//
-;//////////////////////////////////////////////////////////////////////////////
-
-        ORG         0FE00H
-loading_drive_number:
-        DB          000H
-cli_next_char:
-        DB          000H
-
-
-;//////////////////////////////////////
-
-        ;
-        ; Parse the different parts of the command line
-        ;
-command_line_interpreter:
-        ;
-        ; Skip any leading whitespace of command line input
-        ;
-skip_cli_whitespace:
-        ;
-        ; Set default load drive to :F0:
-        ;
-        SUB         A
-        STA         loading_drive_number
-        ;
-        ; Get first character of command line content
-        ;
-        LHLD        CI_FCB
-        CALL        INCHAR
-        RC
-        CPI         ' '
-        JZ          skip_cli_whitespace
-        CPI         CR
-        RZ
-        CPI         CURH
-        JZ          skip_cli_whitespace
-        CPI         ERPAG
-        JZ          skip_cli_whitespace
-        ;
-        ; Check if a drive designator is provided, otherwise assume default
-        ;
-        CPI         ':'
-        JNZ         cli_get_program_filename
-        ;
-        ; Parse drive designator
-        ;
-        CALL        INCHAR
-        RC
-        CALL        to_uppercase
-        CPI         'M'
-        JNZ         cli_not_tape_drive
-        CALL        parse_device_nr
-        RC
-        ADI         4
-        STA         loading_drive_number
-        JMP         cli_drive_number_ready
-
-cli_not_tape_drive:
-        CPI         'F'
-        JNZ         invalid_drive_type
-        CALL        parse_device_nr
-        RC
-        STA         loading_drive_number
-cli_drive_number_ready:
-        ;
-        ; Get first character of program name, after drive designator
-        ;
-        CALL        INCHAR
-        RC
-cli_get_program_filename:
-        ;
-        ; Save program filename
-        ;
-        LXI         D,PRGNAM
-        CALL        FILENAME
-        RC
-        STA         cli_next_char
-        ;
-        ; Load program file to run
-        ;
-        LXI         H,PRGNAM
-        LDA         loading_drive_number
-        CALL        LOAD
-        JC          cli_load_error
-cli_check_start_of_args:
-        LDA         cli_next_char
-        ;
-        ; Check if the character after command name is a linebreak continuation
-        ;
-        CPI         '/'
-        JZ          cli_args_on_next_line
-cli_check_next_arg_char:
-        ;
-        ; Check first character of next part of command line arguments
-        ;
-        CPI         CR
-        JZ          run_program
-        CPI         '$'
-        JZ          run_program
-        CPI         ' '
-        JZ          cli_interpret_assignment
-        ;
-        ; If invalid character, raise an error
-        ;
-        CALL        flush_ci_input
-        MVI         A,ERROR_1F
-        STC
-        RET
-
-
-;//////////////////////////////////////
-
-        ;
-        ; Assign standard abstract files
-        ;
-cli_interpret_assignment:
-        CALL        assignement_interpreter
-        RC
-        JMP         cli_check_next_arg_char
-
-
-;//////////////////////////////////////
-
-        ;
-        ; Run a loaded program
-        ;
-run_program:
-        LHLD        PSTART
-        ;
-        ; Check if TOS debug mode is active
-        ;
-        LDA         DEBUG
-        ANA         A
-        JNZ         run_with_debug
-        ;
-        ; If not, run program as-is
-        ;
-        PCHL
-
-run_with_debug:
-        ;
-        ; Else, verify TOS debug flag
-        ;
-        CPI         TRUE
-        JNZ         invalid_debug_flag
-        ;
-        ; Clear flag and start right into XMON ROM debugger if set correctly
-        ;
-        SUB         A
-        STA         DEBUG
-        PUSH        H
-        JMP         RESET
-
-invalid_debug_flag:
-        ;
-        ; If the TOS debug flag has been set incorrectly, ignore and reset it
-        ;
-        SUB         A
-        STA         DEBUG
-        JMP         command_line_interpreter
-
-
-;//////////////////////////////////////
-
-        ;
-        ; Error loading program handler
-        ;
-cli_load_error:
-        ;
-        ; Check for program not found
-        ;
-        CPI         ERROR_09
-        JZ          retry_uppercase_load
-        CPI         ERROR_0B
-        JZ          retry_uppercase_load
-        STC
-        RET
-
-retry_uppercase_load:
-        ;
-        ; Convert filename to uppercase
-        ;
-        LXI         H,PRGNAM
-        MVI         B,9
-        CALL        str_to_uppercase
-        RC
-        ;
-        ; Try to load program again
-        ;
-        LDA         loading_drive_number
-        CALL        LOAD
-        JNC         cli_check_start_of_args
-        ;
-        ; If still not found, flush CI input and return with exception
-        ;
-        PUSH        PSW
-        LDA         cli_next_char
-        CALL        flush_ci_input
-        POP         PSW
-        RET
-
-
-;//////////////////////////////////////
-
-        ;
-        ; Abstract file assignements starts on next line
-        ;
-cli_args_on_next_line:
-        ;
-        ; Beep and flush the remaining characters of current line
-        ;
-cli_flush_remaining_line:
-        MVI         A,BEL
-        CALL        TTO
-        LHLD        CI_FCB
-        CALL        INCHAR
-        RC
-        CPI         CR
-        JNZ         cli_flush_remaining_line
-        ;
-        ; Parse assignements of abstract files
-        ;
-        JMP         cli_interpret_assignment
-
-
-;//////////////////////////////////////
-
-invalid_drive_type:
-        CALL        flush_ci_input
-        MVI         A,ERROR_1D
-        STC
-        RET

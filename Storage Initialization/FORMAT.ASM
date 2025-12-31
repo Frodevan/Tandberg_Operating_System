@@ -120,6 +120,8 @@
 ;//                    printed if opening directory file fails before system copy
 ;//                    from a floppy disk
 ;//
+;//             1.7b: Entry at 0xBC79
+;//
 
 
 ;//////////////////////////////////////////////////////////////////////////////
@@ -294,7 +296,7 @@ scratchpad_ram:
 ;//
 ;//////////////////////////////////////////////////////////////////////////////
 
-        ORG         0C000H
+        ORG         0BA00H
 program_origin:
         JMP         beginning
 
