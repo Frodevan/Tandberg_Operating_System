@@ -83,6 +83,8 @@
 ;//                 -> Uses TOS start of user-RAM constant for default buffer start
 ;//                 -> Fixes the $E bug from v2.2a
 ;//
+;//             v2.5: Entry at 0xB500
+;//
 
 ;//////////////////////////////////////////////////////////////////////////////
 ;//
@@ -457,7 +459,7 @@ name_nr_in_line_count:
 ;//
 ;//////////////////////////////////////////////////////////////////////////////
 
-        ORG         0B800H
+        ORG         0B500H
 start:
 beginning:
         ;
