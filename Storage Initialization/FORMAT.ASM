@@ -42,10 +42,6 @@
 ;//               in TOS v1.7, and as such this version will require TOS v1.7 in
 ;//               order to run with the S argument.
 ;//
-;//         NOTE: Cannot be used with later TOS v1.8 due to the program overwriting
-;//               parts of TOS. As such, TOS v1.8 and v1.81 needs the approproate
-;//               later version of FORMAT that accounts for this.
-;//
 ;//         NOTE: Due to a bug, at least 48KB user-RAM is required to prevent a
 ;//               full system crash when copying large files.
 ;//
@@ -119,6 +115,8 @@
 ;//                 -> Introduces a bug where operation aborted status won't be
 ;//                    printed if opening directory file fails before system copy
 ;//                    from a floppy disk
+;//
+;//             1.7b: Entry at 0xBC79
 ;//
 
 
@@ -294,7 +292,7 @@ scratchpad_ram:
 ;//
 ;//////////////////////////////////////////////////////////////////////////////
 
-        ORG         0C000H
+        ORG         0BA00H
 program_origin:
         JMP         beginning
 
