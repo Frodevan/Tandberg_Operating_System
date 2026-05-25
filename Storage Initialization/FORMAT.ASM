@@ -5,10 +5,12 @@
 ;//         Extra parameters:
 ;//
 ;//             $[:<Tn>:]<labelname>[,S]
+;//             $[:<Tn>:]<labelname>[,L]
 ;//
 ;//                 Tn          Drive type and number to format, default :F0:
 ;//                 labelname   Label of new disk
 ;//                 S           Make bootable TOS system disk/tape switch
+;//                 L           Only change label and nothing else
 ;//
 ;//                 Drive type T:
 ;//                     F       Floppy
@@ -31,9 +33,21 @@
 ;//         was run from will be copied over to the newly formatted disk, keeping
 ;//         all of their file attributes intact.
 ;//
+;//         Should the L argument be given, only the label will be changed of the
+;//         medium in the specified drive. This assumes that there is already a
+;//         valid TOS file system on the disk or tape.
+;//
+;//         NOTE: This version uses buffered copying, where start of RAM is taken
+;//               from the TOS start-of-ram constant. This feature was introduced
+;//               in TOS v1.7, and as such this version will require TOS v1.7 in
+;//               order to run with the S argument.
+;//
 ;//         NOTE: Cannot be used with later TOS v1.8 due to the program overwriting
 ;//               parts of TOS. As such, TOS v1.8 and v1.81 needs the approproate
 ;//               later version of FORMAT that accounts for this.
+;//
+;//         NOTE: Due to a bug, at least 48KB user-RAM is required to prevent a
+;//               full system crash when copying large files.
 ;//
 ;//         NOTE: It is not possible to use the drive which is being formatted as
 ;//               the source drive for the system-files when bootable system-media
@@ -57,7 +71,7 @@
 ;//                 -> Only has skeleton-code for parsing the system attribute in a
 ;//                    directory instead of code to actually transfer the system
 ;//
-;//             1.5a: Entry at 0xC000, 0xC25E
+;//             1.5a: Entry at 0xC000
 ;//
 ;//                 -> Optimizes parsing of drive type
 ;//                 -> Gets system drive from command line buffer instead of
@@ -69,6 +83,42 @@
 ;//                 -> Fixes the map/message-file preparation bug from v1.2
 ;//                 -> Has a bug where the drive-requirements for the S argument
 ;//                    is only being checked if a floppy disk is being formatted
+;//
+;//             1.5b: Entry at 0xC261
+;//
+;//                 -> Based on v1.5a
+;//                 -> Adds a message-entry in ISIS.ERR related to B and J files.
+;//                    However, this remains in the unused portion of the template,
+;//                    and is as such never actually written to disk.
+;//
+;//             1.6: Entry at 0xC261
+;//
+;//                 -> Version ID written to 0x2700
+;//                 -> Leaves out two unused sectors of extra error-messages in
+;//                    the internal datastructure of ISIS.ERR, as these sectors
+;//                    were never written to disk anyways
+;//                 -> All error-messages in ISIS.ERR are now left-adjusted, to
+;//                    ensure all defined messages now look alike
+;//
+;//             1.7a: Entry at 0xC279
+;//
+;//                 -> Adds the L command line argument
+;//                 -> Skips system-files with the X (Direct-Access) attribute set,
+;//                    when copying system from floppy disk
+;//                 -> Introduces a bug that the X attribute is not chcked when
+;//                    copying the system from tape
+;//                 -> Copied system-file names are printed to CO
+;//                 -> System-files are copied buffered instead of byte-by-byte,
+;//                    using the TOS define for start of RAM
+;//                 -> Defines the three previously unused error-messages in the
+;//                    ISIS.ERR file
+;//                 -> Introduces a bug where the S argument drive-requirement is
+;//                    checked on floppy, even when that argument is not applied.
+;//                 -> Introduces a bug where the buffer size is calculated to be
+;//                    the negative number of bytes free, not the positive
+;//                 -> Introduces a bug where operation aborted status won't be
+;//                    printed if opening directory file fails before system copy
+;//                    from a floppy disk
 ;//
 
 
@@ -82,6 +132,7 @@
 ; Flag values
 ;
 FALSE       EQU     0           ; Boolean False
+TRUE        EQU     -1          ; Boolean True
 
 ;
 ; ASCII control characters
@@ -123,6 +174,7 @@ CLOCDIR     EQU     000C1H      ; Look up filetable entry of filename on tape
 ; XMON and TOS system data
 ;
 BUF2        EQU     02600H      ; Sector data of last filesystem operation
+SIGNATURE   EQU     02700H      ; Program signature
 TRK         EQU     02731H      ; Pointer to block address of next directory data block
 CPROG       EQU     02741H      ; Tape prog status
 CUNIT       EQU     02742H      ; Tape unit number
@@ -136,13 +188,12 @@ CBLKLG      EQU     02750H      ; Tape block length
 ; TOS system calls
 ;
 INCHAR      EQU     0FD09H      ; Input single character
+OUTCHAR     EQU     0FD0CH      ; Output single character
 GET         EQU     0FD0FH      ; Input string, inclusive CR
 PUT         EQU     0FD12H      ; Output string of characters, inclusive CR
 PUTSTR      EQU     0FD15H      ; Output string of characters, exclusive CR
 GETBIN      EQU     0FD18H      ; Input a given number of raw bytes
 OPEN        EQU     0FD1EH      ; Open block device
-READ        EQU     0FD21H      ; Read next block from block device
-WRITE       EQU     0FD24H      ; Write next block to block device
 CLOSE       EQU     0FD27H      ; Close block device
 FILENAME    EQU     0FDCDH      ; Input TOS filename
 
@@ -151,6 +202,7 @@ FILENAME    EQU     0FDCDH      ; Input TOS filename
 ;
 TABTC_PTR   EQU     0FDE6H      ; Pointer to Tandberg tape cartridge device driver
 TABIN_PTR   EQU     0FDEAH      ; Pointer to Intel floppy disk device driver
+RAMST       EQU     0FDFCH      ; Address to start of user-RAM
 
 ;
 ; TOS standard files
@@ -169,11 +221,13 @@ ERROR_48    EQU     048H        ; TAPE MARK DETECTED
 ATTR_NONE   EQU     000H        ; Normal file
 ATTR_I      EQU     001H        ; Invisible file
 ATTR_S      EQU     002H        ; System file
+ATTR_X      EQU     040H        ; Direct-access file
 ATTR_F      EQU     080H        ; Format file
 
 ;
 ; TOS File Control Block, block device variables
 ;
+FCB_MODE    EQU     001H        ; File mode
 FCB_BUFIDX  EQU     002H        ; Block/buffered-device data buffer index
 FCB_BUFLEN  EQU     004H        ; Length of block/buffered-device data buffer
 FCB_BUFPTR  EQU     006H        ; Pointer to block/buffered-device data buffer
@@ -184,6 +238,7 @@ FCB_CLOSE   EQU     00EH        ; Device-driver Close API call
 FCB_DEVTYP  EQU     010H        ; Block-device type
 FCB_DRVNR   EQU     011H        ; Drive number
 FCB_FNAME   EQU     012H        ; Filename string
+FCB_FEXT    EQU     FCB_FNAME+6 ; File extension string
 FCB_DRVFMT  EQU     01BH        ; Media format
 FCB_OVRPTR  EQU     01CH        ; Pointer to tape block-device buffer overrun bytes
 FCB_LNKPTR  EQU     020H        ; Pointer to floppy block-device linking block buffer
@@ -204,7 +259,9 @@ FM_BINARY   EQU     004H        ; Binary flag
 ;//////////////////////////////////////////////////////////////////////////////
 
         ORG         02000H
-file_data_buffer:
+dest_file_data_buffer:
+        DS          128
+src_file_data_buffer:
         DS          128
 tape_buffer_overrun:
         DS          2
@@ -222,11 +279,35 @@ scratchpad_ram:
 
 ;//////////////////////////////////////////////////////////////////////////////
 ;//
-;//     Data
+;//     Signature
+;//
+;//////////////////////////////////////////////////////////////////////////////
+
+        ORG         SIGNATURE
+        DB          'FORMAT'
+        DB          '107'
+
+
+;//////////////////////////////////////////////////////////////////////////////
+;//
+;//     Legacy program entry
 ;//
 ;//////////////////////////////////////////////////////////////////////////////
 
         ORG         0C000H
+program_origin:
+        JMP         beginning
+
+
+;//////////////////////////////////////////////////////////////////////////////
+;//
+;//     Data
+;//
+;//////////////////////////////////////////////////////////////////////////////
+
+label_filename:
+        DB          'ISIS',NULL,NULL
+        DB          'LAB'
 input_char:
         DB          NULL
 sys_drive_type:
@@ -237,6 +318,16 @@ tape_sys_file_count:
         DB          1
 tape_skip_file_countdown:
         DB          0
+sys_file_buffer_ptr:
+        DW          00000H
+sys_file_buffer_size:
+        DW          0
+sys_file_buffer_free:
+        DW          0
+sys_file_buffer_char_count:
+        DW          0
+copy_complete_flag:
+        DB          FALSE
 sys_file_attributes:
         DB          ATTR_NONE
 sys_transfer_dir_block:
@@ -249,7 +340,7 @@ sys_drive_number:
         DB          0
 drive_number:
         DB          0
-transfer_system_flag:
+user_option_flag:
         DB          FALSE
         DB          000H
 
@@ -391,7 +482,7 @@ SRC_FILE_FCB:
         DB          FM_NONE
         DW          0
         DW          128
-        DW          file_data_buffer
+        DW          src_file_data_buffer
         DW          00000H
         DW          00000H
         DW          00000H
@@ -412,7 +503,7 @@ DEST_FILE_FCB:
         DB          FM_NONE
         DW          0
         DW          128
-        DW          file_data_buffer
+        DW          dest_file_data_buffer
         DW          00000H
         DW          00000H
         DW          00000H
@@ -449,6 +540,13 @@ invalid_cli_args:
 
 ;//////////////////////////////////////
 
+label_not_found:
+        LXI         D,label_not_found_str
+        JMP         print_and_quit
+
+
+;//////////////////////////////////////
+
 same_drive_not_supported:
         LXI         D,same_sys_disk_str
         CPI         'F'
@@ -478,12 +576,13 @@ quit_program:
 ;//////////////////////////////////////
 
 start:
+beginning:
         ;
         ; Set default disk drive to drive :F0:
         ;
         SUB         A
         STA         drive_number
-        STA         transfer_system_flag
+        STA         user_option_flag
         ;
         ; Parse drive designator from command line args, if any
         ;
@@ -561,7 +660,7 @@ use_intel_drive:
         RC
         STA         input_char
         CPI         CR
-        JZ          format_intel_disk
+        JZ          set_user_option_flag_for_disk
         ;
         ; Check if system-transfer switch is set in args
         ;
@@ -572,14 +671,7 @@ use_intel_drive:
         RC
         CALL        to_uppercase
         STA         input_char
-        CPI         'S'
-        JNZ         invalid_cli_args
-        STA         transfer_system_flag
-        ;
-        ; Make sure to not format system drive if system-transfer switch is set
-        ;
-        CALL        verify_valid_system_drive
-        JZ          same_drive_not_supported
+        STA         user_option_flag
         ;
         ; Make sure there is no more command line args after this
         ;
@@ -588,6 +680,70 @@ use_intel_drive:
         STA         input_char
         CPI         CR
         JNZ         invalid_cli_args
+        ;
+        ; Check user option
+        ;
+        LDA         user_option_flag
+        CPI         'L'
+        JZ          update_intel_label
+        CPI         'S'
+        JNZ         invalid_cli_args
+set_user_option_flag_for_disk:
+        STA         user_option_flag
+        ;
+        ; Make sure to not format system drive if system-transfer switch is set
+        ;
+        CALL        verify_valid_system_drive
+        JZ          same_drive_not_supported
+        JMP         format_intel_disk
+
+
+;//////////////////////////////////////
+
+update_intel_label:
+        ;
+        ; Check that label file exists on drive
+        ;
+        LXI         H,label_filename
+        LDA         drive_number
+        CALL        LOCDIR
+        JC          label_not_found
+        ;
+        ; Read labelfile datablock from disk
+        ;
+        LXI         B,0*DISK_TRACK + 26*DISK_SECTOR
+        LDA         drive_number
+        LXI         H,data_buffer
+        CALL        DSRDW
+        RC
+        ;
+        ; Overwrite old label with new label
+        ;
+        LXI         H,data_buffer
+        LXI         D,intel_label_str
+        MVI         B,9
+copy_next_label_char:
+        LDAX        D
+        MOV         M,A
+        INX         H
+        INX         D
+        DCR         B
+        JNZ         copy_next_label_char
+        ;
+        ; Write changes back to disk
+        ;
+        LXI         H,data_buffer
+        LXI         B,0*DISK_TRACK + 26*DISK_SECTOR
+        LDA         drive_number
+        CALL        DSWRW
+        RC
+        ;
+        ; Print status and quit program
+        ;
+        LXI         D,label_changed_str
+        LHLD        CO_FCB
+        CALL        PUT
+        RET
 
 
 ;//////////////////////////////////////
@@ -761,9 +917,9 @@ link_next_intel_err_block:
         ;
         ; Transfer system if system flag set
         ;
-        LDA         transfer_system_flag
-        ANA         A
-        JNZ         transfer_system
+        LDA         user_option_flag
+        CPI         'S'
+        JZ          transfer_system
         ;
         ; Format of non-system disk complete, print status and quit
         ;
@@ -780,6 +936,24 @@ link_next_intel_err_block:
 ;//////////////////////////////////////////////////////////////////////////////
 
 transfer_system:
+        ;
+        ; Set up buffer
+        ;
+        LHLD        RAMST
+        SHLD        sys_file_buffer_ptr
+        ;
+        ; Subtract with program start and buffer start to get buffer length
+        ;
+        LXI         D,program_origin
+        MOV         A,E
+        CMA
+        MOV         E,A
+        MOV         A,D
+        CMA
+        MOV         D,A
+        INX         D
+        DAD         D
+        SHLD        sys_file_buffer_size
         ;
         ; Print copying system status message
         ;
@@ -816,6 +990,7 @@ transfer_system:
         MVI         A,FM_INPUT
         CALL        OPEN
         RC
+        JC          operation_aborted
         INX         H
         MOV         A,M             ; DIR_FCB + FCB_MODE
         ORI         FM_BINARY
@@ -838,7 +1013,7 @@ check_next_intel_file:
         MVI         B,15
         LXI         D,scratchpad_ram
         CALL        GETBIN
-        RC
+        JC          operation_aborted
         JMP         check_next_intel_file
 
 
@@ -850,7 +1025,7 @@ check_next_tape_file:
         ;
         LDA         sys_drive_number
         CALL        CCAL
-        RC
+        JC          operation_aborted
         LDA         tape_sys_file_count
         STA         tape_skip_file_countdown
         ;
@@ -860,7 +1035,7 @@ check_next_tape_file:
         MVI         B,0
         LXI         H,data_buffer
         CALL        CBRDW
-        RC
+        JC          operation_aborted
         ;
         ; Expect volume label at start of trak, throw an error if not
         ;
@@ -868,7 +1043,7 @@ check_next_tape_file:
         CPI         088H
         MVI         A,03AH
         STC
-        RNZ
+        JNZ         operation_aborted
         ;
         ; Read tape files until next active file found
         ;
@@ -880,7 +1055,7 @@ scan_for_next_tape_file:
         MVI         B,0
         LXI         H,data_buffer
         CALL        CBRDW
-        RC
+        JC          operation_aborted
         ;
         ; Check status of file. Expect active, deleted or cartridge usage block
         ;
@@ -893,7 +1068,7 @@ scan_for_next_tape_file:
         JZ          transfered_from_tape_complete
         MVI         A,03BH
         STC
-        RET
+        JMP         operation_aborted
 
 tape_file_found:
         ;
@@ -937,12 +1112,12 @@ intel_file_found:
         MVI         B,9
         LXI         D,SRC_FILE_FCB + FCB_FNAME
         CALL        GETBIN
-        RC
+        JC          operation_aborted
         ;
         ; Get file attribute of source file
         ;
         CALL        INCHAR
-        RC
+        JC          operation_aborted
         STA         sys_file_attributes
         ;
         ; Flush remaining bytes of file entry
@@ -950,13 +1125,16 @@ intel_file_found:
         MVI         B,5
         LXI         D,scratchpad_ram
         CALL        GETBIN
-        RC
+        JC          operation_aborted
         ;
-        ; Check file attributes for system file
+        ; Check file attributes for system file and not direct-access file
         ;
         LDA         sys_file_attributes
         ANI         ATTR_S
         JZ          check_next_intel_file
+        LDA         sys_file_attributes
+        ANI         ATTR_X
+        JNZ         check_next_intel_file
         ;
         ; Set up the rest of source file FCB
         ;
@@ -973,7 +1151,7 @@ intel_file_found:
 
 copy_system_file:
         ;
-        ; Set up source file-control-block device drivers and device number
+        ; Set up source file-control-block device drivers
         ;
         SHLD        SRC_FILE_FCB + FCB_OPEN
         LXI         D,006H
@@ -981,6 +1159,13 @@ copy_system_file:
         SHLD        SRC_FILE_FCB + FCB_READ
         DAD         D
         SHLD        SRC_FILE_FCB + FCB_CLOSE
+        ;
+        ; Set up source FCB buffer and device number
+        ;
+        LXI         H,0
+        SHLD        SRC_FILE_FCB + FCB_BUFIDX
+        LXI         H,128
+        SHLD        SRC_FILE_FCB + FCB_BUFLEN
         LDA         sys_drive_number
         STA         SRC_FILE_FCB + FCB_DRVNR
         ;
@@ -989,7 +1174,7 @@ copy_system_file:
         LXI         H,SRC_FILE_FCB
         MVI         A,FM_INPUT
         CALL        OPEN
-        RC
+        JC          operation_aborted
         ;
         ; Check destination drive type
         ;
@@ -1020,7 +1205,7 @@ copy_to_tape:
         LHLD        TABTC_PTR
 write_system_file:
         ;
-        ; Set up destination FCB device drivers and drive number
+        ; Set up destination FCB device drivers
         ;
         INX         H
         INX         H
@@ -1031,6 +1216,13 @@ write_system_file:
         SHLD        DEST_FILE_FCB + FCB_WRITE
         DAD         D
         SHLD        DEST_FILE_FCB + FCB_CLOSE
+        ;
+        ; Set up destination FCB buffer and device number
+        ;
+        LXI         H,0
+        SHLD        DEST_FILE_FCB + FCB_BUFIDX
+        LXI         H,128
+        SHLD        DEST_FILE_FCB + FCB_BUFLEN
         LDA         drive_number
         STA         DEST_FILE_FCB + FCB_DRVNR
         ;
@@ -1046,50 +1238,172 @@ write_system_file:
         LXI         H,DEST_FILE_FCB
         MVI         A,FM_OUTPUT
         CALL        OPEN
-        RC
-        JMP         write_next_block_to_copy
-
-read_next_block_to_copy:
+        JC          operation_aborted
         ;
-        ; Read the next from source file
+        ; Print filename
+        ;
+        LHLD        CO_FCB
+        LXI         D,DEST_FILE_FCB + FCB_FNAME
+        MVI         B,6
+        CALL        print_part_of_filename
+        RC
+        ;
+        ; Print filename extension, if any
+        ;
+        LXI         D,DEST_FILE_FCB + FCB_FEXT
+        LDAX        D
+        ANA         A
+        JZ          copy_next_portion_of_file
+        MVI         A,'.'
+        CALL        OUTCHAR
+        RC
+        MVI         B,3
+        CALL        print_part_of_filename
+        RC
+        JMP         copy_next_portion_of_file
+
+
+;//////////////////////////////////////////////////////////////////////////////
+
+        ;
+        ; Print up to B characters, or until the first NULL character
+        ;
+print_part_of_filename:
+        LDAX        D
+        ANA         A
+        RZ
+        CALL        OUTCHAR
+        RC
+        INX         D
+        DCR         B
+        JNZ         print_part_of_filename
+        RET
+
+
+;//////////////////////////////////////////////////////////////////////////////
+
+copy_next_portion_of_file:
+        ;
+        ; Reset file data buffer
+        ;
+        LHLD        sys_file_buffer_size
+        SHLD        sys_file_buffer_free
+        LXI         H,0
+        SHLD        sys_file_buffer_char_count
+        XRA         A
+        STA         copy_complete_flag
+        ;
+        ; Set source file read-mode to binary
+        ;
+        LXI         H,SRC_FILE_FCB + FCB_MODE
+        MOV         A,M
+        ORI         FM_BINARY
+        MOV         M,A
+        ;
+        ; Prepare to read data into buffer
+        ;
+        LHLD        sys_file_buffer_ptr
+        XCHG
+read_next_byte_to_copy:
+        ;
+        ; Read one byte into buffer
         ;
         LXI         H,SRC_FILE_FCB
-        CALL        READ
-        JC          file_copy_done
-write_next_block_to_copy:
+        CALL        INCHAR
+        JC          copy_file_no_more_data
+        STAX        D
         ;
-        ; Arm destination file FCB to write source file FCB buffer
+        ; Advance to next byte in buffer
         ;
-        LHLD        SRC_FILE_FCB + FCB_BUFLEN
-        SHLD        DEST_FILE_FCB + FCB_BUFIDX
-        SHLD        DEST_FILE_FCB + FCB_BUFLEN
+        INX         D
+        LHLD        sys_file_buffer_char_count
+        INX         H
+        SHLD        sys_file_buffer_char_count
+        LHLD        sys_file_buffer_free
+        DCX         H
+        SHLD        sys_file_buffer_free
         ;
-        ; Write the block to destination file
+        ; Check if buffer is empty
+        ;
+        MOV         A,L
+        ORA         H
+        JNZ         read_next_byte_to_copy
+        JMP         sys_file_buffer_full
+
+copy_file_no_more_data:
+        ;
+        ; Check for end of file, or read error
+        ;
+        ANA         A
+        STC
+        JNZ         copy_error
+        MVI         A,TRUE
+        STA         copy_complete_flag
+sys_file_buffer_full:
+        ;
+        ; Check if file is empty
+        ;
+        LHLD        sys_file_buffer_char_count
+        MOV         A,L
+        ORA         H
+        JZ          file_copy_done
+        ;
+        ; Set target file to binary mode
+        ;
+        LXI         H,DEST_FILE_FCB + FCB_MODE
+        MOV         A,M
+        ORI         FM_BINARY
+        MOV         M,A
+        ;
+        ; Prepare to write data from buffer
+        ;
+        LHLD        sys_file_buffer_ptr
+        XCHG
+write_next_byte_to_copy:
+        ;
+        ; Write one byte into file copy and advance to next byte in buffer
         ;
         LXI         H,DEST_FILE_FCB
-        CALL        WRITE
-        RC
-        JMP         read_next_block_to_copy
+        LDAX        D
+        INX         D
+        CALL        OUTCHAR
+        JC          copy_error
+        LHLD        sys_file_buffer_char_count
+        DCX         H
+        SHLD        sys_file_buffer_char_count
+        ;
+        ; Check if buffer is empty
+        ;
+        MOV         A,L
+        ORA         H
+        JNZ         write_next_byte_to_copy
+        ;
+        ; Keep going if there's more file left
+        ;
+        LDA         copy_complete_flag
+        ANA         A
+        JZ          copy_next_portion_of_file
 
 
 ;//////////////////////////////////////
 
 file_copy_done:
         ;
-        ; Quit program instantly if errors
+        ; Print newline
         ;
-        ORA         A
-        STC
-        RNZ
+        LXI         D,newline_str
+        LHLD        CO_FCB
+        CALL        PUT
+        RC
         ;
         ; Close input/output files
         ;
         LXI         H,SRC_FILE_FCB
         CALL        CLOSE
-        RC
+        JC          operation_aborted
         LXI         H,DEST_FILE_FCB
         CALL        CLOSE
-        RC
+        JC          operation_aborted
         ;
         ; Check destination drive type to update attributes
         ;
@@ -1102,7 +1416,7 @@ file_copy_done:
         LDA         drive_number
         LXI         H,DEST_FILE_FCB + FCB_FNAME
         CALL        LOCDIR
-        RC
+        JC          operation_aborted
         ;
         ; Set attributes of copy to the same as souce file
         ;
@@ -1121,7 +1435,7 @@ file_copy_done:
         LXI         H,BUF2
         LDA         drive_number
         CALL        DSWRW
-        RC
+        JC          operation_aborted
         JMP         copy_next_file
 
 update_attributes_tape:
@@ -1132,7 +1446,7 @@ update_attributes_tape:
         STA         CUNIT
         LXI         H,DEST_FILE_FCB + FCB_FNAME
         CALL        CLOCDIR
-        RC
+        JC          operation_aborted
         SHLD        CBUF
         ;
         ; Set attributes of copy to the same as souce file
@@ -1171,7 +1485,7 @@ update_attributes_tape:
         ORI         030H
         OUT         CCMD_IO
         CALL        CWT
-        RC
+        JC          operation_aborted
 
 
 ;//////////////////////////////////////
@@ -1191,7 +1505,7 @@ copy_next_file:
 transfer_from_disk_complete:
         ANA         A
         STC
-        RNZ
+        JNZ         operation_aborted
 transfered_from_tape_complete:
         LHLD        CO_FCB
         LDA         drive_type
@@ -1231,7 +1545,7 @@ check_other_drive_types:
         RC
         STA         input_char
         ;
-        ; Check if system-transfer switch is set in args
+        ; Check if user option switch is set in args
         ;
         CPI         ','
         JNZ         no_more_tape_args
@@ -1241,8 +1555,37 @@ check_other_drive_types:
         STA         input_char
         CALL        to_uppercase
         CPI         'S'
+        JZ          set_user_option_flag_for_tape
+        CPI         'L'
         JNZ         invalid_cli_args
-        STA         transfer_system_flag
+
+
+;//////////////////////////////////////
+
+        ;
+        ; L option has been selected, reset tape and overwrite old label block
+        ;
+        LDA         drive_number
+        CALL        CCAL
+        RC
+        MVI         B,0
+        LXI         D,32
+        LXI         H,tape_label_block
+        CALL        CBWRW
+        RC
+        ;
+        ; Print status message
+        ;
+        LXI         D,label_changed_str
+        LHLD        CO_FCB
+        CALL        PUT
+        RET
+
+
+;//////////////////////////////////////
+
+set_user_option_flag_for_tape:
+        STA         user_option_flag
         CALL        INCHAR
         RC
         STA         input_char
@@ -1334,9 +1677,9 @@ tape_file_track_done:
         ;
         ; Transfer system if system flag set
         ;
-        LDA         transfer_system_flag
-        ANA         A
-        JNZ         transfer_system
+        LDA         user_option_flag
+        CPI         'S'
+        JZ          transfer_system
         LXI         D,format_non_sys_tape_ok_str
 print_unload_tape_and_quit:
         ;
@@ -1352,6 +1695,39 @@ print_unload_tape_and_quit:
         CALL        CUN
         RC
         JMP         quit_program
+
+
+;//////////////////////////////////////////////////////////////////////////////
+
+        ;
+        ; Print aborted status and return
+        ;
+copy_error:
+        ;
+        ; Print newline
+        ;
+        PUSH        PSW
+        LXI         D,newline_str
+        LHLD        CO_FCB
+        CALL        PUT
+        JC          quit_program_from_subroutine
+        POP         PSW
+operation_aborted:
+        ;
+        ; Print aborted status
+        ;
+        PUSH        PSW
+        LXI         D,operation_aborted_str
+        LHLD        CO_FCB
+        CALL        PUT
+        JC          quit_program_from_subroutine
+        POP         PSW
+        RET
+
+quit_program_from_subroutine:
+        INX         SP
+        INX         SP
+        RET
 
 
 ;//////////////////////////////////////////////////////////////////////////////
@@ -1439,7 +1815,7 @@ clear_next_byte:
 
 ;//////////////////////////////////////////////////////////////////////////////
 ;//
-;//     Strings and data
+;//     Strings
 ;//
 ;//////////////////////////////////////////////////////////////////////////////
 
@@ -1463,6 +1839,14 @@ copying_system_str:
         DB          'COPYING SYSTEM FILES',CR
 same_sys_tape_str:
         DB          'SYSTEM CARTRIDGE FORMATTING UNIT 0 NOT ALLOWED',CR
+label_changed_str:
+        DB          'VOLUME LABEL CHANGED',CR
+newline_str:
+        DB          CR
+label_not_found_str:
+        DB          'LABEL NOT FOUND',CR
+operation_aborted_str:
+        DB          'OPERATION ABORTED',CR
 
 
 ;//////////////////////////////////////////////////////////////////////////////
@@ -1472,68 +1856,68 @@ same_sys_tape_str:
 ;//////////////////////////////////////////////////////////////////////////////
 
 errorfile_data:
-        DB          085H,'**********END OF FILE**********'
-        DB          085H,'********SECTOR MISSING*********'
-        DB          085H,'***********CRC ERROR***********'
-        DB          085H,'TIMING ERROR READ/WRITE XFER***'
-        DB          085H,'********NO ADDRESS MARK********'
-        DB          085H,'***DISKETTE OPERATION TIMEOUT**'
-        DB          085H,'*TIMING ERROR IN READ OPERATION'
-        DB          085H,'********BUSY-BIT TIMEOUT*******'
-        DB          085H,'********DRIVE NOT READY********'
-        DB          085H,'**NAME NOT IN DIR AND DIR FULL*'
-        DB          085H,'*****NAME NOT IN DIRECTORY*****'
-        DB          085H,'*****PROGRAM NAME NOT FOUND****'
-        DB          085H,'*****ILLEGAL DIRECTORY ENTRY***'
-        DB          085H,'**DIRECTORY BLOCK ERROR - LOAD*'
-        DB          085H,'*DATA LENGTH ERROR DURING LOAD*'
-        DB          085H,'******DISKETTE MAP MISSING*****'
-        DB          085H,'***NON-VALID DISKETTE COMMAND**'
-        DB          085H,'**IMPROPER UNIT SPECIFICATION**'
-        DB          085H,'****CONVERSION TABLE MISSING***'
-        DB          085H,'******DRIVE NUMBER NOT 0-3*****'
-        DB          085H,'-----UNUSED--------------------'
-        DB          085H,'*DE-EDIT NONHEX DIGIT (0-9,A-F)'
-        DB          085H,'***INPUT FROM NON-INPUT FILE***'
-        DB          085H,'*****READ AFTER END-OF-FILE****'
-        DB          085H,'***OUTPUT TO NON-OUTPUT FILE***'
-        DB          085H,'*******UNASSIGNED DEVICE*******'
-        DB          085H,'******UNKNOWN DEVICE TYPE******'
-        DB          085H,'*COM/FNAM NOT LETTER/DIGIT 1ST*'
-        DB          085H,'*COM/FNAM > 6 OR EXT > 3 CHARS*'
+        DB          085H,'END OF FILE                    '
+        DB          085H,'SECTOR MISSING                 '
+        DB          085H,'CRC ERROR                      '
+        DB          085H,'TIMING ERROR READ/WRITE XFER   '
+        DB          085H,'NO ADDRESS MARK                '
+        DB          085H,'DISKETTE OPERATION TIMEOUT     '
+        DB          085H,'TIMING ERROR IN READ OPERATION '
+        DB          085H,'BUSY-BIT TIMEOUT               '
+        DB          085H,'DRIVE NOT READY                '
+        DB          085H,'NAME NOT IN DIR AND DIR FULL   '
+        DB          085H,'NAME NOT IN DIRECTORY          '
+        DB          085H,'PROGRAM NAME NOT FOUND         '
+        DB          085H,'ILLEGAL DIRECTORY ENTRY        '
+        DB          085H,'DIRECTORY BLOCK ERROR - LOAD   '
+        DB          085H,'DATA LENGTH ERROR DURING LOAD  '
+        DB          085H,'DISKETTE MAP MISSING           '
+        DB          085H,'NON-VALID DISKETTE COMMAND     '
+        DB          085H,'IMPROPER UNIT SPECIFICATION    '
+        DB          085H,'CONVERSION TABLE MISSING       '
+        DB          085H,'DRIVE NUMBER NOT 0-3           '
+        DB          085H,'FILE PROTECTED                 '
+        DB          085H,'DE-EDIT NONHEX DIGIT (0-9,A-F) '
+        DB          085H,'INPUT FROM NON-INPUT FILE      '
+        DB          085H,'READ AFTER END-OF-FILE         '
+        DB          085H,'OUTPUT TO NON-OUTPUT FILE      '
+        DB          085H,'UNASSIGNED DEVICE              '
+        DB          085H,'UNKNOWN DEVICE TYPE            '
+        DB          085H,'COM/FNAM NOT LETTER/DIGIT 1ST  '
+        DB          085H,'COM/FNAM > 6 OR EXT > 3 CHARS  '
         DB          085H,'COMMAND UNIT NOT :FN: OR :MN:  '
-        DB          085H,'********TOS NOT LOADED*********'
+        DB          085H,'TOS NOT LOADED                 '
         DB          085H,'COMMAND NOT TERMINATED PROPERLY'
-        DB          085H,'******DELETED DATA RECORD******'
-        DB          085H,'***LOGICAL UNIT NAME UNKNOWN***'
-        DB          085H,'****WRITE ON NON-BLOCK FILE****'
-        DB          085H,'*WRITE/READ MISSING IN CTL-BLK*'
+        DB          085H,'DELETED DATA RECORD            '
+        DB          085H,'LOGICAL UNIT NAME UNKNOWN      '
+        DB          085H,'WRITE ON NON-BLOCK FILE        '
+        DB          085H,'WRITE/READ MISSING IN CTL-BLK  '
         DB          085H,'READ ON FILETYPE OTHER THAN 4,5'
-        DB          085H,'*********LINE OVERFLOW*********'
-        DB          085H,'-----UNUSED--------------------'
-        DB          085H,'*******FILE ALREADY OPEN*******'
-        DB          085H,'***NO OPEN-ROUTINE IN CTL-BLK**'
-        DB          085H,'******CLOSE ON CLOSED FILE*****'
-        DB          085H,'**NO CLOSE-ROUTINE IN CTL-BLK**'
-        DB          085H,'*****BUFFER CHAIN DESTROYED****'
-        DB          085H,'*****BUFFER HEADER IMPROPER****'
-        DB          085H,'****IMPROPER FILE DESIGNATOR***'
-        DB          085H,'***IMPROPER ASSIGNMENT FORMAT**'
-        DB          085H,'******NO ROOM ON DISKETTE******'
-        DB          085H,'-----UNUSED-----------30H------'
-        DB          085H,'*NON-EXISTENT FILE NAME - INPUT'
+        DB          085H,'LINE OVERFLOW                  '
+        DB          085H,'IMPROPER PARAMETER             '
+        DB          085H,'FILE ALREADY OPEN              '
+        DB          085H,'NO OPEN-ROUTINE IN CTL-BLK     '
+        DB          085H,'CLOSE ON CLOSED FILE           '
+        DB          085H,'NO CLOSE-ROUTINE IN CTL-BLK    '
+        DB          085H,'BUFFER CHAIN DESTROYED         '
+        DB          085H,'BUFFER HEADER IMPROPER         '
+        DB          085H,'IMPROPER FILE DESIGNATOR       '
+        DB          085H,'IMPROPER ASSIGNMENT FORMAT     '
+        DB          085H,'NO ROOM ON DISKETTE            '
+        DB          085H,'ILLEGAL BUFFER TYPE            '
+        DB          085H,'NON-EXISTENT FILE NAME - INPUT '
         DB          085H,'OUTPUT FILE ALREADY ON DISKETTE'
-        DB          085H,'******NO ROOM ON DISKETTE******'
-        DB          085H,'FILENAME > 8 CHARACTERS--------'
-        DB          085H,'TRACK NUMBER > 76--------------'
-        DB          085H,'SECTOR NUMBER = 0 OR > 26------'
-        DB          085H,'BUFFER ADDRESS ZERO------------'
-        DB          085H,'ROUTINE NOT AVAILABLE----------'
-        DB          085H,':MN: DIR BLOCK NOT 32 BYTES----'
-        DB          085H,'VOLUME HEADER MISSING----------'
-        DB          085H,'DIRECTORY BLOCK ERROR----------'
-        DB          085H,'OUTPUT FILE ALREADY ON CARTR.--'
-        DB          085H,'NO MORE SPACE ON CARTRIDGE-----'
+        DB          085H,'NO ROOM ON DISKETTE            '
+        DB          085H,'FILENAME > 8 CHARACTERS        '
+        DB          085H,'TRACK NUMBER > 76              '
+        DB          085H,'SECTOR NUMBER = 0 OR > 26      '
+        DB          085H,'BUFFER ADDRESS ZERO            '
+        DB          085H,'ROUTINE NOT AVAILABLE          '
+        DB          085H,':MN: DIR BLOCK NOT 32 BYTES    '
+        DB          085H,'VOLUME HEADER MISSING          '
+        DB          085H,'DIRECTORY BLOCK ERROR          '
+        DB          085H,'OUTPUT FILE ALREADY ON CARTR.  '
+        DB          085H,'NO MORE SPACE ON CARTRIDGE     '
         DB          085H,'INPUT FILE OVERRUN             '
         DB          085H,'EXTRA OR MISPLACED TAPEMARK    '
         DB          085H,'END OF TAPE ERROR              '
@@ -1561,14 +1945,6 @@ errorfile_data:
         DB          085H,'CARTRIDGE NOT SUPPORTED        '
         DB          085H,'CARTRIDGE EXTRA BLOCKS IN FILE '
         DB          085H,'CARTRIDGE CONT. HDR MISSING    '
-        DB          085H,'-----UNUSED-----------59H------'
-        DB          085H,'-----UNUSED-----------5AH------'
-        DB          085H,'-----UNUSED-----------5BH------'
-        DB          085H,'-----UNUSED-----------5CH------'
-        DB          085H,'-----UNUSED-----------5DH------'
-        DB          085H,'-----UNUSED-----------5EH------'
-        DB          085H,'-----UNUSED-----------5FH------'
-        DB          085H,'-----UNUSED-----------60H------'
-        DB          085H,'-----UNUSED-----------61H------'
-        DB          085H,'-----UNUSED-----------62H------'
-        DB          085H,'-----UNUSED-----------63H------'
+        DB          085H,'INCORRECT BLOCK TYPE IN HEADER '
+        DB          085H,'INCORRECT NAME IN HEADER BLOCK '
+        DB          085H,'INAPPROPRIATE BLK SIZE LOAD    '
