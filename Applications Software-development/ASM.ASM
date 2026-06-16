@@ -93,6 +93,8 @@
 ;//
 ;//                 -> First version I have
 ;//
+;//             v1.4: Entry at 0xC203
+;//
 
 
 ;//////////////////////////////////////////////////////////////////////////////
@@ -212,13 +214,124 @@ SYM_CF_LAST EQU     080H        ; Symbol last character flag
 
 ;//////////////////////////////////////////////////////////////////////////////
 ;//
+;//     Data
+;//
+;//////////////////////////////////////////////////////////////////////////////
+
+        ORG         02000H
+lines_left_on_page:
+        DS          1
+interactive_mode_flag:
+        DS          1
+final_error_report_flag:
+        DS          1
+error_counter:
+        DS          1
+asm_direct_to_ram_flag:
+        DS          1
+current_name_buffer:
+        DS          5
+current_name_len:
+        DS          1
+console_line_cursor_pos:
+        DS          1
+equ_symbol_name_backup:
+        DS          5 + 1
+current_char:
+        DS          1
+assembler_pass_state:
+        DS          1
+expression_value:
+        DS          2
+instr_data_next_addr_ptr:
+        DS          2
+current_address_ptr:
+        DS          2
+current_line_bin_length:
+        DS          2
+listing_bindata_addr:
+        DS          2
+listing_bindata_bitmap:
+        DS          1
+immediate_datatype_len_plus_one:
+        DS          1
+listing_line_bindata:
+        DS          4
+opcode_list_index:
+        DS          1
+current_numeric_str:
+        DS          8
+undef_symb_size_flag:
+        DS          1
+current_error_nr:
+        DS          1
+current_tos_error_nr:
+        DS          1
+list_output_line_cursor_pos:
+        DS          1
+last_used_list_output_cursor_pos:
+        DS          1
+expression_char_value:
+        DS          1
+negative_expr_part_flag:
+        DS          1
+symbol_buffers_first_byte_ptr:
+defined_symbols_start_ptr:
+        DS          2
+defined_symbols_end_ptr:
+        DS          2
+undefined_symbols_start_ptr:
+        DS          2
+symbol_buffers_last_byte_ptr:
+undefined_symbols_end_ptr:
+        DS          2
+src_output_str_buffer:
+        DS          1+81
+list_output_str_buffer:
+        DS          1+81
+src_output_str_buffer_cursor:
+        DS          2
+unused_outside_main_flag:
+        DS          1
+stack_backup:
+        DS          2
+hexfile_str_len:
+        DS          1
+hex_file_next_cont_addr:
+        DS          2
+hexfile_str_checksum_value:
+        DS          1
+hexfile_str_checksum_ptr:
+        DS          2
+current_asm_bin_byte:
+        DS          1
+hexfile_str_buffer:
+        DS          1+64
+
+dual_err_listing_fcb:
+        DB          6
+        DB          FM_OUTPUT + FM_BINARY + FM_EOF_NEXT
+dual_err_listing_1st_file_ptr:
+        DW          00000H
+dual_err_listing_2nd_file_ptr:
+        DW          00000H
+
+null_output_fcb:
+        DB          2
+        DB          FM_OUTPUT + FM_NO_CLOSE
+        DW          00000H
+        DW          null_output_routine
+
+
+;//////////////////////////////////////////////////////////////////////////////
+;//
 ;//     Dynamic data-buffers
 ;//
 ;//////////////////////////////////////////////////////////////////////////////
 
         ORG         0C000H
 symbol_buffers:
-        DS          00600H
+        DS          00200H
 symbol_buffers_end:
 
 
@@ -4832,113 +4945,3 @@ undefined_symbols_str:
 symbols_str:
         DB          15
         DB          'SYMBOL TABLE:',CR,LF
-
-
-;//////////////////////////////////////////////////////////////////////////////
-;//
-;//     Data
-;//
-;//////////////////////////////////////////////////////////////////////////////
-
-lines_left_on_page:
-        DS          1
-interactive_mode_flag:
-        DS          1
-final_error_report_flag:
-        DS          1
-error_counter:
-        DS          1
-asm_direct_to_ram_flag:
-        DS          1
-current_name_buffer:
-        DS          5
-current_name_len:
-        DS          1
-console_line_cursor_pos:
-        DS          1
-equ_symbol_name_backup:
-        DS          5 + 1
-current_char:
-        DS          1
-assembler_pass_state:
-        DS          1
-expression_value:
-        DS          2
-instr_data_next_addr_ptr:
-        DS          2
-current_address_ptr:
-        DS          2
-current_line_bin_length:
-        DS          2
-listing_bindata_addr:
-        DS          2
-listing_bindata_bitmap:
-        DS          1
-immediate_datatype_len_plus_one:
-        DS          1
-listing_line_bindata:
-        DS          4
-opcode_list_index:
-        DS          1
-current_numeric_str:
-        DS          8
-undef_symb_size_flag:
-        DS          1
-current_error_nr:
-        DS          1
-current_tos_error_nr:
-        DS          1
-list_output_line_cursor_pos:
-        DS          1
-last_used_list_output_cursor_pos:
-        DS          1
-expression_char_value:
-        DS          1
-negative_expr_part_flag:
-        DS          1
-symbol_buffers_first_byte_ptr:
-defined_symbols_start_ptr:
-        DS          2
-defined_symbols_end_ptr:
-        DS          2
-undefined_symbols_start_ptr:
-        DS          2
-symbol_buffers_last_byte_ptr:
-undefined_symbols_end_ptr:
-        DS          2
-src_output_str_buffer:
-        DS          1+81
-list_output_str_buffer:
-        DS          1+81
-src_output_str_buffer_cursor:
-        DS          2
-unused_outside_main_flag:
-        DS          1
-stack_backup:
-        DS          2
-hexfile_str_len:
-        DS          1
-hex_file_next_cont_addr:
-        DS          2
-hexfile_str_checksum_value:
-        DS          1
-hexfile_str_checksum_ptr:
-        DS          2
-current_asm_bin_byte:
-        DS          1
-hexfile_str_buffer:
-        DS          1+64
-
-dual_err_listing_fcb:
-        DB          6
-        DB          FM_OUTPUT + FM_BINARY + FM_EOF_NEXT
-dual_err_listing_1st_file_ptr:
-        DW          00000H
-dual_err_listing_2nd_file_ptr:
-        DW          00000H
-
-null_output_fcb:
-        DB          2
-        DB          FM_OUTPUT + FM_NO_CLOSE
-        DW          00000H
-        DW          null_output_routine
