@@ -6,13 +6,13 @@
 ;//
 ;//             $[:<Tn>:]<filename>,<op><attr>[,<op><attr>[,<op><attr>[...]]]
 ;//
-;//                 Tn          Drive type and number, default :F0:
+;//                 Tn          Drive type and number, default :D0:
 ;//                 op          Attribute operation
 ;//                 attr        Attribute type
 ;//
 ;//                 Drive type T:
 ;//                     F       Floppy
-;//                     M       Tape
+;//                     D       Floppy, double-sided double-density
 ;//
 ;//                 Drive number n:
 ;//                     0-3
@@ -28,17 +28,10 @@
 ;//                     W       Write-protect
 ;//
 ;//
-;//         Adds and/or removes attributes from a file, either on floppy disk or on
-;//         tape. The Invisible attribute will hide a file from a regular directory
-;//         listing, the Write-protect attribute prevents a file to be written to,
-;//         while the System attribute will ensure the file is copied over if a new
-;//         disk is initialized as a system disk.
-;//
-;//
-;//         NOTE: Tape operation uses the XMON API for some operations, and this
-;//               API may not be present in all machines. The write itself on tape
-;//               is done directly using low-level IO-calls, but as mentioned not
-;//               the reading and tape-drive setup.
+;//         Adds and/or removes attributes from a file. The Invisible attribute will
+;//         hide a file from a regular directory listing, the Write-protect attribute
+;//         prevents a file to be written to, while the System attribute will ensure
+;//         the file is copied over if a new disk is initialized as a system disk.
 ;//
 ;//
 ;//         Changelog:
@@ -67,6 +60,13 @@
 ;//                 -> No longer allows adding the system attribute to direct-
 ;//                    access files
 ;//
+;//             2.0a: Entry at 0x2818
+;//
+;//                 -> Tape is no longer supported
+;//                 -> Alias attribute no longer checked
+;//                 -> Now supports double-sided double-density floppy
+;//                 -> Default changed to :D0:
+;//
 
 
 ;//////////////////////////////////////////////////////////////////////////////
@@ -81,21 +81,12 @@
 CR          EQU     00DH        ; Cartridge Return
 
 ;
-; IO ports
-;
-CBLKLG_IOH  EQU     021H        ; Tape block data length high byte
-CBLKLG_IOL  EQU     022H        ; Tape block data length low byte
-CBUF_IOH    EQU     023H        ; Tape block data address high byte
-CBUF_IOL    EQU     024H        ; Tape block data address low byte
-CCMD_IO     EQU     027H        ; Tape command (W) and status (R)
-
-;
 ; XMON system calls
 ;
 DSWRW       EQU     00076H      ; Write to disk with wait
 LOCDIR      EQU     00085H      ; Look up filetable entry of filename on disk
-CWT         EQU     000ACH      ; Wait for tape command complete
-CLOCDIR     EQU     000C1H      ; Look up filetable entry of filename on tape
+DDSWRW      EQU     0009AH      ; Write to double-sided disk with wait
+DLOCDIR     EQU     000CDH      ; Look up filetable entry of filename on double-sided disk
 
 ;
 ; XMON and TOS system data
@@ -103,13 +94,6 @@ CLOCDIR     EQU     000C1H      ; Look up filetable entry of filename on tape
 BUF2        EQU     02600H      ; Sector data of last filesystem operation
 SIGNATURE   EQU     02700H      ; Program signature
 TRK         EQU     02731H      ; Pointer to block address of next directory data block
-CPROG       EQU     02741H      ; Tape prog status
-CUNIT       EQU     02742H      ; Tape unit number
-CCONT       EQU     02743H      ; Tape cont address
-CBUF        EQU     02745H      ; Tape data buffer address
-CTRK        EQU     02747H      ; Tape track nr
-CRETRY      EQU     0274DH      ; Tape retry address
-CBLKLG      EQU     02750H      ; Tape block length
 
 ;
 ; TOS system calls
@@ -118,6 +102,7 @@ INCHAR      EQU     0FD09H      ; Input single character
 OUTCHAR     EQU     0FD0CH      ; Output single character
 PUT         EQU     0FD12H      ; Output string of characters, inclusive CR
 PUTSTR      EQU     0FD15H      ; Output string of characters, exclusive CR
+DFILENAME   EQU     0FDBBH      ; Input TOS filename for double-sided disk
 FILENAME    EQU     0FDCDH      ; Input TOS filename
 
 ;
@@ -127,13 +112,24 @@ CI_FCB      EQU     0FF00H      ; Console input abstract file FCB pointer
 CO_FCB      EQU     0FF02H      ; Console output abstract file FCB pointer
 
 ;
-; TOS file attributes
+; TOS-II file attributes byte 1
 ;
-ATTR_I      EQU     001H        ; Invisible file
-ATTR_S      EQU     002H        ; System file
-ATTR_W      EQU     004H        ; Write-protected file
-ATTR_A      EQU     008H        ; Alias file
-ATTR_X      EQU     040H        ; Direct-access file
+ATTR_S_DSDD EQU     004H        ; System file
+ATTR_W_DSDD EQU     040H        ; Write-protected file
+ATTR_X_DSDD EQU     080H        ; Direct-access file
+
+;
+; TOS-II file attributes byte 2
+;
+ATTR_I_DSDD EQU     001H        ; Invisible file
+
+;
+; TOS-II file attributes
+;
+ATTR_I_DSDD EQU     001H        ; Invisible file
+ATTR_S_DSDD EQU     004H        ; System file
+ATTR_W_DSDD EQU     040H        ; Write-protected file
+ATTR_X_DSDD EQU     080H        ; Direct-access file
 
 
 ;//////////////////////////////////////////////////////////////////////////////
@@ -144,7 +140,7 @@ ATTR_X      EQU     040H        ; Direct-access file
 
         ORG         SIGNATURE
         DB          'ATTRIB'
-        DB          '106'
+        DB          '200'
 
 
 ;//////////////////////////////////////////////////////////////////////////////
@@ -153,48 +149,26 @@ ATTR_X      EQU     040H        ; Direct-access file
 ;//
 ;//////////////////////////////////////////////////////////////////////////////
 
-        ORG         0C000H
+        ORG         02800H
 file_entry_ptr:
-        DW          00000H
-
         DW          00000H
 
 filename_drive_nr:
         DB          0
 filename_str:
-        DS          9
+        DS          13
 input_char:
         DB          000H
 file_entry_attribute_byte_ptr:
         DW          00000H
 
 drive_designator_str:
-        DB          ':F0:',CR
-
-        DS          128
+        DB          ':D0:',CR
 
 
 ;//////////////////////////////////////////////////////////////////////////////
 ;//
-;//     Subroutines
-;//
-;//////////////////////////////////////////////////////////////////////////////
-
-        ;
-        ; Convert character to uppercase
-        ;
-to_uppercase:
-        CPI         'a'
-        RM
-        CPI         'z'+1
-        RP
-        ANI         0DFH
-        RET
-
-
-;//////////////////////////////////////////////////////////////////////////////
-;//
-;//     Main program
+;//     Main program: Initialization
 ;//
 ;//////////////////////////////////////////////////////////////////////////////
 
@@ -207,12 +181,13 @@ start:
         ;
         ; Ignore leading spaces
         ;
+prune_leading_spaces_loop:
         LHLD        CI_FCB
         CALL        INCHAR
         RC
         STA         input_char
         CPI         ' '
-        JZ          start
+        JZ          prune_leading_spaces_loop
         ;
         ; Parse potential drive designator
         ;
@@ -225,7 +200,7 @@ start:
         CALL        to_uppercase
         STA         input_char
         STA         drive_designator_str+1
-        CPI         'M'
+        CPI         'D'
         JZ          valid_device_type
         CPI         'F'
         JNZ         invalid_device
@@ -233,7 +208,6 @@ valid_device_type:
         CALL        INCHAR
         RC
         STA         input_char
-        STA         drive_designator_str+2
         SUI         '0'
         JM          invalid_device
         CPI         4
@@ -248,6 +222,22 @@ valid_device_type:
         RC
 done_selecting_drive:
         ;
+        ; Check drive type
+        ;
+        PUSH        PSW
+        LDA         drive_designator_str+1
+        CPI         'D'
+        JZ          do_double_density_file
+        POP         PSW
+
+
+;//////////////////////////////////////////////////////////////////////////////
+;//
+;//     Main program: Single-sided TOS disk file
+;//
+;//////////////////////////////////////////////////////////////////////////////
+
+        ;
         ; Get filename and check that correct deliminer is used
         ;
         LXI         D,filename_str
@@ -257,16 +247,10 @@ done_selecting_drive:
         CPI         ','
         JNZ         invalid_parameters
         ;
-        ; Check drive type
-        ;
-        LXI         H,filename_str
-        LDA         drive_designator_str+1
-        CPI         'M'
-        JZ          do_tape_file
-        ;
         ; Look up file entry for floppy disk
         ;
         LDA         filename_drive_nr
+        LXI         H,filename_str
         CALL        LOCDIR
         RC
         XRA         A
@@ -277,25 +261,6 @@ done_selecting_drive:
         ;
         SHLD        file_entry_ptr
         LXI         D,00AH
-        JMP         go_change_attributes
-
-do_tape_file:
-        ;
-        ; Look up file entry for tape
-        ;
-        LDA         filename_drive_nr
-        CALL        CLOCDIR
-        RC
-        XRA         A
-        ORA         M
-        JNZ         file_not_found
-        ;
-        ; Store pointers to file entry and its attribute byte
-        ;
-        SHLD        file_entry_ptr
-        LXI         D,012H
-
-go_change_attributes:
         DAD         D
         SHLD        file_entry_attribute_byte_ptr
         ;
@@ -358,9 +323,9 @@ add_attribute:
         ANI         ATTR_S
         JZ          valid_attribute_combination
         MOV         A,M
-        ANI         ATTR_A + ATTR_X
+        ANI         ATTR_X
         JZ          valid_attribute_combination
-        LXI         D,system_alias_error_str
+        LXI         D,system_random_error_str
         JMP         print_string_and_quit
 
 valid_attribute_combination:
@@ -388,12 +353,6 @@ attribute_changed:
         CALL        print_full_file_ref
         RC
         ;
-        ; Check drive type for writing file entry back
-        ;
-        LDA         drive_designator_str+1
-        CPI         'M'
-        JZ          write_updates_to_tape
-        ;
         ; Write changes back to disk
         ;
         LHLD        TRK
@@ -405,58 +364,160 @@ attribute_changed:
         LDA         filename_drive_nr
         CALL        DSWRW
         RC
-
-attribute_changes_written:
         ;
         ; Print final status and exit
         ;
         LXI         D,attributes_altered_str
         JMP         print_string_and_quit
 
-write_updates_to_tape:
+
+;//////////////////////////////////////////////////////////////////////////////
+;//
+;//     Main program: Double-sided TOS disk file
+;//
+;//////////////////////////////////////////////////////////////////////////////
+
+do_double_density_file:
+        POP         PSW
         ;
-        ; Wait for tape to be ready to take new commands
+        ; Get filename and check that correct deliminer is used
         ;
-        CALL        CWT
+        LXI         D,filename_str
+        CALL        DFILENAME
         RC
+        STA         input_char
+        CPI         ','
+        JNZ         invalid_parameters
         ;
-        ; Set up tape control block and prepare controller for write
+        ; Look up file entry for double-sided floppy disk
         ;
         LDA         filename_drive_nr
-        STA         CUNIT
-        LHLD        file_entry_ptr
-        SHLD        CBUF
-        CALL        wait_for_tape_ready
-        MOV         A,H
-        OUT         CBUF_IOH
-        MOV         A,L
-        OUT         CBUF_IOL
-        MVI         A,0FFH
-        STA         CPROG
-        LXI         H,32
-        SHLD        CBLKLG
-        MOV         A,H
-        OUT         CBLKLG_IOH
-        MOV         A,L
-        OUT         CBLKLG_IOL
-        XRA         A
-        STA         CTRK
-        LXI         H,000H
-        SHLD        CCONT
-        SHLD        CRETRY
-        ;
-        ; Send write command to tape controller
-        ;
-        LXI         H,CUNIT
-        MOV         A,M
-        ORI         030H
-        OUT         CCMD_IO
-        CALL        CWT
+        LXI         H,filename_str
+        CALL        DLOCDIR
         RC
-        JMP         attribute_changes_written
+        XRA         A
+        ORA         M
+        JNZ         file_not_found
+        ;
+        ; Store pointers to file entry and its attribute byte
+        ;
+        SHLD        file_entry_ptr
+        LXI         D,00EH
+        DAD         D
+        SHLD        file_entry_attribute_byte_ptr
+        ;
+        ; Parse attribute changes from command line arguments
+        ;
+d_parse_next_attribute_change:
+        ;
+        ; Verify attribute operation
+        ;
+        LHLD        CI_FCB
+        CALL        INCHAR
+        RC
+        STA         input_char
+        CPI         '+'
+        JZ          d_valid_attribute_operation
+        CPI         '-'
+        JNZ         invalid_parameters
+d_valid_attribute_operation:
+        MOV         C,A
+        ;
+        ; Verify attribute name, and select appropriate bitmask
+        ;
+        LHLD        CI_FCB
+        CALL        INCHAR
+        RC
+        CALL        to_uppercase
+        STA         input_char
+        LHLD        file_entry_attribute_byte_ptr
+        MVI         B,ATTR_S_DSDD
+        CPI         'S'
+        JZ          d_valid_attribute
+        MVI         B,ATTR_W_DSDD
+        CPI         'W'
+        JZ          d_valid_attribute
+        INX         H
+        MVI         B,ATTR_I_DSDD
+        CPI         'I'
+        JNZ         invalid_attribute
+d_valid_attribute:
+        ;
+        ; Check if we are adding or removing an attribute
+        ;
+        MOV         A,C
+        CPI         '+'
+        JZ          d_add_attribute
+        ;
+        ; Remove attribute
+        ;
+        MOV         A,B
+        CMA
+        ANA         M
+        MOV         M,A
+        JMP         d_attribute_changed
+
+d_add_attribute:
+        ;
+        ; Check new attribute combination before adding an attribute
+        ;
+        MOV         A,B
+        ANI         ATTR_S_DSDD
+        JZ          d_valid_attribute_combination
+        MOV         A,M
+        ANI         ATTR_X_DSDD
+        JZ          d_valid_attribute_combination
+        LXI         D,system_random_error_str
+        JMP         print_string_and_quit
+
+d_valid_attribute_combination:
+        ;
+        ; Add attribute in loaded file entry
+        ;
+        MOV         A,B
+        ORA         M
+        MOV         M,A
+d_attribute_changed:
+        ;
+        ; Check if there are more attribute changes pending
+        ;
+        LHLD        CI_FCB
+        CALL        INCHAR
+        RC
+        STA         input_char
+        CPI         ','
+        JZ          d_parse_next_attribute_change
+        CPI         CR
+        JNZ         invalid_parameters
+        ;
+        ; All attribute changes done, print filename
+        ;
+        CALL        print_full_file_ref
+        RC
+        ;
+        ; Write changes back to disk
+        ;
+        LHLD        TRK
+        DCX         H
+        MOV         B,M
+        DCX         H
+        MOV         C,M
+        LXI         H,BUF2
+        LDA         filename_drive_nr
+        CALL        DDSWRW
+        RC
+        ;
+        ; Print final status and exit
+        ;
+        LXI         D,attributes_altered_str
+        JMP         print_string_and_quit
 
 
-;//////////////////////////////////////
+;//////////////////////////////////////////////////////////////////////////////
+;//
+;//     Main program: Termination
+;//
+;//////////////////////////////////////////////////////////////////////////////
 
 file_not_found:
         LXI         D,not_found_str
@@ -502,7 +563,25 @@ invalid_attribute:
         JMP         print_string_and_quit
 
 
-;//////////////////////////////////////
+;//////////////////////////////////////////////////////////////////////////////
+;//
+;//     Subroutines
+;//
+;//////////////////////////////////////////////////////////////////////////////
+
+        ;
+        ; Convert character to uppercase
+        ;
+to_uppercase:
+        CPI         'a'
+        RM
+        CPI         'z'+1
+        RP
+        ANI         0DFH
+        RET
+
+
+;//////////////////////////////////////////////////////////////////////////////
 
         ;
         ; Print full filename
@@ -513,6 +592,9 @@ print_full_file_ref:
         ;
         LHLD        CO_FCB
         LXI         D,drive_designator_str
+        LDA         filename_drive_nr
+        ADI         '0'
+        STA         drive_designator_str+2
         CALL        PUTSTR
         RC
         ;
@@ -526,55 +608,60 @@ print_file_name:
         JZ          dont_pad_filename_tail
         CALL        OUTCHAR
         RC
-dont_pad_filename_tail:
         INX         D
         DCR         B
         JNZ         print_file_name
+dont_pad_filename_tail:
+        ;
+        ; Prepare to print file extension
+        ;
+        MOV         C,B
+        MVI         B,3
+        LXI         D,filename_str+6
+        ;
+        ; Adjust for longer filename-field on double-sided disks
+        ;
+        LDA         drive_designator_str+1
+        CPI         'D'
+        JNZ         ready_to_print_file_ext
+        INX         D
+        INX         D
+ready_to_print_file_ext:
         ;
         ; Print dot before extension, but only if file has one
         ;
         LDAX        D
         ORA         A
-        JZ          go_print_file_ext
+        JZ          done_printing_file_ext
         MVI         A,'.'
         CALL        OUTCHAR
         RC
-go_print_file_ext:
         ;
         ; Print file extension
         ;
-        MVI         B,3
-print_file_ext:
+print_next_file_ext_char:
         LDAX        D
         ORA         A
-        JNZ         print_next_file_ext_char
-        MVI         A,' '
-print_next_file_ext_char:
+        JZ          done_printing_file_ext
         CALL        OUTCHAR
         RC
         INX         D
         DCR         B
-        JNZ         print_file_ext
+        JNZ         print_next_file_ext_char
+done_printing_file_ext:
         ;
-        ; Add a space after full filename
+        ; Pad out remaining field with spaces after filename + ext
         ;
+        MOV         A,C
+        ADD         B
+        INR         A
+        MOV         B,A
+pad_file_ext_loop:
         MVI         A,' '
         CALL        OUTCHAR
-        RET
-
-
-;//////////////////////////////////////
-
-        ;
-        ; Wait for tape ready status bit
-        ;
-wait_for_tape_ready:
-        PUSH        PSW
-wait_for_ready_bit:
-        IN          CCMD_IO
-        ANI         001H
-        JNZ         wait_for_ready_bit
-        POP         PSW
+        RC
+        DCR         B
+        JNZ         pad_file_ext_loop
         RET
 
 
@@ -588,8 +675,8 @@ not_found_str:
         DB          'NOT FOUND',CR
 attributes_altered_str:
         DB          'ATTRIBUTES ALTERED',CR
-system_alias_error_str:
-        DB          'SYSTEM ATTRIBUTE ON ALIAS FILE NOT ALLOWED',CR
+system_random_error_str:
+        DB          'SYSTEM ATTRIBUTE ON RANDOM FILE NOT ALLOWED',CR
 improper_unit_str:
         DB          'IMPROPER UNIT SPECIFICATION',CR
 improper_params_str:
