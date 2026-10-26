@@ -6,16 +6,14 @@
 ;//
 ;//             $[:<Tn>:]<filename>[,[:<Tn>:]<filename>[,[:<Tn>:]<filename>[...]]]
 ;//
-;//                 Tn          Drive type and number, default :F0:
+;//                 Tn          Drive type and number, default :D0:
 ;//                 filename    File to delete
 ;//
 ;//                 Drive type T:
-;//                     A       Floppy (IBM 3740, ASCII)
-;//                     B       Floppy (IBM 3740, ASCII)
-;//                     F       Floppy (Intel ISIS)
-;//                     I       Floppy (IBM 3740, EBCDIC)
-;//                     J       Floppy (IBM 3740, EBCDIC)
-;//                     M       Tape
+;//                     D       Floppy, TOS double-sided double-density
+;//                     F       Floppy, TOS single-sided single-density
+;//                     I       Floppy, IBM 3740 double-sided double-density
+;//                     J       Floppy, IBM 3740 single-sided single-density
 ;//
 ;//                 Drive number n:
 ;//                     0-3
@@ -23,12 +21,7 @@
 ;//
 ;//         This tool is used to delete files and aliases. If an alias is deleted,
 ;//         the file data will still be accessible through the original file and
-;//         any eventual other aliases. If a file has been recently deleted by
-;//         mistake, it may be undeleted with RESCUE.
-;//
-;//         NOTE: Tape operations depends on the optional XMON API for tape drives.
-;//               Not all machines have this installed, so care should be taken if
-;//               this program is to be used with tape.
+;//         any eventual other aliases.
 ;//
 ;//
 ;//         Changelog:
@@ -66,6 +59,13 @@
 ;//                 -> Re-introduces support for the B and J drive types without
 ;//                    the bug in v1.5b
 ;//
+;//             2.0a: Entry at 0x292D
+;//
+;//                 -> Removes support for tape drive
+;//                 -> Adds support for double-sided drive types, allthough double-
+;//                    sided IBM format is recognized but not implemented
+;//                 -> Changes default drive to :D0:
+;//
 
 
 ;//////////////////////////////////////////////////////////////////////////////
@@ -79,15 +79,6 @@
 ;
 NULL        EQU     000H        ; Null character
 CR          EQU     00DH        ; Cartridge Return
-
-;
-; IO ports
-;
-CBLKLG_IOH  EQU     021H        ; Tape block data length high byte
-CBLKLG_IOL  EQU     022H        ; Tape block data length low byte
-CBUF_IOH    EQU     023H        ; Tape block data address high byte
-CBUF_IOL    EQU     024H        ; Tape block data address low byte
-CCMD_IO     EQU     027H        ; Tape command (W) and status (R)
 
 ;
 ; XMON constants
@@ -104,9 +95,9 @@ DSDLW       EQU     00079H      ; Write deleted to disk with wait
 DSRAW       EQU     0007CH      ; Read from disk with wait and translate EBCDIC to ASCII
 DSWAW       EQU     0007FH      ; Translate ASCII to EBCDIC and write to disk with wait
 LOCDIR      EQU     00085H      ; Look up filetable entry of filename on disk
-CCAL        EQU     00091H      ; Reset tape cartridge
-CWT         EQU     000ACH      ; Wait for tape command complete
-CLOCDIR     EQU     000C1H      ; Look up filetable entry of filename on tape
+DDSRDW      EQU     00097H      ; Read from double-sided disk with wait
+DDSWRW      EQU     0009AH      ; Write to double-sided disk with wait
+DLOCDIR     EQU     000CDH      ; Look up filetable entry of filename on double-sided disk
 
 ;
 ; XMON and TOS system data
@@ -117,13 +108,6 @@ SSWITCH     EQU     0272CH      ; TOS system switch
 TRK         EQU     02731H      ; Pointer to block address of next directory data block
 MAP1        EQU     02739H      ; Block address of first half of mapfile data
 MAP2        EQU     0273BH      ; Block address of last half of mapfile data
-CPROG       EQU     02741H      ; Tape prog status
-CUNIT       EQU     02742H      ; Tape unit number
-CCONT       EQU     02743H      ; Tape cont address
-CBUF        EQU     02745H      ; Tape data buffer address
-CTRK        EQU     02747H      ; Tape track nr
-CRETRY      EQU     0274DH      ; Tape retry address
-CBLKLG      EQU     02750H      ; Tape block length
 
 ;
 ; TOS system calls
@@ -132,6 +116,9 @@ INCHAR      EQU     0FD09H      ; Input single character
 OUTCHAR     EQU     0FD0CH      ; Output single character
 PUT         EQU     0FD12H      ; Output string of characters, inclusive CR
 PUTSTR      EQU     0FD15H      ; Output string of characters, exclusive CR
+DFILENAME   EQU     0FDBBH      ; Input TOS filename for double-sided disk
+DRELN       EQU     0FDBEH      ; Release next N blocks from linking block on double-sided disk
+DRELBLK     EQU     0FDC1H      ; Release a single block on current double-sided disk
 FILENAME    EQU     0FDCDH      ; Input TOS filename
 IBFIL       EQU     0FDD0H      ; Input IBM-3740 filename
 RELN        EQU     0FDD3H      ; Release next N blocks from linking block
@@ -148,14 +135,26 @@ CO_FCB      EQU     0FF02H      ; Console output abstract file FCB pointer
 ;
 ERROR_0F    EQU     00FH        ; DISKETTE MAP MISSING
 ERROR_20    EQU     020H        ; DELETED DATA RECORD
+ERROR_38    EQU     038H        ; ROUTINE NOT AVAILABLE
+ERROR_5B    EQU     05BH        ; IMPROPER VOLUME FORMAT
 
 ;
 ; TOS file attributes
 ;
 ATTR_S      EQU     002H        ; System file
 ATTR_W      EQU     004H        ; Write-protected file
-ATTR_A      EQU     008H        ; Alias file
 ATTR_F      EQU     080H        ; Format file
+
+;
+; TOS-II file attributes byte 1
+;
+ATTR_S_DSDD EQU     004H        ; System file
+ATTR_W_DSDD EQU     040H        ; Write-protected file
+
+;
+; TOS-II file attributes byte 3
+;
+ATTR_F_DSDD EQU     020H        ; Format file
 
 
 ;//////////////////////////////////////////////////////////////////////////////
@@ -166,17 +165,7 @@ ATTR_F      EQU     080H        ; Format file
 
         ORG         SIGNATURE
         DB          'DELETE'
-        DB          '106'
-
-
-;//////////////////////////////////////////////////////////////////////////////
-;//
-;//     Legacy program entry
-;//
-;//////////////////////////////////////////////////////////////////////////////
-
-        ORG         0C000H
-        JMP         beginning
+        DB          '200'
 
 
 ;//////////////////////////////////////////////////////////////////////////////
@@ -185,6 +174,7 @@ ATTR_F      EQU     080H        ; Format file
 ;//
 ;//////////////////////////////////////////////////////////////////////////////
 
+        ORG         02800H
 ibm_read_call_ptr:
         DW          00000H
 ibm_write_call_ptr:
@@ -194,38 +184,28 @@ file_entry_data_ptr:
 linking_block_track_sector:
         DW          00000H
 drive_nr:
-        DB          000H
+        DB          0
 filename_str:
-        DS          9
+        DS          13
 input_char:
-        DB          000H
-
+        DB          NULL
+tos_dsdd_signature:
+        DB          'TANDBERG'
 mapfile_name:
         DB          'ISIS',NULL,NULL
         DB          'MAP'
 
 drive_designator:
-        DB          ':F*:',CR
+        DB          ':D0:',CR
 
 data_buffer:
-        DS          128
+        DS          256
 
 
 ;//////////////////////////////////////////////////////////////////////////////
 ;//
-;//     Main program
+;//     Main program: Initialization
 ;//
-;//////////////////////////////////////////////////////////////////////////////
-
-to_uppercase:
-        CPI         'a'
-        RM
-        CPI         'z'+1
-        RP
-        ANI         0DFH
-        RET
-
-
 ;//////////////////////////////////////////////////////////////////////////////
 
 start:
@@ -238,38 +218,27 @@ beginning:
         ;
         ; Ignore leading whitespace
         ;
+prune_leading_spaces_loop:
         LHLD        CI_FCB
         CALL        INCHAR
         RC
         CPI         ' '
-        JZ          beginning
+        JZ          prune_leading_spaces_loop
         ;
         ; Expect some arguments
         ;
         CPI         CR
         RZ
+        STA         input_char
         ;
         ; Check for custom drive designator specified, and set up drive type
         ;
         CPI         ':'
-        JNZ         parse_filename
+        JNZ         delete_tos_dsdd_file
         CALL        INCHAR
         RC
         CALL        to_uppercase
         STA         input_char
-        CPI         'F'
-        JZ          valid_drive_type
-        CPI         'A'
-        JZ          valid_drive_type
-        CPI         'B'
-        JZ          valid_drive_type
-        CPI         'I'
-        JZ          valid_drive_type
-        CPI         'J'
-        JZ          valid_drive_type
-        CPI         'M'
-        JNZ         invalid_drive
-valid_drive_type:
         STA         drive_designator+1
         ;
         ; Parse drive number
@@ -292,21 +261,185 @@ valid_drive_type:
         JNZ         invalid_drive
         CALL        INCHAR
         RC
-        PUSH        PSW
+        STA         input_char
         LDA         drive_designator+1
+        CPI         'D'
+        JZ          delete_tos_dsdd_file
+        CPI         'F'
+        JZ          delete_tos_sssd_file
         CPI         'I'
-        JZ          delete_ibm_ebcdic_file
+        JZ          delete_ibm_dsdd_file
         CPI         'J'
-        JZ          delete_ibm_ebcdic_file
-        CPI         'A'
-        JZ          delete_ibm_ascii_file
-        CPI         'B'
-        JZ          delete_ibm_ascii_file
-        POP         PSW
-parse_filename:
+        JZ          delete_ibm_sssd_file
+        JMP         invalid_drive
+
+
+;//////////////////////////////////////////////////////////////////////////////
+;//
+;//     Main program: Double-sided TOS disk file
+;//
+;//////////////////////////////////////////////////////////////////////////////
+
+delete_tos_dsdd_file:
         ;
         ; Parse filename, and following line end or deliminer
         ;
+        LDA         input_char
+        LXI         D,filename_str
+        CALL        DFILENAME
+        RC
+        STA         input_char
+        CPI         CR
+        JZ          d_valid_filename_input
+        CPI         ','
+        JNZ         invalid_input
+d_valid_filename_input:
+        ;
+        ; Get TOS-II double-density disk format signature tag
+        ;
+        LXI         H,data_buffer
+        LXI         B,1*DISK_TRACK + 26*DISK_SECTOR
+        LDA         drive_nr
+        CALL        DDSRDW
+        RC
+        LXI         D,data_buffer + 011H
+        ;
+        ; Verify format signature
+        ;
+        LXI         H,tos_dsdd_signature
+        MVI         B,8
+compare_next_signature_char:
+        LDAX        D
+        CMP         M
+        MVI         A,ERROR_5B
+        STC
+        RNZ
+        INX         H
+        INX         D
+        DCR         B
+        JNZ         compare_next_signature_char
+        ;
+        ; Print full filename with drive designator
+        ;
+        CALL        print_filename
+        RC
+        ;
+        ; Store track and sector of mapfile data blocks
+        ;
+        LXI         H,1*DISK_TRACK + 1*DISK_SECTOR
+        SHLD        MAP1
+        LXI         H,1*DISK_TRACK + 2*DISK_SECTOR
+        SHLD        MAP2
+        ;
+        ; try to look up file
+        ;
+        LXI         H,filename_str
+        LDA         drive_nr
+        CALL        DLOCDIR
+        RC
+        MOV         A,M
+        ANA         A
+        JNZ         file_not_found
+        SHLD        file_entry_data_ptr
+        ;
+        ; Check attributes of file for delete protection
+        ;
+        LXI         D,00EH
+        DAD         D
+        LDA         SSWITCH
+        CPI         'S'
+        JZ          d_commit_to_delete_intel_file
+        MOV         A,M
+        ANI         ATTR_W_DSDD + ATTR_S_DSDD
+        JNZ         d_protected_file
+        INX         H
+        INX         H
+        MOV         A,M
+        ANI         ATTR_F_DSDD
+        JNZ         d_protected_file
+d_commit_to_delete_intel_file:
+        ;
+        ; Delete normal file: Mark file as inactive and get linking block
+        ;
+        LHLD        file_entry_data_ptr
+        MVI         M,0FFH
+        LXI         D,01EH
+        DAD         D
+        MOV         E,M
+        INX         H
+        MOV         D,M
+        XCHG
+        SHLD        linking_block_track_sector
+        XCHG
+        ;
+        ; Write changes in file directory back to disk
+        ;
+        LHLD        TRK
+        DCX         H
+        MOV         B,M
+        DCX         H
+        MOV         C,M
+        LXI         H,BUF2
+        LDA         drive_nr
+        CALL        DDSWRW
+        RC
+        ;
+        ; Free up all blocks previously reserved by the deleted file
+        ;
+d_free_next_linking_block:
+        ;
+        ; Read next linking block in chain
+        ;
+        MOV         B,D
+        MOV         C,E
+        LDA         drive_nr
+        LXI         H,data_buffer
+        CALL        DDSRDW
+        RC
+        ;
+        ; Release the linking block itself
+        ;
+        CALL        DRELBLK
+        RC
+        ;
+        ; Release all blocks in the linking block
+        ;
+        LXI         H,data_buffer+4
+        MVI         A,62
+        CALL        DRELN
+        RC
+        ;
+        ; Get track and sector of the next linking block
+        ;
+        LHLD        data_buffer+2
+        MOV         A,H
+        ORA         L
+        XCHG
+        JNZ         d_free_next_linking_block
+        ;
+        ; Print status after deletion
+        ;
+        JMP         file_deleted
+
+
+;//////////////////////////////////////
+
+d_protected_file:
+        LXI         D,protected_str
+        JMP         file_done
+
+
+;//////////////////////////////////////////////////////////////////////////////
+;//
+;//     Main program: Single-sided TOS disk file
+;//
+;//////////////////////////////////////////////////////////////////////////////
+
+delete_tos_sssd_file:
+        ;
+        ; Parse filename, and following line end or deliminer
+        ;
+        LDA         input_char
         LXI         D,filename_str
         CALL        FILENAME
         RC
@@ -321,12 +454,6 @@ valid_filename_input:
         ;
         CALL        print_filename
         RC
-        ;
-        ; Check drive type for deletion algorithm
-        ;
-        LDA         drive_designator+1
-        CPI         'M'
-        JZ          delete_tape_file
         ;
         ; Prepare to delete file on intel-type floppy disk, look up mapfile
         ;
@@ -383,12 +510,6 @@ valid_filename_input:
         ANI         ATTR_F + ATTR_W + ATTR_S
         JNZ         protected_file
 commit_to_delete_intel_file:
-        ;
-        ; Check attributes of file for alias
-        ;
-        MOV         A,M
-        ANI         ATTR_A
-        JNZ         delete_alias_file
         ;
         ; Delete normal file: Mark file as inactive and get linking block
         ;
@@ -460,199 +581,29 @@ protected_file:
         JMP         file_done
 
 
-;//////////////////////////////////////
+;//////////////////////////////////////////////////////////////////////////////
+;//
+;//     Main program: Double-sided IBM disk file
+;//
+;//////////////////////////////////////////////////////////////////////////////
 
-delete_alias_file:
-        ;
-        ; Just delete entry for alias file, don't free up any blocks
-        ;
-        LHLD        file_entry_data_ptr
-        MVI         M,0FFH
-        ;
-        ; Write changes back to disk
-        ;
-        LHLD        TRK
-        DCX         H
-        MOV         B,M
-        DCX         H
-        MOV         C,M
-        LXI         H,BUF2
-        LDA         drive_nr
-        CALL        DSWRW
-        RC
-        ;
-        ; Print status
-        ;
-        LXI         D,alias_str
-        JMP         file_done
-
-
-;//////////////////////////////////////
-
-file_not_found:
-        LXI         D,not_found_str
-        JMP         file_done
-
-
-;//////////////////////////////////////
-
-file_deleted:
-        LXI         D,deleted_str
-file_done:
-        LHLD        CO_FCB
-        CALL        PUT
-        RC
-        ;
-        ; Reset tape drive, if used
-        ;
-        LDA         drive_designator+1
-        CPI         'M'
-        JNZ         ready_for_next_file
-        LDA         drive_nr
-        CALL        CCAL
-        RC
-        ;
-        ; Go delete next file if more
-        ;
-ready_for_next_file:
-        LDA         input_char
-        CPI         ','
-        JZ          beginning
-        ANA         A
+delete_ibm_dsdd_file:
+        MVI         A,ERROR_38
+        STC
         RET
 
 
-;//////////////////////////////////////
-
-invalid_drive:
-        LXI         D,improper_unit_str
-        JMP         print_error
-
-
-;//////////////////////////////////////
-
-invalid_input:
-        LXI         D,improper_params_str
-
-print_error:
-        ;
-        ; Print error message
-        ;
-        LHLD        CO_FCB
-        CALL        PUT
-        RC
-        ;
-        ; Flush remaining input before ending program
-        ;
-        LDA         input_char
-flush_input:
-        CPI         CR
-        RZ
-        LHLD        CI_FCB
-        CALL        INCHAR
-        RC
-        JMP         flush_input
-
-
+;//////////////////////////////////////////////////////////////////////////////
+;//
+;//     Main program: Single-sided IBM disk file
+;//
 ;//////////////////////////////////////////////////////////////////////////////
 
-delete_tape_file:
-        ;
-        ; Prepare to delete file on tape, try to look up file
-        ;
-        LXI         H,filename_str
-        LDA         drive_nr
-        CALL        CLOCDIR
-        RC
-        MOV         A,M
-        ANA         A
-        JNZ         file_not_found
-        SHLD        file_entry_data_ptr
-        ;
-        ; Check attributes of file for delete protection
-        ;
-        LXI         D,012H
-        DAD         D
-        LDA         SSWITCH
-        CPI         'S'
-        JZ          commit_to_delete_tape_file
-        MOV         A,M
-        ANI         ATTR_F + ATTR_W + ATTR_S
-        JNZ         protected_file
-commit_to_delete_tape_file:
-        ;
-        ; Delete tape file: Mark file as inactive
-        ;
-        LHLD        file_entry_data_ptr
-        MVI         M,0FFH
-        ;
-        ; Wait for tape to be ready to take new commands
-        ;
-        CALL        CWT
-        ;
-        ; Set up tape control block and prepare controller for write
-        ;
-        LDA         drive_nr
-        STA         CUNIT
-        LHLD        file_entry_data_ptr
-        SHLD        CBUF
-        MOV         A,H
-        CALL        wait_for_tape_ready
-        OUT         CBUF_IOH
-        MOV         A,L
-        OUT         CBUF_IOL
-        MVI         A,0FFH
-        STA         CPROG
-        LXI         H,32
-        SHLD        CBLKLG
-        MOV         A,H
-        OUT         CBLKLG_IOH
-        MOV         A,L
-        OUT         CBLKLG_IOL
-        SUB         A
-        STA         CTRK
-        LXI         H,00000H
-        SHLD        CCONT
-        SHLD        CRETRY
-        ;
-        ; Send write command to tape controller
-        ;
-        LXI         H,CUNIT
-        MOV         A,M
-        ORI         030H
-        OUT         CCMD_IO
-        CALL        CWT
-        JMP         file_deleted
-
-
-;//////////////////////////////////////////////////////////////////////////////
-
-
-delete_ibm_ebcdic_file:
-        ;
-        ; Set read/write pointers to EDBDIC system calls
-        ;
-        LXI         H,DSRAW
-        SHLD        ibm_read_call_ptr
-        LXI         H,DSWAW
-        JMP         delete_ibm_file
-
-
-;//////////////////////////////////////
-
-delete_ibm_ascii_file:
-        ;
-        ; Set read/write pointers to ASCII system calls
-        ;
-        LXI         H,DSRDW
-        SHLD        ibm_read_call_ptr
-        LXI         H,DSWRW
-delete_ibm_file:
-        SHLD        ibm_write_call_ptr
+delete_ibm_sssd_file:
         ;
         ; Parse IBM filename, and following line end or deliminer
         ;
-        POP         PSW
+        LDA         input_char
         LXI         D,filename_str
         CALL        IBFIL
         RC
@@ -670,9 +621,16 @@ valid_ibm_file:
         ;
         LXI         B,0*DISK_TRACK + 8*DISK_SECTOR
 check_next_ibm_file:
-        CALL        read_ibm_sector
-        RC
-        JNZ         inactive_ibm_file
+        LDA         drive_nr
+        LXI         H,BUF2
+        CALL        DSRAW
+        JNC         active_ibm_file
+        CPI         ERROR_20
+        STC
+        RNZ
+        JMP         inactive_ibm_file
+
+active_ibm_file:
         LXI         D,filename_str
         CALL        compare_ibm_filename
         JZ          ibm_file_found
@@ -695,15 +653,21 @@ ibm_file_found:
         MVI         M,'R'
         INX         H
         MVI         M,'1'
-        CALL        write_ibm_sector
+        LDA         drive_nr
+        LXI         H,BUF2
+        CALL        DSWAW
         RC
         ;
         ; Convert to deleted sector type
         ;
-        LXI         H,DSRDW
-        SHLD        ibm_read_call_ptr
-        CALL        read_ibm_sector
-        RC
+        LDA         drive_nr
+        LXI         H,BUF2
+        CALL        DSRDW
+        JNC         ibm_mark_deleted
+        CPI         ERROR_20
+        STC
+        RNZ
+ibm_mark_deleted:
         LXI         H,BUF2
         LDA         drive_nr
         CALL        DSDLW
@@ -715,64 +679,6 @@ ibm_file_found:
 ;//
 ;//     Subroutines
 ;//
-;//////////////////////////////////////////////////////////////////////////////
-
-        ;
-        ; Wait for tape ready status bit
-        ;
-wait_for_tape_ready:
-        PUSH        PSW
-wait_for_ready_bit:
-        IN          CCMD_IO
-        ANI         001H
-        JNZ         wait_for_ready_bit
-        POP         PSW
-        RET
-
-
-;//////////////////////////////////////////////////////////////////////////////
-
-        ;
-        ; Read IBM sector, allow for deleted sectors
-        ;
-read_ibm_sector:
-        CALL        ibm_read_operation
-        JC          ibm_check_deleted
-        XRA         A
-        RET
-
-ibm_check_deleted:
-        ;
-        ; Deleted sectors are OK, other faults are not
-        ;
-        CPI         ERROR_20
-        STC
-        RNZ
-        ANA         A
-        RET
-
-
-;//////////////////////////////////////
-
-        ;
-        ; Read IBM sector with the currently selected encoding type
-        ;
-ibm_read_operation:
-        LHLD        ibm_read_call_ptr
-        JMP         ibm_disk_operation
-
-        ;
-        ; Write IBM sector with the currently selected encoding type
-        ;
-write_ibm_sector:
-        LHLD        ibm_write_call_ptr
-ibm_disk_operation:
-        LDA         drive_nr
-        PUSH        H
-        LXI         H,BUF2
-        RET
-
-
 ;//////////////////////////////////////////////////////////////////////////////
 
         ;
@@ -816,6 +722,63 @@ compare_ibm_filename_done:
         RET
 
 
+;//////////////////////////////////////
+
+file_not_found:
+        LXI         D,not_found_str
+        JMP         file_done
+
+
+;//////////////////////////////////////
+
+file_deleted:
+        LXI         D,deleted_str
+file_done:
+        LHLD        CO_FCB
+        CALL        PUT
+        RC
+        ;
+        ; Go delete next file if more
+        ;
+        LDA         input_char
+        CPI         ','
+        JZ          beginning
+        ANA         A
+        RET
+
+
+;//////////////////////////////////////
+
+invalid_drive:
+        LXI         D,improper_unit_str
+        JMP         print_error
+
+
+;//////////////////////////////////////
+
+invalid_input:
+        LXI         D,improper_params_str
+
+print_error:
+        ;
+        ; Print error message
+        ;
+        LHLD        CO_FCB
+        CALL        PUT
+        RC
+        ;
+        ; Flush remaining input before ending program
+        ;
+        LDA         input_char
+flush_input:
+        CPI         CR
+        RZ
+        LHLD        CI_FCB
+        CALL        INCHAR
+        RC
+        JMP         flush_input
+
+
 ;//////////////////////////////////////////////////////////////////////////////
 
         ;
@@ -840,36 +803,44 @@ print_filename:
 print_next_filename_char:
         LDAX        D
         ORA         A
-        JZ          filename_char_done
+        JZ          filename_chars_done
         CALL        OUTCHAR
         RC
-filename_char_done:
         ;
         ; Advance to next filename character
         ;
         INX         D
         DCR         B
         JNZ         print_next_filename_char
+filename_chars_done:
+        ;
+        ; Point to start of file extension
+        ;
+        MOV         C,B
+        MVI         B,3
+        LXI         D,filename_str+6
+        LDA         drive_designator+1
+        CPI         'D'
+        JNZ         print_file_extension
+        INX         D
+        INX         D
+print_file_extension:
         ;
         ; Skip filename extension delimer if no extension
         ;
         LDAX        D
         ORA         A
-        JZ          print_file_extension
+        JZ          file_extension_done
         ;
         ; Print filename extension
         ;
         MVI         A,'.'
         CALL        OUTCHAR
         RC
-print_file_extension:
-        MVI         B,3
 print_next_file_ext_char:
         LDAX        D
         ORA         A
-        JNZ         file_ext_char_ready
-        MVI         A,' '
-file_ext_char_ready:
+        JZ          file_extension_done
         CALL        OUTCHAR
         RC
         ;
@@ -878,8 +849,20 @@ file_ext_char_ready:
         INX         D
         DCR         B
         JNZ         print_next_file_ext_char
+file_extension_done:
+        ;
+        ; Pad out the rest of the filename print with spaces
+        ;
+        MOV         A,C
+        ADD         B
+        INR         A
+        MOV         B,A
+pad_filename_print_loop:
         MVI         A,' '
         CALL        OUTCHAR
+        RC
+        DCR         B
+        JNZ         pad_filename_print_loop
         RET
 
 
@@ -918,6 +901,17 @@ print_next_ibm_filename_char:
 
 
 ;//////////////////////////////////////////////////////////////////////////////
+
+to_uppercase:
+        CPI         'a'
+        RM
+        CPI         'z'+1
+        RP
+        ANI         0DFH
+        RET
+
+
+;//////////////////////////////////////////////////////////////////////////////
 ;//
 ;//     Strings
 ;//
@@ -929,10 +923,6 @@ deleted_str:
         DB          'DELETED',CR
 protected_str:
         DB          'PROTECTED',CR
-alias_str:
-        DB          'ALIAS',CR
-deleted_alias_str:
-        DB          'DELETED ALIAS',CR
 improper_unit_str:
         DB          'IMPROPER UNIT SPECIFICATION',CR
 improper_params_str:

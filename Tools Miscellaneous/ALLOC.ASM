@@ -4,19 +4,10 @@
 ;//
 ;//         Extra parameters:
 ;//
-;//             $[:<Tn>:][<filename>]
+;//             $:J<n>:[<filename>]
 ;//
 ;//                 filename    Name of file target, default 'DATA'
-;//                 Tn          Drive type and number, default :I0:
-;//
-;//                 Drive type T:
-;//                     A       Floppy (IBM 3740, ASCII)
-;//                     B       Floppy (IBM 3740, ASCII)
-;//                     I       Floppy (IBM 3740, EBCDIC)
-;//                     J       Floppy (IBM 3740, EBCDIC)
-;//
-;//                 Drive number n:
-;//                     0-3
+;//                 n           Drive number (0-4)
 ;//
 ;//
 ;//                 NOTE: Filename must be a new file, unless it's being replaced
@@ -130,6 +121,11 @@
 ;//                 -> Use TOS CO file instead of XMON API to print Ctrl-characters
 ;//                 -> Updates the no-autoscroll line counter when cursor is moved
 ;//
+;//             2.0: Entry at 0x2800
+;//
+;//                 -> Drive types changed, J is now single-sided IBM 3740 type
+;//                 -> Fixes a bug where negative drive numbers would be allowed
+;//
 
 
 ;//////////////////////////////////////////////////////////////////////////////
@@ -160,8 +156,6 @@ DISK_SECTOR EQU     00001H      ; Multiplier for floppy disk sector
 ;
 TTO         EQU     00043H      ; Console output
 CURSOR      EQU     00049H      ; Set console cursor position
-DSRDW       EQU     00073H      ; Read from disk with wait
-DSWRW       EQU     00076H      ; Write to disk with wait
 DSRAW       EQU     0007CH      ; Read from disk with wait and translate EBCDIC to ASCII
 DSWAW       EQU     0007FH      ; Translate ASCII to EBCDIC and write to disk with wait
 
@@ -191,6 +185,7 @@ CO_FCB      EQU     0FF02H      ; Console output abstract file FCB pointer
 ERROR_11    EQU     011H        ; IMPROPER UNIT SPECIFICATION
 ERROR_13    EQU     013H        ; DRIVE NUMBER NOT 0-3
 ERROR_20    EQU     020H        ; DELETED DATA RECORD
+ERROR_38    EQU     038H        ; ROUTINE NOT AVAILABLE
 
 
 ;//////////////////////////////////////////////////////////////////////////////
@@ -201,7 +196,7 @@ ERROR_20    EQU     020H        ; DELETED DATA RECORD
 
         ORG         SIGNATURE
         DB          'ALLOC',NULL
-        DB          '107'
+        DB          '200'
 
 
 ;//////////////////////////////////////////////////////////////////////////////
@@ -210,7 +205,7 @@ ERROR_20    EQU     020H        ; DELETED DATA RECORD
 ;//
 ;//////////////////////////////////////////////////////////////////////////////
 
-        ORG         0C000H
+        ORG         02800H
 start:
         ;
         ; Save stack-pointer for breaking out of subroutines
@@ -232,29 +227,18 @@ start:
         LXI         D,input_line_buffer
         LDAX        D
         CPI         ':'
-        JNZ         drive_set
+        JNZ         routine_unavailable
         MOV         M,A
         INX         H
         INX         D
         LDAX        D
         CALL        to_uppercase
-        CPI         'J'
-        JNZ         ibm_type_j_check_done
-        DCR         A
-ibm_type_j_check_done:
-        CPI         'B'
-        JNZ         ibm_type_b_check_done
-        DCR         A
-ibm_type_b_check_done:
-        CPI         'I'
-        JZ          is_ibm_drive
-        CPI         'A'
-        JNZ         wrong_device_type
-is_ibm_drive:
         MOV         M,A
         INX         H
         INX         D
         LDAX        D
+        CPI         '0'
+        JC          wrong_device_number
         CPI         '4'
         JNC         wrong_device_number
         MOV         M,A
@@ -268,7 +252,6 @@ is_ibm_drive:
         MOV         M,A
         INX         D
         LDAX        D
-drive_set:
         ;
         ; Get target filename from command line arguments, if specified
         ;
@@ -286,17 +269,23 @@ prepare_filename:
         ;
         LDA         drive_designator_str+1
         CPI         'I'
-        JNZ         prepare_ascii_disk_type
-        LXI         H,DSRAW
-        SHLD        read_call
-        LXI         H,DSWAW
-        JMP         ibm_disk_type_set
-prepare_ascii_disk_type:
-        LXI         H,DSRDW
-        SHLD        read_call
-        LXI         H,DSWRW
+        JZ          routine_unavailable
+        CPI         'J'
+        JZ          ibm_disk_type_set
+        JMP         wrong_device_type
+
+
+;//////////////////////////////////////
+
+routine_unavailable:
+        MVI         A,ERROR_38
+        STC
+        RET
+
+
+;//////////////////////////////////////
+
 ibm_disk_type_set:
-        SHLD        write_call
         ;
         ; Read first IBM data-label on disk (t0, s8), and check if it is valid
         ;
@@ -1051,7 +1040,9 @@ verify_character_set:
         ; Write updated file-entry back to disk and exit program
         ;
 write_updated_ibm_file_entry:
-        CALL        write_ibm_disk_sector
+        LDA         drive_number
+        LXI         H,input_data_buffer
+        CALL        DSWAW
         RC
         LXI         D,target_filename
         CALL        print_ibm_filename
@@ -1796,7 +1787,8 @@ check_next_ibm_data_label:
         ;
 read_ibm_disk_sector:
         LDA         drive_number
-        CALL        read_ibm_sector_call
+        LXI         H,input_data_buffer
+        CALL        DSRAW
         JC          handle_peculiar_sector
         XRA         A
         RET
@@ -1849,34 +1841,6 @@ deleted_sector_ready:
 error_reading_sector:
         STC
         RET
-
-
-;//////////////////////////////////////
-
-        ;
-        ; Do appropriate read-sector system call
-        ;
-read_ibm_sector_call:
-        LHLD        read_call
-
-        ;
-        ; Do disk-based system call
-        ;
-ibm_sector_system_call:
-        PUSH        H
-        LXI         H,input_data_buffer
-        RET
-
-
-;//////////////////////////////////////
-
-        ;
-        ; Do appropriate write-sector system call
-        ;
-write_ibm_disk_sector:
-        LDA         drive_number
-        LHLD        write_call
-        JMP         ibm_sector_system_call
 
 
 ;//////////////////////////////////////////////////////////////////////////////
@@ -1966,10 +1930,6 @@ sp_backup:
         DS          2
 new_replace_choice:
         DS          1
-read_call:
-        DS          2
-write_call:
-        DS          2
 
 input_line_buffer:
         DS          128

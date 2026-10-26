@@ -4,18 +4,16 @@
 ;//
 ;//         Extra parameters:
 ;//
-;//             [$[I][:<Tn>:]]
+;//             [$[I[,]][:<Tn>:[,I]]]
 ;//
-;//                 I           Show invisible files (for drive type F and M)
-;//                 Tn          Drive type and number, default :F0:
+;//                 I           Show invisible files (for drive type F and D)
+;//                 Tn          Drive type and number, default :D0:
 ;//
 ;//                 Drive type T:
-;//                     A       Floppy (IBM 3740, ASCII)
-;//                     B       Floppy (IBM 3740, ASCII)
-;//                     F       Floppy (Intel ISIS)
-;//                     I       Floppy (IBM 3740, EBCDIC)
-;//                     J       Floppy (IBM 3740, EBCDIC)
-;//                     M       Tape
+;//                     D       Floppy, TOS double-sided double-density
+;//                     F       Floppy, TOS single-sided single-density
+;//                     I       Floppy, IBM 3740 double-sided double-density
+;//                     J       Floppy, IBM 3740 single-sided single-density
 ;//
 ;//                 Drive number n:
 ;//                     0-3
@@ -31,9 +29,10 @@
 ;//         should be noted that if SO=:CO: is assigned, the listing will on the
 ;//         contrary not have any pagebreaks.
 ;//
-;//         NOTE: Tape operations depends on the optional XMON API for tape drives.
-;//               Not all machines have this installed, so care should be taken if
-;//               this program is to be used with tape.
+;//
+;//         NOTE: This version relies on a preliminarty version of the TOS-II API,
+;//               so copying from double-sided disks will only work on the Beta-
+;//               version of TOS-II v2.0.
 ;//
 ;//
 ;//         Changelog:
@@ -93,6 +92,18 @@
 ;//                 -> Fixes the intel-file block-counting bug from v1.2
 ;//                 -> Fixes the drive type bug introduced in v1.5b
 ;//
+;//             2.0a: Entry at 0x2A0A
+;//
+;//                 -> Removes support for tape drive
+;//                 -> Adds support for double-sided drive types, allthough double-
+;//                    sided IBM format is recognized but not implemented
+;//                 -> Changes default drive to :D0:
+;//                 -> No longer skips block-count for alias files
+;//                 -> More flexible command line option placement
+;//                 -> Removes whitespaces in label printout
+;//                 -> Adds a bug where attributes B, J and R won't be printed
+;//                    for double-sided disks
+;//
 
 
 ;//////////////////////////////////////////////////////////////////////////////
@@ -111,6 +122,7 @@ TRUE        EQU     -1          ; Boolean True
 ; ASCII control characters
 ;
 NULL        EQU     000H        ; Null character
+LF          EQU     00AH        ; Line Feed
 CR          EQU     00DH        ; Cartridge Return
 
 ;
@@ -124,10 +136,11 @@ DISK_SECTOR EQU     00001H      ; Multiplier for floppy disk sector
 ;
 TTI         EQU     00040H      ; Console input
 TTO         EQU     00043H      ; Console output
+DCALW       EQU     00070H      ; Reset disk drive with wait
+DSRDW       EQU     00073H      ; Read from disk with wait
 DSRAW       EQU     0007CH      ; Read from disk with wait and translate EBCDIC to ASCII
 LOCDIR      EQU     00085H      ; Look up filetable entry of filename on disk
-CCAL        EQU     00091H      ; Reset tape cartridge
-CBRDW       EQU     000AFH      ; Read data from tape cartridge with wait
+DDSRDW      EQU     00097H      ; Read from double-sided disk with wait
 
 ;
 ; XMON and TOS system data
@@ -146,8 +159,7 @@ PUTSTR      EQU     0FD15H      ; Output string of characters, exclusive CR
 GETBIN      EQU     0FD18H      ; Input a given number of raw bytes
 PUTBIN      EQU     0FD1BH      ; Output a given number of raw bytes
 OPEN        EQU     0FD1EH      ; Open block device
-DCALW       EQU     0FD70H      ; Reset disk drive with wait
-DSRDW       EQU     0FD73H      ; Read from disk with wait
+DNEXTFILE   EQU     0FDB8H      ; Get next file on double-sided disk
 
 ;
 ; TOS constants
@@ -165,6 +177,7 @@ SO_FCB      EQU     0FF06H      ; Standard output abstract file FCB pointer
 ; TOS Errors
 ;
 ERROR_20    EQU     020H        ; DELETED DATA RECORD
+ERROR_38    EQU     038H        ; ROUTINE NOT AVAILABLE
 
 ;
 ; TOS file attributes
@@ -177,6 +190,39 @@ ATTR_B      EQU     010H        ; BASIC program file (EC-10 multiuser BASIC)
 ATTR_D      EQU     020H        ; Data file (EC-10 multiuser BASIC)
 ATTR_X      EQU     040H        ; Direct-access file
 ATTR_F      EQU     080H        ; Format file
+
+;
+; TOS-II file attributes byte 1
+;
+ATTR_Q_DSDD EQU     001H        ; (Unused)
+ATTR_S_DSDD EQU     004H        ; System file
+ATTR_T_DSDD EQU     008H        ; (Unused)
+ATTR_U_DSDD EQU     010H        ; (Unused)
+ATTR_V_DSDD EQU     020H        ; (Unused)
+ATTR_W_DSDD EQU     040H        ; Write-protected file
+ATTR_X_DSDD EQU     080H        ; Direct-access file
+
+;
+; TOS-II file attributes byte 2
+;
+ATTR_I_DSDD EQU     001H        ; Invisible file
+ATTR_K_DSDD EQU     004H        ; (Unused)
+ATTR_L_DSDD EQU     008H        ; (Unused)
+ATTR_M_DSDD EQU     010H        ; (Reserved)
+ATTR_N_DSDD EQU     020H        ; New file (not backed up by BACKUP)
+ATTR_O_DSDD EQU     040H        ; (Unused)
+ATTR_P_DSDD EQU     080H        ; (Unused)
+
+;
+; TOS-II file attributes byte 3
+;
+ATTR_A_DSDD EQU     001H        ; (Unused)
+ATTR_C_DSDD EQU     004H        ; (Unused)
+ATTR_D_DSDD EQU     008H        ; Direct-data file
+ATTR_E_DSDD EQU     010H        ; (Unused)
+ATTR_F_DSDD EQU     020H        ; Format file
+ATTR_G_DSDD EQU     040H        ; (Unused)
+ATTR_H_DSDD EQU     080H        ; (Unused)
 
 ;
 ; TOS File Control Block, block device variables
@@ -201,17 +247,7 @@ FM_BINARY   EQU     004H        ; Binary flag
 
         ORG         SIGNATURE
         DB          'DIR',NULL,NULL,NULL
-        DB          '106'
-
-
-;//////////////////////////////////////////////////////////////////////////////
-;//
-;//     Legacy program entry
-;//
-;//////////////////////////////////////////////////////////////////////////////
-
-        ORG         0C000H
-        JMP         beginning
+        DB          '200'
 
 
 ;//////////////////////////////////////////////////////////////////////////////
@@ -220,103 +256,35 @@ FM_BINARY   EQU     004H        ; Binary flag
 ;//
 ;//////////////////////////////////////////////////////////////////////////////
 
-intel_mapfile_name:
-        DB          'ISIS',NULL,NULL
-        DB          'MAP'
-
-ibm_file_signature:
-        DB          'HDR1'
-ibm_deleted_signature:
-        DB          'DDR1'
-
+        ORG         02800H
 sp_backup:
-        DS          2
+        DW          2
 input_char:
-        DS          1
-
-ibm_file_parameter_indexes:
-        DB          01CH
-        DB          022H
-        DB          02AH
-        DB          02FH
-        DB          042H
-        DB          04AH
-
-ibm_read_call:
-        DS          2
-
-lines_left_on_page_counter:
-        DB          24
-
-use_console_flag:
-        DB          FALSE
+        DB          NULL
 option_i_flag:
         DB          FALSE
-first_ibm_file_found_flag:
+current_drive_type:
+        DB          'D'
+use_console_flag:
         DB          FALSE
-
 SO_FCB_backup:
         DW          00000H
 total_block_count:
         DW          00000H
 
 input_data_buffer:
-        DS          128
+        DS          256
 dir_file_linking_block_buffer:
-        DS          128
-
-directory_file_fcb:
-        DB          5
-        DB          FM_BINARY
-        DW          0
-        DW          128
-        DW          input_data_buffer
-        DW          00000H
-        DW          00000H
-        DW          00000H
-        DW          00000H
-        DB          0
-        DB          0
-        DB          'ISIS',NULL,NULL
-        DB          'DIR'
-        DB          001H
-        DW          00000H
-        DB          0
-        DB          0
-        DW          dir_file_linking_block_buffer
-
-intel_file_entry_buffer:
-        DS          16
-
-tape_cart_usage_block_data_ptr:
-        DS          2
-
-tape_track_nr_char:
-        DS          1
+        DS          256
 
 
 ;//////////////////////////////////////////////////////////////////////////////
 ;//
-;//     Main program
+;//     Main program: Initialization
 ;//
-;//////////////////////////////////////////////////////////////////////////////
-
-        ;
-        ; Convert character in A to uppercase
-        ;
-to_uppercase:
-        CPI         'a'
-        RM
-        CPI         'z'+1
-        RP
-        ANI         0DFH
-        RET
-
-
 ;//////////////////////////////////////////////////////////////////////////////
 
 start:
-beginning:
         ;
         ; Save stack pointer for easy breaking out of program from subroutines
         ;
@@ -343,11 +311,45 @@ output_file_set:
         STA         directory_file_fcb + FCB_DRVNR
         STA         option_i_flag
         ;
+        ; Check if CLI input is a buffered line-based file
+        ;
+        LHLD        CI_FCB
+        MOV         A,M
+        CPI         4
+        JNZ         parse_args
+        ;
+        ; Verify that there are CLI data pending in file
+        ;
+        INX         H
+        INX         H
+        MOV         E,M             ; CI_FCB + FCB_BUFIDX
+        INX         H
+        MOV         D,M
+        PUSH        D
+        INX         H
+        INX         H
+        INX         H
+        MOV         E,M             ; CI_FCB + FCB_BUFPTR
+        INX         H
+        MOV         D,M
+        POP         H
+        DAD         D
+        MOV         A,M
+        CPI         LF
+        JZ          use_tos_dsdd_format
+
+;//////////////////////////////////////
+
+        ;
+        ; Parse input arguments
+        ;
+parse_args:
+        ;
         ; Parse for command line switches
         ;
         CALL        get_next_char
         CPI         CR
-        JZ          use_intel_format
+        JZ          use_tos_dsdd_format
         CALL        to_uppercase
         CPI         'I'
         JNZ         cli_switches_set
@@ -355,7 +357,10 @@ output_file_set:
         STA         option_i_flag
         CALL        get_next_char
         CPI         CR
-        JZ          use_intel_format
+        JZ          use_tos_dsdd_format
+        CPI         ','
+        JNZ         cli_switches_set
+        CALL        get_next_char
 cli_switches_set:
         ;
         ; Parse for drive designator
@@ -364,14 +369,103 @@ cli_switches_set:
         JNZ         invalid_drive
         CALL        get_next_char
         CALL        to_uppercase
+        STA         current_drive_type
+        CALL        get_next_char
+        SUI         '0'
+        JM          invalid_drive
+        CPI         4
+        JP          invalid_drive
+        STA         directory_file_fcb + FCB_DRVNR
+        CALL        get_next_char
+        CPI         ':'
+        JNZ         invalid_drive
+        CALL        get_next_char
+        CPI         CR
+        JZ          drive_set
+        CPI         ','
+        JNZ         invalid_drive
+        ;
+        ; Parse for command line switches, again
+        ;
+        CALL        get_next_char
+        CALL        to_uppercase
+        CPI         'I'
+        JNZ         invalid_drive
+        MVI         A,TRUE
+        STA         option_i_flag
+        CALL        get_next_char
+        CPI         CR
+        JNZ         invalid_drive
+drive_set:
+        ;
+        ; Check and verify drive type
+        ;
+        LDA         current_drive_type
+        CPI         'D'
+        JZ          use_tos_dsdd_format
         CPI         'F'
-        JNZ         parse_drive_type
-        CALL        parse_drive_number
+        JZ          use_tos_sssd_format
+        CPI         'I'
+        JZ          use_ibm_dsdd_format
+        CPI         'J'
+        JZ          use_ibm_sssd_format
+        JMP         invalid_drive
+
+
+;//////////////////////////////////////////////////////////////////////////////
+;//
+;//     Main program: List files on single-sided TOS disk
+;//
+;//////////////////////////////////////////////////////////////////////////////
+
+directory_file_fcb:
+        DB          5
+        DB          FM_BINARY
+        DW          0
+        DW          128
+        DW          input_data_buffer
+        DW          00000H
+        DW          00000H
+        DW          00000H
+        DW          00000H
+        DB          0
+        DB          0
+        DB          'ISIS',NULL,NULL
+        DB          'DIR'
+        DB          001H
+        DW          00000H
+        DB          0
+        DB          0
+        DW          dir_file_linking_block_buffer
+
+
+;//////////////////////////////////////
+
+intel_file_entry_buffer:
+        DS          16
+
+intel_mapfile_name:
+        DB          'ISIS',NULL,NULL
+        DB          'MAP'
+
+
+;//////////////////////////////////////
+
+attribute_list:
+        DB          ATTR_F,'F'
+        DB          ATTR_X,'X'
+        DB          ATTR_D,'D'
+        DB          ATTR_B,'B'
+        DB          ATTR_A,'A'
+        DB          ATTR_W,'W'
+        DB          ATTR_S,'S'
+        DB          ATTR_I,'I'
+        DB          NULL
 
 
 ;//////////////////////////////////////////////////////////////////////////////
 
-use_intel_format:
+use_tos_sssd_format:
         ;
         ; Reset disk drive and read disk label
         ;
@@ -389,30 +483,57 @@ use_intel_format:
         LXI         D,dir_label_str + 13
         LXI         H,input_data_buffer
         LXI         B,00603H
+        ;
+        ; Insert main name of label into string
+        ;
 intel_labelname_copy_next_char:
         MOV         A,M
+        ANA         A
+        JZ          intel_main_labelname_ready
         STAX        D
-        INX         D
         INX         H
+        INX         D
         DCR         B
         JNZ         intel_labelname_copy_next_char
+        JMP         intel_copy_labelext
+
+intel_main_labelname_ready:
+        ;
+        ; Skip whitespace at the end of the main part of the label name
+        ;
+intel_labelname_skip_whitespace_loop:
+        INX         H
+        DCR         B
+        JNZ         intel_labelname_skip_whitespace_loop
+        ;
+        ; Insert extension of label into string, if present
+        ;
+intel_copy_labelext:
+        MOV         A,M
+        ANA         A
+        JZ          intel_label_str_ready
         MVI         A,'.'
         STAX        D
         INX         D
 intel_labelext_copy_next_char:
         MOV         A,M
+        ANA         A
+        JZ          intel_label_str_ready
         STAX        D
-        INX         D
         INX         H
+        INX         D
         DCR         C
         JNZ         intel_labelext_copy_next_char
+intel_label_str_ready:
+        MVI         A,CR
+        STAX        D
         ;
         ; Print disk label and file listing header
         ;
         LXI         D,dir_label_str
         CALL        print_str
         CALL        print_newline
-        LXI         D,intel_dir_header_str
+        LXI         D,tos_dir_header_str
         CALL        print_str
         CALL        print_newline
         ;
@@ -456,6 +577,7 @@ list_next_intel_file:
         CPI         07FH
         JZ          intel_end_of_directory
         JMP         list_next_intel_file
+
 check_intel_file:
         ;
         ; Check invisible attribute, if not I switch
@@ -510,17 +632,6 @@ intel_file_ext_deliminer_ready:
         CALL        PUTBIN
         JC          exit_program
         ;
-        ; Skip blocks and file-size print if alias file
-        ;
-        LDA         intel_file_entry_buffer + 00AH
-        ANI         ATTR_A
-        JZ          intel_file_include_size
-        MVI         B,18
-        CALL        print_spaces
-        JMP         intel_file_size_done
-
-intel_file_include_size:
-        ;
         ; Count and print blocks used by file
         ;
         LHLD        total_block_count
@@ -562,7 +673,6 @@ linking_blocks_counted:
         CALL        print_big_number
         MVI         A,' '
         CALL        print_char
-intel_file_size_done:
         ;
         ; Print file attributes
         ;
@@ -605,17 +715,6 @@ done_printing_attributes:
         CALL        print_newline
         RET
 
-attribute_list:
-        DB          ATTR_F,'F'
-        DB          ATTR_X,'X'
-        DB          ATTR_D,'D'
-        DB          ATTR_B,'B'
-        DB          ATTR_A,'A'
-        DB          ATTR_W,'W'
-        DB          ATTR_S,'S'
-        DB          ATTR_I,'I'
-        DB          NULL
-
 
 ;//////////////////////////////////////
 
@@ -654,43 +753,754 @@ intel_end_of_directory:
         CALL        print_word
         LXI         D,blocks_used_str
         CALL        print_str
+        JMP         file_listing_end
+
+
+;//////////////////////////////////////////////////////////////////////////////
+
+        ;
+        ; Calculate file size based on HL blocks used and final block size E
+        ;
+calculate_file_size:
+        ;
+        ; Check for edge-case where file is completely empty
+        ;
+        MOV         A,L
+        ORA         H
+        JZ          block_count_ready
+        ;
+        ; Subtract 1 from HL since we are adding the last block size separately
+        ;
+        DCX         H
+block_count_ready:
+        ;
+        ; Multiply full block count with block size of 128
+        ;
+        XRA         A
+        MOV         A,H
+        RAR
+        STA         big_number
+        MOV         A,L
+        RAR
+        STA         big_number+1
+        RAR
+        ANI         080H
+        ;
+        ; Add final block size E to result
+        ;
+        ADD         E
+        STA         big_number+2
+        LDA         big_number+1
+        ACI         0
+        STA         big_number+1
+        RET
+
+
+;//////////////////////////////////////////////////////////////////////////////
+
+        ;
+        ; Count all bits set in sector addressed by HL, and add to total count
+        ;
+add_bits_in_sector:
+        ;
+        ; Read sector from disk
+        ;
+        MOV         B,H
+        MOV         C,L
+        LXI         H,input_data_buffer
+        LDA         directory_file_fcb + FCB_DRVNR
+        CALL        DSRDW
+        JC          exit_program
+        ;
+        ; Prepare to count bits in all 128 bytes
+        ;
+        LXI         D,0
+        MVI         B,128
+count_bits_in_next_byte:
+        ;
+        ; Set up bitmask to count bits in byte
+        ;
+        MVI         C,080H
+        MOV         A,C
+count_next_bit_in_byte:
+        ANA         M
+        JZ          done_counting_bit
+        INX         D
+done_counting_bit:
+        ;
+        ; Advance bitmask to next bit
+        ;
+        MOV         A,C
+        RAR
+        MOV         C,A
+        JNC         count_next_bit_in_byte
+        ;
+        ; Advance to next byte of sector
+        ;
+        INX         H
+        DCR         B
+        JNZ         count_bits_in_next_byte
+        ;
+        ; Add bitcount to total count
+        ;
+        LHLD        total_block_count
+        DAD         D
+        SHLD        total_block_count
+        RET
+
+
+;//////////////////////////////////////////////////////////////////////////////
+;//
+;//     Main program: List files on double-sided TOS disk
+;//
+;//////////////////////////////////////////////////////////////////////////////
+
+directory_iterator:
+        DB          FALSE
+        DB          0
+        DW          dir_file_linking_block_buffer
+        DW          input_data_buffer
+        DW          00000H
+        DW          00000H
+        DW          0*DISK_TRACK + 0*DISK_SECTOR
 
 
 ;//////////////////////////////////////
 
-file_listing_end:
+file_entry_ptr:
+        DW          00000H
+
+
+;//////////////////////////////////////
+
+attribute_list_byte_1:
+        DB          ATTR_X_DSDD,'X'
+        DB          ATTR_W_DSDD,'W'
+        DB          ATTR_V_DSDD,'V'
+        DB          ATTR_U_DSDD,'U'
+        DB          ATTR_T_DSDD,'T'
+        DB          ATTR_S_DSDD,'S'
+        DB          ATTR_T_DSDD,'R'
+        DB          ATTR_Q_DSDD,'Q'
+        DB          NULL
+
+attribute_list_byte_2:
+        DB          ATTR_P_DSDD,'P'
+        DB          ATTR_O_DSDD,'O'
+        DB          ATTR_N_DSDD,'N'
+        DB          ATTR_M_DSDD,'M'
+        DB          ATTR_L_DSDD,'L'
+        DB          ATTR_K_DSDD,'K'
+        DB          ATTR_L_DSDD,'J'
+        DB          ATTR_I_DSDD,'I'
+        DB          NULL
+
+attribute_list_byte_3:
+        DB          ATTR_H_DSDD,'H'
+        DB          ATTR_G_DSDD,'G'
+        DB          ATTR_F_DSDD,'F'
+        DB          ATTR_E_DSDD,'E'
+        DB          ATTR_D_DSDD,'D'
+        DB          ATTR_C_DSDD,'C'
+        DB          ATTR_D_DSDD,'B'
+        DB          ATTR_A_DSDD,'A'
+        DB          NULL
+
+
+;//////////////////////////////////////
+
+tos_dsdd_signature:
+        DB          'TANDBERG'
+
+
+;//////////////////////////////////////////////////////////////////////////////
+
+use_tos_dsdd_format:
+        ;
+        ; Check disk format signature, to verify it's a TOS double-sided disk
+        ;
+        LDA         directory_file_fcb + FCB_DRVNR
+        CALL        DCALW
+        JC          exit_program
+        LXI         H,input_data_buffer
+        LXI         B,1*DISK_TRACK + 26*DISK_SECTOR
+        LDA         directory_file_fcb + FCB_DRVNR
+        CALL        DDSRDW
+        JC          exit_program
+        LXI         H,input_data_buffer + 011H
+        LXI         D,tos_dsdd_signature
+        MVI         B,8
+verify_format_signature_loop:
+        LDAX        D
+        CMP         M
+        JNZ         unrecognized_floppy_format
+        INX         H
+        INX         D
+        DCR         B
+        JNZ         verify_format_signature_loop
+        ;
+        ; Prepare disk label string
+        ;
+        LXI         D,dir_label_str + 13
+        LXI         H,input_data_buffer
+        LXI         B,00603H
+        ;
+        ; Insert main name of label into string
+        ;
+labelname_copy_next_char:
+        MOV         A,M
+        ANA         A
+        JZ          main_labelname_ready
+        STAX        D
+        INX         H
+        INX         D
+        DCR         B
+        JNZ         labelname_copy_next_char
+main_labelname_ready:
+        INR         B
+        INR         B
+        ;
+        ; Skip whitespace at the end of the main part of the label name
+        ;
+labelname_skip_whitespace_loop:
+        INX         H
+        DCR         B
+        JNZ         labelname_skip_whitespace_loop
+        ;
+        ; Insert extension of label into string, if present
+        ;
+        MOV         A,M
+        ANA         A
+        JZ          label_str_ready
+        MVI         A,'.'
+        STAX        D
+        INX         D
+labelext_copy_next_char:
+        MOV         A,M
+        ANA         A
+        JZ          label_str_ready
+        STAX        D
+        INX         H
+        INX         D
+        DCR         C
+        JNZ         labelext_copy_next_char
+label_str_ready:
+        MVI         A,CR
+        STAX        D
+        ;
+        ; Print disk label and file listing header
+        ;
+        LXI         D,dir_label_str
+        CALL        print_str
         CALL        print_newline
-exit_program:
-        LHLD        sp_backup
-        SPHL
-        LHLD        SO_FCB_backup
-        SHLD        SO_FCB
+        LXI         D,tos_dir_header_str
+        CALL        print_str
+        CALL        print_newline
         ;
-        ; Flush remaining console input, saving any raised error-code
+        ; Prepare to iterate through double-sided TOS-II disk directory
         ;
-        PUSH        PSW
-        LDA         input_char
-flush_next_char:
-        CPI         CR
-        JZ          quit
-        LHLD        CI_FCB
-        CALL        INCHAR
-        JNC         flush_next_char
+        XRA         A
+        STA         directory_iterator
+        LDA         directory_file_fcb + FCB_DRVNR
+        STA         directory_iterator + 001H
+list_next_file:
         ;
-        ; Dispose any previous error if flushing itself resulted in error
+        ; Get next directory entry via iterator
         ;
-        INX         SP
-        INX         SP
+        LXI         H,directory_iterator
+        CALL        DNEXTFILE
+        JC          end_of_directory
+        SHLD        file_entry_ptr
+        ;
+        ; Check status of file
+        ;
+        MOV         A,M
+        ANA         A
+        JZ          check_file
+        CPI         07FH
+        JZ          end_of_directory
+        JMP         list_next_file
+
+check_file:
+        ;
+        ; Check invisible attribute, if not I switch
+        ;
+        LDA         option_i_flag
+        ORA         A
+        JNZ         list_file
+        LHLD        file_entry_ptr
+        LXI         D,00FH
+        DAD         D
+        MOV         A,M
+        ANI         ATTR_I_DSDD
+        JNZ         list_next_file
+
+
+;//////////////////////////////////////
+
+list_file:
+        ;
+        ; Prepare filename for printing
+        ;
+        LHLD        file_entry_ptr
+        INX         H
+        MVI         B,13
+filename_prepare_next_char:
+        MOV         A,M
+        ANA         A
+        JNZ         filename_char_ready
+        MVI         M,' '
+filename_char_ready:
+        INX         H
+        DCR         B
+        JNZ         filename_prepare_next_char
+        ;
+        ; Print filename
+        ;
+        LHLD        file_entry_ptr
+        INX         H
+        XCHG
+        LHLD        SO_FCB
+        MVI         B,6
+        CALL        PUTBIN
+        JC          exit_program
+        ;
+        ; Print filename extension deliminer, if extension present
+        ;
+        LHLD        file_entry_ptr
+        LXI         D,9
+        DAD         D
+        PUSH        H
+        MOV         A,M
+        CPI         ' '
+        JZ          file_ext_deliminer_ready
+        MVI         A,'.'
+file_ext_deliminer_ready:
+        CALL        print_char
+        POP         D
+        ;
+        ; Print filename extension deliminer, if extension present
+        ;
+        LHLD        SO_FCB
+        MVI         B,3
+        CALL        PUTBIN
+        JC          exit_program
+        LHLD        file_entry_ptr
+        ;
+        ; Prepare to count blocks and print file-size
+        ;
+        LXI         D,011H
+        DAD         D
+        MOV         E,M
+        INX         H
+        MOV         D,M
+        INX         H
+        PUSH        D
+        MOV         E,M
+        INX         H
+        MOV         D,M
+        PUSH        D
+        ;
+        ; Count and print blocks used by file
+        ;
+        LHLD        total_block_count
+        XCHG
+        PUSH        D
+        PUSH        H
+        LXI         B,1
+        MOV         A,L
+        ORA         H
+        JZ          d_linking_blocks_counted
+        DCX         H
+        LXI         D,-62
+d_count_next_linking_block:
+        DAD         D
+        JNC         d_linking_blocks_counted
+        INX         B
+        JMP         d_count_next_linking_block
+
+d_linking_blocks_counted:
+        POP         H
+        DAD         B
+        POP         D
+        PUSH        H
+        DAD         D
+        SHLD        total_block_count
+        POP         H
+        CALL        print_word
+        MVI         B,3
+        CALL        print_spaces
+        ;
+        ; Print file size
+        ;
+        POP         H
+        POP         D
+        CALL        d_calculate_file_size
+        CALL        print_big_number
+        MVI         A,' '
+        CALL        print_char
+        ;
+        ; Print file attributes
+        ;
+        LHLD        file_entry_ptr
+        LXI         D,00EH
+        DAD         D
+        MOV         A,M
+        LXI         D,attribute_list_byte_1
+        CALL        print_attribute_list_part
+        INX         H
+        MOV         A,M
+        LXI         D,attribute_list_byte_2
+        CALL        print_attribute_list_part
+        INX         H
+        MOV         A,M
+        LXI         D,attribute_list_byte_3
+        CALL        print_attribute_list_part
+        CALL        print_newline
+        JMP         list_next_file
+
+
+;//////////////////////////////////////////////////////////////////////////////
+
+print_attribute_list_part:
+        ;
+        ; Prepare to print attributes if any is set
+        ;
+        MOV         B,A
+        ANA         A
+        RZ
+d_print_next_atribute:
+        ;
+        ; Get bitmask of attribute
+        ;
+        LDAX        D
+        ANA         A
+        RZ
+        ;
+        ; Check if attribute bit is set and print its tag if so
+        ;
+        ANA         B
+        INX         D
+        LDAX        D
+        INX         D
+        CNZ         print_char
+        JMP         d_print_next_atribute
+
+
+;//////////////////////////////////////////////////////////////////////////////
+
+end_of_directory:
+        ;
+        ; Print overal block count of files on disk
+        ;
+        MVI         B,10
+        CALL        print_spaces
+        LHLD        total_block_count
+        CALL        print_word
+        CALL        print_newline
+        ;
+        ; Count blocks reserved in mapfile
+        ;
+        LXI         H,0
+        SHLD        total_block_count
+        LXI         B,1*DISK_TRACK + 1*DISK_SECTOR
+        CALL        d_add_bits_in_sector
+        LXI         B,1*DISK_TRACK + 2*DISK_SECTOR
+        CALL        d_add_bits_in_sector
+        ;
+        ; Print number of blocks reserved
+        ;
+        CALL        print_newline
+        LXI         D,map_status_str
+        CALL        print_partial_str
+        LHLD        total_block_count
+        CALL        print_word
+        LXI         D,d_blocks_used_str
+        CALL        print_str
+        JMP         file_listing_end
+
+
+;//////////////////////////////////////////////////////////////////////////////
+
+        ;
+        ; Calculate file size based on HL blocks used and final block size DE
+        ;
+d_calculate_file_size:
+        ;
+        ; Check for edge-case where file is completely empty
+        ;
+        MOV         A,L
+        ORA         H
+        JZ          block_count_ready
+        ;
+        ; Subtract 1 from HL since we are adding the last block size separately
+        ;
+        DCX         H
+        ;
+        ; Multiply full block count with 256, while adding final block size DE
+        ;
+        XRA         A
+        MOV         A,L
+        ADD         D
+        STA         big_number+1
+        MOV         A,H
+        ACI         0
+        STA         big_number
+        MOV         A,E
+        STA         big_number+2
         RET
 
-quit:
+
+;//////////////////////////////////////////////////////////////////////////////
+
+d_add_bits_in_sector:
         ;
-        ; Flushing complete, recover error-code if any
+        ; Read sector from disk
         ;
-        POP         PSW
+        LXI         H,input_data_buffer
+        LDA         directory_file_fcb + FCB_DRVNR
+        CALL        DDSRDW
+        JC          exit_program
+        ;
+        ; Prepare to count bits in all 256 bytes
+        ;
+        LXI         D,0
+        MVI         B,0
+d_count_bits_in_next_byte:
+        ;
+        ; Set up bitmask to count bits in byte
+        ;
+        MVI         C,080H
+        MOV         A,C
+d_count_next_bit_in_byte:
+        ANA         M
+        JZ          d_done_counting_bit
+        INX         D
+d_done_counting_bit:
+        ;
+        ; Advance bitmask to next bit
+        ;
+        MOV         A,C
+        RAR
+        MOV         C,A
+        JNC         d_count_next_bit_in_byte
+        ;
+        ; Advance to next byte of sector
+        ;
+        INX         H
+        DCR         B
+        JNZ         d_count_bits_in_next_byte
+        ;
+        ; Add bitcount to total count
+        ;
+        LHLD        total_block_count
+        DAD         D
+        SHLD        total_block_count
         RET
 
 
+;//////////////////////////////////////////////////////////////////////////////
+;//
+;//     Main program: List files on single-sided IBM disk
+;//
+;//////////////////////////////////////////////////////////////////////////////
+
+ibm_file_signature:
+        DB          'HDR1'
+ibm_deleted_signature:
+        DB          'DDR1'
+
+ibm_file_parameter_indexes:
+        DB          01CH
+        DB          022H
+        DB          02AH
+        DB          02FH
+        DB          042H
+        DB          04AH
+
+ibm_read_call:
+        DW          00000H
+
+lines_left_on_page_counter:
+        DB          24
+
+first_ibm_file_found_flag:
+        DB          FALSE
+
+
+;//////////////////////////////////////////////////////////////////////////////
+
+use_ibm_sssd_format:
+        ;
+        ; Prepare directory listing
+        ;
+        XRA         A
+        STA         first_ibm_file_found_flag
+        ;
+        ; List all active IBM file entries, starting at sector 8
+        ;
+        LXI         B,0*DISK_TRACK + 8*DISK_SECTOR
+get_ibm_file:
+        ;
+        ; Read file entry, ignore if deleted sector
+        ;
+        LXI         H,input_data_buffer
+        LDA         directory_file_fcb + FCB_DRVNR
+        CALL        DSRAW
+        JNC         list_ibm_file
+        CPI         ERROR_20
+        STC
+        JNZ         exit_program
+list_next_ibm_file:
+        ;
+        ; Advance to next file entry
+        ;
+        MOV         A,C
+        CPI         26
+        INX         B
+        JNZ         get_ibm_file
+        CALL        print_newline
+        JMP         exit_program
+
+list_ibm_file:
+        ;
+        ; Check if file is active
+        ;
+        LXI         D,ibm_deleted_signature
+        CALL        compare_ibm_signature
+        JZ          list_next_ibm_file
+        LXI         D,ibm_file_signature
+        CALL        compare_ibm_signature
+        JNZ         unrecognized_floppy_format
+        ;
+        ; Print header and set flag if first file to be listed
+        ;
+        LDA         first_ibm_file_found_flag
+        ORA         A
+        JNZ         list_ibm_file_data
+        CALL        print_newline
+        LXI         D,ibm_dir_header_str
+        CALL        print_str
+        MVI         A,TRUE
+        STA         first_ibm_file_found_flag
+list_ibm_file_data:
+        ;
+        ; Prepare file entry data for printing
+        ;
+        MVI         A,CR
+        STA         input_data_buffer + 00DH
+        STA         input_data_buffer + 01BH
+        STA         input_data_buffer + 021H
+        STA         input_data_buffer + 027H
+        STA         input_data_buffer + 02BH
+        STA         input_data_buffer + 035H
+        STA         input_data_buffer + 048H
+        STA         input_data_buffer + 04FH
+        MVI         A,'/'
+        STA         input_data_buffer + 01EH
+        STA         input_data_buffer + 024H
+        STA         input_data_buffer + 04CH
+        ;
+        ; Print sector number
+        ;
+        CALL        print_newline
+        MOV         L,C
+        MVI         H,000H
+        PUSH        B
+        CALL        print_word
+        MVI         B,3
+        CALL        print_spaces
+        ;
+        ; Print filename
+        ;
+        LXI         D,input_data_buffer + 005H
+        CALL        print_partial_str
+        MVI         B,2
+        CALL        print_spaces
+        ;
+        ; Print record length
+        ;
+        LXI         D,input_data_buffer + 018H
+        MVI         C,3
+print_next_ibm_record_len_char:
+        LDAX        D
+        CALL        print_char
+        INX         D
+        DCR         C
+        JNZ         print_next_ibm_record_len_char
+        ;
+        ; Print remaining file parameters using list of indexes
+        ;
+        MVI         C,6
+        LXI         H,ibm_file_parameter_indexes
+print_next_ibm_record_param:
+        MVI         B,2
+        CALL        print_spaces
+        ;
+        ; Point to parameter using current index
+        ;
+        LXI         D,input_data_buffer
+        PUSH        H
+        MOV         L,M
+        MVI         H,000H
+        DAD         D
+        XCHG
+        POP         H
+        ;
+        ; Print parameter and advance to next index
+        ;
+        CALL        print_partial_str
+        INX         H
+        DCR         C
+        JNZ         print_next_ibm_record_param
+        ;
+        ; Done listing IBM file
+        ;
+        POP         B
+        JMP         list_next_ibm_file
+
+
+;//////////////////////////////////////
+
+        ;
+        ; Compare 4-character strings pointed to by DE and HL
+        ;
+compare_ibm_signature:
+        LXI         H,input_data_buffer
+        MVI         B,4
+compare_next_ibm_sig_char:
+        ;
+        ; Compare current character
+        ;
+        LDAX        D
+        CMP         M
+        RNZ
+        ;
+        ; Advance to next character
+        ;
+        DCR         B
+        RZ
+        INX         H
+        INX         D
+        JMP         compare_next_ibm_sig_char
+
+
+;//////////////////////////////////////////////////////////////////////////////
+;//
+;//     Main program: List files on double-sided IBM disk
+;//
+;//////////////////////////////////////////////////////////////////////////////
+
+use_ibm_dsdd_format:
+        MVI         A,ERROR_38
+        STC
+        RET
+
+
+;//////////////////////////////////////////////////////////////////////////////
+;//
+;//     Subroutines
+;//
 ;//////////////////////////////////////////////////////////////////////////////
 
 first_digit_found_flag:
@@ -853,486 +1663,18 @@ decimal_magnitude_list:
 
 ;//////////////////////////////////////////////////////////////////////////////
 
-parse_drive_type:
-        CPI         'M'
-        JZ          use_tape_format
-        CPI         'I'
-        JZ          use_ibm_edbdic_format
-        CPI         'J'
-        JZ          use_ibm_edbdic_format
-        CPI         'A'
-        JZ          use_ibm_ascii_format
-        CPI         'B'
-        JZ          use_ibm_ascii_format
-invalid_drive:
-        LXI         D,invalid_drive_str
-        CALL        print_str
-        JMP         exit_program
-
-
-;//////////////////////////////////////////////////////////////////////////////
-
-use_tape_format:
         ;
-        ; Reset tape drive
-        ;
-        CALL        parse_drive_number
-        LDA         directory_file_fcb + FCB_DRVNR
-        CALL        CCAL
-        JC          exit_program
-        ;
-        ; Read first directory block
-        ;
-        LXI         H,input_data_buffer
-        LDA         directory_file_fcb + FCB_DRVNR
-        MVI         B,0
-        CALL        CBRDW
-        JC          exit_program
-        ;
-        ; Verify directory header block
-        ;
-        LDA         input_data_buffer
-        CPI         088H
-        JZ          tape_format_ok
-        LXI         D,illegal_tape_fmt_str
-        CALL        print_str
-        JMP         exit_program
-
-tape_format_ok:
-        ;
-        ; Get tape label and copy it to report string
-        ;
-        LXI         D,dir_label_str+13
-        LXI         H,input_data_buffer+1
-        LXI         B,00603H
-copy_next_tape_labelname_char:
-        MOV         A,M
-        STAX        D
-        INX         D
-        INX         H
-        DCR         B
-        JNZ         copy_next_tape_labelname_char
-        ;
-        ; Skip deliminer if no extension
-        ;
-        XRA         A
-        ORA         M
-        JZ          copy_label_ext
-        MVI         A,'.'
-copy_label_ext:
-        STAX        D
-        INX         D
-copy_next_tape_label_ext_char:
-        MOV         A,M
-        STAX        D
-        INX         D
-        INX         H
-        DCR         C
-        JNZ         copy_next_tape_label_ext_char
-        ;
-        ; Print tape label and filelist header
-        ;
-        LXI         D,dir_label_str
-        CALL        print_str
-        CALL        print_newline
-        LXI         D,tape_dir_header_str
-        CALL        print_str
-        CALL        print_newline
-        ;
-        ; List file directory
-        ;
-list_next_tape_file:
-        ;
-        ; Read next directory block
-        ;
-        LDA         directory_file_fcb + FCB_DRVNR
-        MVI         B,0
-        LXI         H,input_data_buffer
-        CALL        CBRDW
-        JC          exit_program
-        ;
-        ; Check if file active
-        ;
-        LDA         input_data_buffer
-        ANA         A
-        JZ          check_tape_file
-        CPI         0FFH
-        JZ          list_next_tape_file
-        CPI         07FH
-        JZ          tape_end_of_directory
-        LXI         D,illegal_tape_fmt_str
-        CALL        print_str
-        JMP         exit_program
-
-check_tape_file:
-        ;
-        ; Check invisible attribute, if not I switch
-        ;
-        LDA         option_i_flag
-        ORA         A
-        JNZ         list_tape_file
-        LDA         input_data_buffer + 012H
-        ANI         ATTR_I
-        JNZ         list_next_tape_file
-
-
-;//////////////////////////////////////
-
-list_tape_file:
-        ;
-        ; Prepare filename for printing
-        ;
-        LXI         H,input_data_buffer + 001H
-        MVI         B,9
-tape_filename_prepare_next_char:
-        MOV         A,M
-        ANA         A
-        JNZ         tape_filename_char_ready
-        MVI         M,' '
-tape_filename_char_ready:
-        INX         H
-        DCR         B
-        JNZ         tape_filename_prepare_next_char
-        ;
-        ; Print filename
-        ;
-        LXI         D,input_data_buffer + 001H
-        LHLD        SO_FCB
-        MVI         B,6
-        CALL        PUTBIN
-        JC          exit_program
-        ;
-        ; Print filename extension deliminer, if extension present
-        ;
-        LDA         input_data_buffer + 007H
-        CPI         ' '
-        JZ          tape_file_ext_deliminer_ready
-        MVI         A,'.'
-tape_file_ext_deliminer_ready:
-        CALL        print_char
-        ;
-        ; Print filename extension deliminer, if extension present
-        ;
-        LXI         D,input_data_buffer + 007H
-        MVI         B,3
-        CALL        PUTBIN
-        JC          exit_program
-        ;
-        ; Skip blocks and file-size print if alias file
-        ;
-        LDA         input_data_buffer + 012H
-        ANI         ATTR_A
-        JZ          tape_file_include_size
-        MVI         B,29
-        CALL        print_spaces
-        JMP         tape_file_size_done
-
-tape_file_include_size:
-        ;
-        ; Print file track number
-        ;
-        LDA         input_data_buffer + 00AH
-        MOV         L,A
-        MVI         H,000H
-        CALL        print_word
-        ;
-        ; Print file number
-        ;
-        LDA         input_data_buffer + 00BH
-        MOV         L,A
-        MVI         H,000H
-        CALL        print_word
-        ;
-        ; Print blocks used by file
-        ;
-        LHLD        input_data_buffer + 00EH
-        CALL        print_word
-        ;
-        ; Print file size
-        ;
-        LHLD        input_data_buffer + 010H
-        XCHG
-        LHLD        input_data_buffer + 00EH
-        CALL        calculate_file_size
-        CALL        print_big_number
-        MVI         A,' '
-        CALL        print_char
-tape_file_size_done:
-        ;
-        ; Print file attributes
-        ;
-        LDA         input_data_buffer + 012H
-        CALL        print_attribute_list
-        JMP         list_next_tape_file
-
-
-;//////////////////////////////////////
-
-tape_end_of_directory:
-        ;
-        ; Reset tape and print track status header
-        ;
-        LDA         directory_file_fcb + FCB_DRVNR
-        CALL        CCAL
-        RC
-        CALL        print_newline
-        LXI         D,tracks_usage_str
-        CALL        print_str
-        CALL        print_newline
-        ;
-        ; Print track status map from directory end block
-        ;
-        LXI         H,input_data_buffer + 001H
-        SHLD        tape_cart_usage_block_data_ptr
-        MVI         A,'1'
-        STA         tape_track_nr_char
-        ;
-        ; Print status map for one track
-        ;
-tape_list_next_track_summary:
-        MVI         B,15
-        CALL        print_spaces
-        ;
-        ; Print an asterisk if track is not empty
-        ;
-        LHLD        tape_cart_usage_block_data_ptr
-        MOV         A,M
-        ANA         A
-        MVI         A,' '
-        JZ          tape_track_status_char_ready
-        MVI         A,'*'
-tape_track_status_char_ready:
-        CALL        print_char
-        LDA         tape_track_nr_char
-        CALL        print_char
-        ;
-        ; Print number of blocks on track
-        ;
-        LHLD        tape_cart_usage_block_data_ptr
-        INX         H
-        MOV         E,M
-        INX         H
-        MOV         D,M
-        INX         H
-        SHLD        tape_cart_usage_block_data_ptr
-        XCHG
-        CALL        print_word
-        ;
-        ; Print number of files on track
-        ;
-        LHLD        tape_cart_usage_block_data_ptr
-        MOV         A,M
-        INX         H
-        INX         H
-        SHLD        tape_cart_usage_block_data_ptr
-        MOV         L,A
-        MVI         H,000H
-        CALL        print_word
-        CALL        print_newline
-        ;
-        ; Advance to print status of next track
-        ;
-        LDA         tape_track_nr_char
-        CPI         '3'
-        JZ          file_listing_end
-        INR         A
-        STA         tape_track_nr_char
-        JMP         tape_list_next_track_summary
-
-
-;//////////////////////////////////////////////////////////////////////////////
-
-use_ibm_ascii_format:
-        LXI         H,DSRDW
-        JMP         ibm_disk_type_set
-
-use_ibm_edbdic_format:
-        LXI         H,DSRAW
-ibm_disk_type_set:
-        ;
-        ; Store IBM read sector api call pointer
-        ;
-        SHLD        ibm_read_call
-        ;
-        ; Get drive number
-        ;
-        CALL        parse_drive_number
-        XRA         A
-        STA         first_ibm_file_found_flag
-        ;
-        ; List all active IBM file entries, starting at sector 8
-        ;
-        LXI         B,0*DISK_TRACK + 8*DISK_SECTOR
-get_ibm_file:
-        ;
-        ; Read file entry, ignore if deleted sector
-        ;
-        CALL        read_ibm_sector
-        JNC         list_ibm_file
-        CPI         ERROR_20
-        STC
-        JNZ         exit_program
-list_next_ibm_file:
-        ;
-        ; Advance to next file entry
-        ;
-        MOV         A,C
-        CPI         26
-        INX         B
-        JNZ         get_ibm_file
-        CALL        print_newline
-        JMP         exit_program
-
-list_ibm_file:
-        ;
-        ; Check if file is active
-        ;
-        LXI         D,ibm_deleted_signature
-        CALL        compare_ibm_signature
-        JZ          list_next_ibm_file
-        LXI         D,ibm_file_signature
-        CALL        compare_ibm_signature
-        JNZ         unrecognized_floppy_format
-        ;
-        ; Print header and set flag if first file to be listed
-        ;
-        LDA         first_ibm_file_found_flag
-        ORA         A
-        JNZ         list_ibm_file_data
-        CALL        print_newline
-        LXI         D,ibm_dir_header_str
-        CALL        print_str
-        MVI         A,TRUE
-        STA         first_ibm_file_found_flag
-list_ibm_file_data:
-        ;
-        ; Prepare file entry data for printing
-        ;
-        MVI         A,CR
-        STA         input_data_buffer + 00DH
-        STA         input_data_buffer + 01BH
-        STA         input_data_buffer + 021H
-        STA         input_data_buffer + 027H
-        STA         input_data_buffer + 02BH
-        STA         input_data_buffer + 035H
-        STA         input_data_buffer + 048H
-        STA         input_data_buffer + 04FH
-        MVI         A,'/'
-        STA         input_data_buffer + 01EH
-        STA         input_data_buffer + 024H
-        STA         input_data_buffer + 04CH
-        ;
-        ; Print sector number
-        ;
-        CALL        print_newline
-        MOV         L,C
-        MVI         H,000H
-        PUSH        B
-        CALL        print_word
-        MVI         B,3
-        CALL        print_spaces
-        ;
-        ; Print filename
-        ;
-        LXI         D,input_data_buffer + 005H
-        CALL        print_partial_str
-        MVI         B,2
-        CALL        print_spaces
-        ;
-        ; Print record length
-        ;
-        LXI         D,input_data_buffer + 018H
-        MVI         C,3
-print_next_ibm_record_len_char:
-        LDAX        D
-        CALL        print_char
-        INX         D
-        DCR         C
-        JNZ         print_next_ibm_record_len_char
-        ;
-        ; Print remaining file parameters using list of indexes
-        ;
-        MVI         C,6
-        LXI         H,ibm_file_parameter_indexes
-print_next_ibm_record_param:
-        MVI         B,2
-        CALL        print_spaces
-        ;
-        ; Point to parameter using current index
-        ;
-        LXI         D,input_data_buffer
-        PUSH        H
-        MOV         L,M
-        MVI         H,000H
-        DAD         D
-        XCHG
-        POP         H
-        ;
-        ; Print parameter and advance to next index
-        ;
-        CALL        print_partial_str
-        INX         H
-        DCR         C
-        JNZ         print_next_ibm_record_param
-        ;
-        ; Done listing IBM file
-        ;
-        POP         B
-        JMP         list_next_ibm_file
-
-
-;//////////////////////////////////////
-
-read_ibm_sector:
-        ;
-        ; Call stored API read-call by forcing it on the stack before returning
-        ;
-        LHLD        ibm_read_call
-        PUSH        H
-        LXI         H,input_data_buffer
-        LDA         directory_file_fcb + FCB_DRVNR
+        ; Convert character in A to uppercase
+        ;
+to_uppercase:
+        CPI         'a'
+        RM
+        CPI         'z'+1
+        RP
+        ANI         0DFH
         RET
 
 
-;//////////////////////////////////////
-
-unrecognized_floppy_format:
-        LXI         D,newline_str
-        CALL        print_str
-        LXI         D,invalid_disk_format_str
-        CALL        print_str
-        JMP         exit_program
-
-
-;//////////////////////////////////////
-
-        ;
-        ; Compare 4-character strings pointed to by DE and HL
-        ;
-compare_ibm_signature:
-        LXI         H,input_data_buffer
-        MVI         B,4
-compare_next_ibm_sig_char:
-        ;
-        ; Compare current character
-        ;
-        LDAX        D
-        CMP         M
-        RNZ
-        ;
-        ; Advance to next character
-        ;
-        DCR         B
-        RZ
-        INX         H
-        INX         D
-        JMP         compare_next_ibm_sig_char
-
-
-;//////////////////////////////////////////////////////////////////////////////
-;//
-;//     Subroutines
-;//
 ;//////////////////////////////////////////////////////////////////////////////
 
         ;
@@ -1425,27 +1767,6 @@ get_next_char:
 
 ;//////////////////////////////////////////////////////////////////////////////
 
-parse_drive_number:
-        ;
-        ; Get drive number char and check for within bounds
-        ;
-        CALL        get_next_char
-        SUI         '0'
-        JM          invalid_drive
-        CPI         4
-        JP          invalid_drive
-        ;
-        ; Store drive nr and check drive designator final character
-        ;
-        STA         directory_file_fcb + FCB_DRVNR
-        CALL        get_next_char
-        CPI         ':'
-        JNZ         invalid_drive
-        RET
-
-
-;//////////////////////////////////////////////////////////////////////////////
-
         ;
         ; Print B number of spaces
         ;
@@ -1473,96 +1794,42 @@ print_word:
 
 
 ;//////////////////////////////////////////////////////////////////////////////
-
-        ;
-        ; Calculate file size based on HL blocks used and final block size E
-        ;
-calculate_file_size:
-        ;
-        ; Check for edge-case where file is completely empty
-        ;
-        MOV         A,L
-        ORA         H
-        JZ          block_count_ready
-        ;
-        ; Subtract 1 from HL since we are adding the last block size separately
-        ;
-        DCX         H
-block_count_ready:
-        ;
-        ; Multiply full block count with block size of 128
-        ;
-        XRA         A
-        MOV         A,H
-        RAR
-        STA         big_number
-        MOV         A,L
-        RAR
-        STA         big_number+1
-        RAR
-        ANI         080H
-        ;
-        ; Add final block size E to result
-        ;
-        ADD         E
-        STA         big_number+2
-        LDA         big_number+1
-        ACI         0
-        STA         big_number+1
-        RET
-
-
+;//
+;//     Main program: Termination
+;//
 ;//////////////////////////////////////////////////////////////////////////////
 
-        ;
-        ; Count all bits set in sector addressed by HL, and add to total count
-        ;
-add_bits_in_sector:
-        ;
-        ; Read sector from disk
-        ;
-        MOV         B,H
-        MOV         C,L
-        LXI         H,input_data_buffer
-        LDA         directory_file_fcb + FCB_DRVNR
-        CALL        DSRDW
-        JC          exit_program
-        ;
-        ; Prepare to count bits in all 128 bytes
-        ;
-        LXI         D,0
-        MVI         B,128
-count_bits_in_next_byte:
-        ;
-        ; Set up bitmask to count bits in byte
-        ;
-        MVI         C,080H
-        MOV         A,C
-count_next_bit_in_byte:
-        ANA         M
-        JZ          done_counting_bit
-        INX         D
-done_counting_bit:
-        ;
-        ; Advance bitmask to next bit
-        ;
-        MOV         A,C
-        RAR
-        MOV         C,A
-        JNC         count_next_bit_in_byte
-        ;
-        ; Advance to next byte of sector
-        ;
-        INX         H
-        DCR         B
-        JNZ         count_bits_in_next_byte
-        ;
-        ; Add bitcount to total count
-        ;
-        LHLD        total_block_count
-        DAD         D
-        SHLD        total_block_count
+exit_program:
+        LHLD        sp_backup
+        SPHL
+        LHLD        SO_FCB_backup
+        SHLD        SO_FCB
         RET
+
+
+;//////////////////////////////////////
+
+unrecognized_floppy_format:
+        LXI         D,newline_str
+        CALL        print_str
+        LXI         D,invalid_disk_format_str
+        CALL        print_str
+        JMP         exit_program
+
+
+;//////////////////////////////////////
+
+invalid_drive:
+        LXI         D,invalid_drive_str
+        CALL        print_str
+        JMP         exit_program
+
+
+;//////////////////////////////////////
+
+file_listing_end:
+        CALL        print_newline
+        JMP         exit_program
 
 
 ;//////////////////////////////////////////////////////////////////////////////
@@ -1575,18 +1842,14 @@ dir_label_str:
         DB          'DIRECTORY OF '
         DS          10
         DB          CR
-intel_dir_header_str:
+tos_dir_header_str:
         DB          'NAME  .EXT   BLKS    LENGTH ATTR'
 newline_str:
         DB          CR
 invalid_drive_str:
         DB          'IMPROPER UNIT SPECIFICATION',CR
-illegal_tape_fmt_str:
-        DB          'ILLEGAL TAPE FORMAT',CR
-tape_dir_header_str:
-        DB          'NAME  .EXT    TRK   FILE   BLKS LENGTH ATTR',CR
-tracks_usage_str:
-        DB          'TRACK USAGE:  TRK   BLKS  FILES',CR
+d_blocks_used_str:
+        DB          '/3926 BLOCKS USED',CR
 ibm_dir_header_str:
         DB          ' SECTOR   FILENAME  REC   BOE    EOE   P  CRDATE  EXDATE   EOD',CR
 map_status_str:

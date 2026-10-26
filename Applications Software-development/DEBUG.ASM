@@ -20,6 +20,14 @@
 ;//                 -> Version ID written to 0x2700
 ;//                 -> Sets XMON debug flag for later XMON versions that needs this
 ;//
+;//             2.0a: Entry at 0x2800
+;//
+;//                 -> No change
+;//
+;//             2.0b: Entry at 0x2800
+;//
+;//                 -> Sets the TOS-II device-driver to a dummy entry
+;//
 
 
 ;//////////////////////////////////////////////////////////////////////////////
@@ -45,6 +53,11 @@ SIGNATURE   EQU     02700H      ; Program signature
 DEBUG       EQU     0272DH      ; TOS debug flag
 DEBUGX      EQU     0275EH      ; XMON debug flag
 
+;
+; TOS-II system data
+;
+APP_DEVDRV  EQU     0FF30H      ; Application-level device-driver entry
+
 
 ;//////////////////////////////////////////////////////////////////////////////
 ;//
@@ -54,7 +67,7 @@ DEBUGX      EQU     0275EH      ; XMON debug flag
 
         ORG         SIGNATURE
         DB          'DEBUG',NULL
-        DB          '106'
+        DB          '200'
 
 
 ;//////////////////////////////////////////////////////////////////////////////
@@ -63,9 +76,30 @@ DEBUGX      EQU     0275EH      ; XMON debug flag
 ;//
 ;//////////////////////////////////////////////////////////////////////////////
 
-        ORG         0C000H
+        ORG         02800H
 start:
         MVI         A,TRUE
         STA         DEBUG
         STA         DEBUGX
         RET
+
+
+;//////////////////////////////////////////////////////////////////////////////
+;//
+;//     TOS-II application-level device driver
+;//
+;//////////////////////////////////////////////////////////////////////////////
+
+app_device_drivers:
+        DB          NULL
+
+
+;//////////////////////////////////////////////////////////////////////////////
+;//
+;//     TOS-II application-level device driver entry
+;//
+;//////////////////////////////////////////////////////////////////////////////
+
+        ORG         APP_DEVDRV
+        DW          app_device_drivers
+        DW          6

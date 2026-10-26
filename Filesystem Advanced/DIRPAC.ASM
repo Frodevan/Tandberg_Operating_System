@@ -6,10 +6,11 @@
 ;//
 ;//             [$:<Tn>:]
 ;//
-;//                 Tn          Drive type and number, default :F0:
+;//                 Tn          Drive type and number, default :D0:
 ;//
 ;//                 Drive type T:
-;//                     F       Floppy
+;//                     D       Floppy, TOS double-sided double-density
+;//                     F       Floppy, TOS single-sided single-density
 ;//
 ;//                 Drive number n:
 ;//                     0-3
@@ -19,9 +20,6 @@
 ;//         marked as deleted. This way existing file-entries will potentially be
 ;//         packed closer to the start of the table, something which may save a
 ;//         little time when doing file operations.
-;//
-;//         This program uses the TOS aliases for the XMON API for doing disk-
-;//         operations, instead of using the XMON API directly.
 ;//
 ;//
 ;//         Changelog:
@@ -38,6 +36,12 @@
 ;//
 ;//                 -> Flushes excess input characters from the extra parameters
 ;//
+;//             2.0a: Entry at 0x2A0D
+;//
+;//                 -> Adds support for double-sided floppy disk drives
+;//                 -> Has a bug where drive type D can only be selected by use of
+;//                    the default drive
+;//
 
 
 ;//////////////////////////////////////////////////////////////////////////////
@@ -49,6 +53,7 @@
 ;
 ; ASCII control characters
 ;
+NULL        EQU     000H        ; Null character
 CR          EQU     00DH        ; Cartridge Return
 
 ;
@@ -56,6 +61,15 @@ CR          EQU     00DH        ; Cartridge Return
 ;
 DISK_TRACK  EQU     00100H      ; Multiplier for floppy disk track
 DISK_SECTOR EQU     00001H      ; Multiplier for floppy disk sector
+
+;
+; XMON system calls
+;
+DCALW       EQU     00070H      ; Reset disk drive with wait
+DSRDW       EQU     00073H      ; Read from disk with wait
+DSWRW       EQU     00076H      ; Write to disk with wait
+DDSRDW      EQU     00097H      ; Read from double-sided disk with wait
+DDSWRW      EQU     0009AH      ; Write to double-sided disk with wait
 
 ;
 ; XMON and TOS system data
@@ -67,9 +81,6 @@ SIGNATURE   EQU     02700H      ; Program signature
 ;
 INCHAR      EQU     0FD09H      ; Input single character
 PUT         EQU     0FD12H      ; Output string of characters, inclusive CR
-DCALW       EQU     0FD70H      ; Reset disk drive with wait
-DSRDW       EQU     0FD73H      ; Read from disk with wait
-DSWRW       EQU     0FD76H      ; Write to disk with wait
 
 ;
 ; TOS standard files
@@ -86,7 +97,7 @@ CO_FCB      EQU     0FF02H      ; Console output abstract file FCB pointer
 
         ORG         SIGNATURE
         DB          'DIRPAC'
-        DB          '107'
+        DB          '200'
 
 
 ;//////////////////////////////////////////////////////////////////////////////
@@ -95,7 +106,11 @@ CO_FCB      EQU     0FF02H      ; Console output abstract file FCB pointer
 ;//
 ;//////////////////////////////////////////////////////////////////////////////
 
-        ORG         0C000H
+        ORG         02800H
+drive_type:
+        DB          0
+current_char:
+        DB          NULL
 drive_number:
         DB          0
 input_track_sector:
@@ -112,19 +127,18 @@ output_buffer_ptr:
         DW          00000H
 
 input_data_buffer:
-        DS          128
+        DS          256
 output_data_buffer:
-        DS          128
+        DS          256
 
 
 ;//////////////////////////////////////////////////////////////////////////////
 ;//
-;//     Main program
+;//     Main program: Initialization
 ;//
 ;//////////////////////////////////////////////////////////////////////////////
 
 start:
-beginning:
         ;
         ; Set default drive to floppy disk drive 0
         ;
@@ -134,15 +148,16 @@ beginning:
         ; Clear leading whitespace
         ;
         LHLD        CI_FCB
+clear_whitespace_loop:
         CALL        INCHAR
         RC
         CPI         ' '
-        JZ          beginning
+        JZ          clear_whitespace_loop
         ;
         ; Check if there are any command line arguments
         ;
         CPI         CR
-        JZ          pack_directory
+        JZ          pack_dsdd_directory
         ;
         ; Parse and verify drive designator argument
         ;
@@ -150,34 +165,211 @@ beginning:
         JNZ         invalid_drive
         CALL        INCHAR
         RC
+        STA         current_char
         CALL        to_uppercase
         CPI         'F'
         JNZ         invalid_drive
         CALL        INCHAR
         RC
-        CPI         '0'
-        JM          invalid_drive
-        CPI         '4'
-        JP          invalid_drive
+        STA         current_char
         SUI         '0'
+        JM          invalid_drive
+        CPI         4
+        JP          invalid_drive
         STA         drive_number
         CALL        INCHAR
         RC
         CPI         ':'
         JNZ         invalid_drive
         ;
-        ; Flush any remaining input chars
+        ; Verify no more command line arguments
         ;
-flush_next_input_char:
         CALL        INCHAR
         RC
+        STA         current_char
         CPI         CR
-        JNZ         flush_next_input_char
+        JNZ         invalid_drive
+        ;
+        ; Check drive type
+        ;
+        LDA         drive_type
+        CPI         'D'
+        JZ          pack_dsdd_directory
+        CPI         'F'
+        JZ          pack_sssd_directory
+        JMP         invalid_drive
+
+
+;//////////////////////////////////////////////////////////////////////////////
+;//
+;//     Main program: Pack directory on double-sided TOS disk
+;//
+;//////////////////////////////////////////////////////////////////////////////
+
+pack_dsdd_directory:
+        ;
+        ; Reset drive and set up initial addresses/pointers
+        ;
+        LDA         drive_number
+        CALL        DCALW
+        RC
+        LXI         H,1*DISK_TRACK + 6*DISK_SECTOR
+        SHLD        input_track_sector
+        SHLD        output_track_sector
+        LXI         H,output_data_buffer
+        SHLD        output_buffer_ptr
+        MVI         A,8
+        STA         output_file_entry_countdown
+        ;
+        ; Pack next sector of the file directory
+        ;
+d_pack_next_dir_sector:
+        ;
+        ; Read sector from file table
+        ;
+        LHLD        input_track_sector
+        MOV         B,H
+        MOV         C,L
+        LXI         H,input_data_buffer
+        LDA         drive_number
+        CALL        DDSRDW
+        RC
+        ;
+        ; Check each of the 8 file entries in sector
+        ;
+        LXI         H,input_data_buffer
+        SHLD        input_buffer_ptr
+        MVI         A,8
+        STA         input_file_entry_countdown
+d_check_file_entry:
+        ;
+        ; Keep file if active, otherwise advance to next entry with no action
+        ;
+        MOV         A,M
+        CPI         000H
+        JZ          d_keep_file_entry
+        LXI         D,020H
+        DAD         D
+d_check_next_file_entry:
+        ;
+        ; Store new data pointer and advance counter of entries left in sector
+        ;
+        SHLD        input_buffer_ptr
+        LDA         input_file_entry_countdown
+        DCR         A
+        STA         input_file_entry_countdown
+        JNZ         d_check_file_entry
+        ;
+        ; Advance current filetable sector-address
+        ;
+        LHLD        input_track_sector
+        INR         L
+        MOV         A,L
+        CPI         26
+        SHLD        input_track_sector
+        JNZ         d_pack_next_dir_sector
+        ;
+        ; Clear remaining file-entries of last sector with active files
+        ;
+        LHLD        output_buffer_ptr
 
 
 ;//////////////////////////////////////
 
-pack_directory:
+d_clear_next_file_entry:
+        MVI         M,07FH
+        LXI         D,020H
+        DAD         D
+        LDA         output_file_entry_countdown
+        DCR         A
+        STA         output_file_entry_countdown
+        JNZ         d_clear_next_file_entry
+        ;
+        ; Write sector with some or all cleared file entries
+        ;
+        LHLD        output_track_sector
+        MOV         B,H
+        MOV         C,L
+        LXI         H,output_data_buffer
+        LDA         drive_number
+        CALL        DDSWRW
+        RC
+        ;
+        ; Clear all file-entries in the rest of the file table sectors
+        ;
+        MVI         A,8
+        STA         output_file_entry_countdown
+        LHLD        output_track_sector
+        INR         L
+        SHLD        output_track_sector
+        MOV         A,L
+        LXI         H,output_data_buffer
+        CPI         26
+        JNZ         d_clear_next_file_entry
+        ;
+        ; Done packing the directory
+        ;
+        LXI         D,completed_ok_str
+        LHLD        CO_FCB
+        CALL        PUT
+        RET
+
+
+;//////////////////////////////////////
+
+d_keep_file_entry:
+        ;
+        ; Copy file entry between input and output buffers
+        ;
+        XCHG
+        LHLD        output_buffer_ptr
+        XCHG
+        MVI         B,020H
+d_copy_next_file_entry_byte:
+        MOV         A,M
+        STAX        D
+        INX         D
+        INX         H
+        DCR         B
+        JNZ         d_copy_next_file_entry_byte
+        ;
+        ; Advance to next entry of output buffer
+        ;
+        XCHG
+        SHLD        output_buffer_ptr
+        XCHG
+        LDA         output_file_entry_countdown
+        DCR         A
+        STA         output_file_entry_countdown
+        JNZ         d_check_next_file_entry
+        ;
+        ; Output buffer is full, write sector to disk and reset pointers
+        ;
+        PUSH        H
+        LHLD        output_track_sector
+        INR         L
+        SHLD        output_track_sector
+        DCR         L
+        MOV         B,H
+        MOV         C,L
+        LXI         H,output_data_buffer
+        SHLD        output_buffer_ptr
+        LDA         drive_number
+        CALL        DDSWRW
+        POP         H
+        RC
+        MVI         A,8
+        STA         output_file_entry_countdown
+        JMP         d_check_next_file_entry
+
+
+;//////////////////////////////////////////////////////////////////////////////
+;//
+;//     Main program: Pack directory on single-sided TOS disk
+;//
+;//////////////////////////////////////////////////////////////////////////////
+
+pack_sssd_directory:
         ;
         ; Reset drive and set up initial addresses/pointers
         ;
@@ -334,12 +526,29 @@ copy_next_file_entry_byte:
         JMP         check_next_file_entry
 
 
-;//////////////////////////////////////
+;//////////////////////////////////////////////////////////////////////////////
+;//
+;//     Main program: Termination
+;//
+;//////////////////////////////////////////////////////////////////////////////
 
 invalid_drive:
         LXI         D,invalid_drive_str
         LHLD        CO_FCB
         CALL        PUT
+        RC
+        ;
+        ; Flush any remaining input chars
+        ;
+        LDA         current_char
+        CPI         CR
+        RZ
+flush_next_input_char:
+        LHLD        CI_FCB
+        CALL        INCHAR
+        RC
+        CPI         CR
+        JNZ         flush_next_input_char
         RET
 
 
