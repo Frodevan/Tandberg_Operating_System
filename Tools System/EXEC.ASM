@@ -26,6 +26,8 @@
 ;//
 ;//                 -> Version ID written to 0x2700
 ;//
+;//             2.0: Entry at 0x2800
+;//
 
 
 ;//////////////////////////////////////////////////////////////////////////////
@@ -84,7 +86,7 @@ FM_NO_CLOSE EQU     040H        ; Don't close file flag
 ;//
 ;//////////////////////////////////////////////////////////////////////////////
 
-        ORG         0C000H
+        ORG         02800H
 start:
         ;
         ; Flag any cli-assigned abstract file to stay open

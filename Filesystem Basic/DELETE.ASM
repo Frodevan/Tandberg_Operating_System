@@ -66,6 +66,8 @@
 ;//                 -> Re-introduces support for the B and J drive types without
 ;//                    the bug in v1.5b
 ;//
+;//             2.0a: Entry at 0x292D
+;//
 
 
 ;//////////////////////////////////////////////////////////////////////////////
@@ -175,7 +177,7 @@ ATTR_F      EQU     080H        ; Format file
 ;//
 ;//////////////////////////////////////////////////////////////////////////////
 
-        ORG         0C000H
+        ORG         02800H
         JMP         beginning
 
 
@@ -215,17 +217,6 @@ data_buffer:
 ;//
 ;//     Main program
 ;//
-;//////////////////////////////////////////////////////////////////////////////
-
-to_uppercase:
-        CPI         'a'
-        RM
-        CPI         'z'+1
-        RP
-        ANI         0DFH
-        RET
-
-
 ;//////////////////////////////////////////////////////////////////////////////
 
 start:
@@ -485,73 +476,6 @@ delete_alias_file:
         ;
         LXI         D,alias_str
         JMP         file_done
-
-
-;//////////////////////////////////////
-
-file_not_found:
-        LXI         D,not_found_str
-        JMP         file_done
-
-
-;//////////////////////////////////////
-
-file_deleted:
-        LXI         D,deleted_str
-file_done:
-        LHLD        CO_FCB
-        CALL        PUT
-        RC
-        ;
-        ; Reset tape drive, if used
-        ;
-        LDA         drive_designator+1
-        CPI         'M'
-        JNZ         ready_for_next_file
-        LDA         drive_nr
-        CALL        CCAL
-        RC
-        ;
-        ; Go delete next file if more
-        ;
-ready_for_next_file:
-        LDA         input_char
-        CPI         ','
-        JZ          beginning
-        ANA         A
-        RET
-
-
-;//////////////////////////////////////
-
-invalid_drive:
-        LXI         D,improper_unit_str
-        JMP         print_error
-
-
-;//////////////////////////////////////
-
-invalid_input:
-        LXI         D,improper_params_str
-
-print_error:
-        ;
-        ; Print error message
-        ;
-        LHLD        CO_FCB
-        CALL        PUT
-        RC
-        ;
-        ; Flush remaining input before ending program
-        ;
-        LDA         input_char
-flush_input:
-        CPI         CR
-        RZ
-        LHLD        CI_FCB
-        CALL        INCHAR
-        RC
-        JMP         flush_input
 
 
 ;//////////////////////////////////////////////////////////////////////////////
@@ -818,6 +742,73 @@ compare_ibm_filename_done:
 
 ;//////////////////////////////////////////////////////////////////////////////
 
+file_not_found:
+        LXI         D,not_found_str
+        JMP         file_done
+
+
+;//////////////////////////////////////
+
+file_deleted:
+        LXI         D,deleted_str
+file_done:
+        LHLD        CO_FCB
+        CALL        PUT
+        RC
+        ;
+        ; Reset tape drive, if used
+        ;
+        LDA         drive_designator+1
+        CPI         'M'
+        JNZ         ready_for_next_file
+        LDA         drive_nr
+        CALL        CCAL
+        RC
+        ;
+        ; Go delete next file if more
+        ;
+ready_for_next_file:
+        LDA         input_char
+        CPI         ','
+        JZ          beginning
+        ANA         A
+        RET
+
+
+;//////////////////////////////////////
+
+invalid_drive:
+        LXI         D,improper_unit_str
+        JMP         print_error
+
+
+;//////////////////////////////////////
+
+invalid_input:
+        LXI         D,improper_params_str
+
+print_error:
+        ;
+        ; Print error message
+        ;
+        LHLD        CO_FCB
+        CALL        PUT
+        RC
+        ;
+        ; Flush remaining input before ending program
+        ;
+        LDA         input_char
+flush_input:
+        CPI         CR
+        RZ
+        LHLD        CI_FCB
+        CALL        INCHAR
+        RC
+        JMP         flush_input
+
+
+;//////////////////////////////////////////////////////////////////////////////
+
         ;
         ; Print filename of Intel or Tape file
         ;
@@ -914,6 +905,17 @@ print_next_ibm_filename_char:
         JNZ         print_next_ibm_filename_char
         MVI         A,' '
         CALL        OUTCHAR
+        RET
+
+
+;//////////////////////////////////////////////////////////////////////////////
+
+to_uppercase:
+        CPI         'a'
+        RM
+        CPI         'z'+1
+        RP
+        ANI         0DFH
         RET
 
 

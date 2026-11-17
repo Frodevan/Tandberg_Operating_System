@@ -52,6 +52,8 @@
 ;//                 -> Ignonres files with the Direct-Access attribute set as well
 ;//                 -> Copies over any other attributes
 ;//
+;//             2.0a: Entry at 0x301E
+;//
 
 
 ;//////////////////////////////////////////////////////////////////////////////
@@ -156,7 +158,7 @@ FM_BINARY   EQU     004H        ; Binary flag
 ;//
 ;//////////////////////////////////////////////////////////////////////////////
 
-        ORG         0C800H
+        ORG         02800H
 program_origin:
         JMP         beginning
 
@@ -167,19 +169,36 @@ program_origin:
 ;//
 ;//////////////////////////////////////////////////////////////////////////////
 
+data_buffer_ptr:
+        DW          00000H
 data_buffer_length:
         DW          0
 data_buffer_free:
         DW          0
 data_buffer_chars:
         DW          0
-data_buffer_ptr:
-        DW          00000H
 
 end_of_file_flag:
         DB          FALSE
 file_attributes:
         DB          000H
+
+        DS          256
+out_file_buffer:
+        DS          128
+in_file_buffer:
+        DS          128
+in_file_linking_block_buffer:
+        DS          128
+out_file_linking_block_buffer:
+        DS          128
+dir_file_buffer:
+        DS          128
+dir_file_linking_block_buffer:
+        DS          128
+flush_outlet:
+        DS          16
+
 
 ;//////////////////////////////////////
 
@@ -203,11 +222,6 @@ directory_file_fcb:
         DS          1
         DW          dir_file_linking_block_buffer
 
-dir_file_buffer:
-        DS          128
-dir_file_linking_block_buffer:
-        DS          128
-
 
 ;//////////////////////////////////////
 
@@ -230,11 +244,6 @@ input_file_fcb:
         DS          1
         DW          in_file_linking_block_buffer
 
-in_file_buffer:
-        DS          128
-in_file_linking_block_buffer:
-        DS          128
-
 
 ;//////////////////////////////////////
 
@@ -256,17 +265,6 @@ output_file_fcb:
         DS          1
         DS          1
         DW          out_file_linking_block_buffer
-
-out_file_buffer:
-        DS          128
-out_file_linking_block_buffer:
-        DS          128
-
-
-;//////////////////////////////////////
-
-flush_outlet:
-        DS          16
 
 
 ;//////////////////////////////////////////////////////////////////////////////

@@ -79,6 +79,8 @@
 ;//                    so. This is different from older versions, which would take
 ;//                    a new option to replace the previous choice here.
 ;//
+;//             2.0a: Entry at 0x2800
+;//
 
 
 ;//////////////////////////////////////////////////////////////////////////////
@@ -153,7 +155,7 @@ ERROR_20    EQU     020H        ; DELETED DATA RECORD
 ;//
 ;//////////////////////////////////////////////////////////////////////////////
 
-        ORG         02000H
+        ORG         02800H
 start:
         ;
         ; Backup stack pointer, for breaking out of program
@@ -541,87 +543,6 @@ copy_successful:
         JMP         quit_program
 
 
-;//////////////////////////////////////
-
-print_and_quit:
-        LHLD        CO_FCB
-        CALL        PUT
-        JC          quit_with_error_code
-quit_program:
-        ;
-        ; Cleanup and quit program
-        ;
-        XRA         A
-quit_with_error_code:
-        LHLD        saved_stack_ptr
-        SPHL
-        RET
-
-
-;//////////////////////////////////////////////////////////////////////////////
-;//
-;//     Subroutines
-;//
-;//////////////////////////////////////////////////////////////////////////////
-
-        ;
-        ; Run a prompt after printing the string pointed to by DE
-        ;
-prompt_user:
-        LHLD        CO_FCB
-        CALL        PUTSTR
-        JC          quit_with_error_code
-        ;
-        ; Flush input and wait for user choice
-        ;
-        XRA         A
-        STA         KEYBUF
-        CALL        TTI
-        ;
-        ; Clear prompt after choice has been made
-        ;
-        PUSH        PSW
-        MVI         A,ERLIN
-        CALL        TTO
-        POP         PSW
-        ;
-        ; Answering Q to the prompt will end the program immediately
-        ;
-        CPI         'Q'
-        JZ          quit_with_error_code
-        CPI         'q'
-        JZ          quit_with_error_code
-        RET
-
-
-;//////////////////////////////////////////////////////////////////////////////
-
-        ;
-        ; Input a single character to A
-        ;
-get_input_char:
-        PUSH        H
-        PUSH        B
-        LHLD        CI_FCB
-        CALL        INCHAR
-        JC          quit_with_error_code
-        MOV         C,A
-        ;
-        ; Flush remaining input chars
-        ;
-flush_user_input_prompt:
-        CPI         CR
-        JZ          user_input_flushed
-        CALL        INCHAR
-        JMP         flush_user_input_prompt
-
-user_input_flushed:
-        MOV         A,C
-        POP         B
-        POP         H
-        RET
-
-
 ;//////////////////////////////////////////////////////////////////////////////
 
         ;
@@ -717,6 +638,87 @@ write_deleted_sector:
         CPI         ERROR_20
         JZ          write_sector_ok
         STC
+        RET
+
+
+;//////////////////////////////////////////////////////////////////////////////
+
+print_and_quit:
+        LHLD        CO_FCB
+        CALL        PUT
+        JC          quit_with_error_code
+quit_program:
+        ;
+        ; Cleanup and quit program
+        ;
+        XRA         A
+quit_with_error_code:
+        LHLD        saved_stack_ptr
+        SPHL
+        RET
+
+
+;//////////////////////////////////////////////////////////////////////////////
+;//
+;//     Subroutines
+;//
+;//////////////////////////////////////////////////////////////////////////////
+
+        ;
+        ; Run a prompt after printing the string pointed to by DE
+        ;
+prompt_user:
+        LHLD        CO_FCB
+        CALL        PUTSTR
+        JC          quit_with_error_code
+        ;
+        ; Flush input and wait for user choice
+        ;
+        XRA         A
+        STA         KEYBUF
+        CALL        TTI
+        ;
+        ; Clear prompt after choice has been made
+        ;
+        PUSH        PSW
+        MVI         A,ERLIN
+        CALL        TTO
+        POP         PSW
+        ;
+        ; Answering Q to the prompt will end the program immediately
+        ;
+        CPI         'Q'
+        JZ          quit_with_error_code
+        CPI         'q'
+        JZ          quit_with_error_code
+        RET
+
+
+;//////////////////////////////////////////////////////////////////////////////
+
+        ;
+        ; Input a single character to A
+        ;
+get_input_char:
+        PUSH        H
+        PUSH        B
+        LHLD        CI_FCB
+        CALL        INCHAR
+        JC          quit_with_error_code
+        MOV         C,A
+        ;
+        ; Flush remaining input chars
+        ;
+flush_user_input_prompt:
+        CPI         CR
+        JZ          user_input_flushed
+        CALL        INCHAR
+        JMP         flush_user_input_prompt
+
+user_input_flushed:
+        MOV         A,C
+        POP         B
+        POP         H
         RET
 
 

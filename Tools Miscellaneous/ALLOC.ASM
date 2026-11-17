@@ -130,6 +130,8 @@
 ;//                 -> Use TOS CO file instead of XMON API to print Ctrl-characters
 ;//                 -> Updates the no-autoscroll line counter when cursor is moved
 ;//
+;//             2.0: Entry at 0x2800
+;//
 
 
 ;//////////////////////////////////////////////////////////////////////////////
@@ -210,7 +212,7 @@ ERROR_20    EQU     020H        ; DELETED DATA RECORD
 ;//
 ;//////////////////////////////////////////////////////////////////////////////
 
-        ORG         0C000H
+        ORG         02800H
 start:
         ;
         ; Save stack-pointer for breaking out of subroutines

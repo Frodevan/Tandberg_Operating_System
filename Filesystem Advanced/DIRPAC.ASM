@@ -38,6 +38,8 @@
 ;//
 ;//                 -> Flushes excess input characters from the extra parameters
 ;//
+;//             2.0a: Entry at 0x2A0D
+;//
 
 
 ;//////////////////////////////////////////////////////////////////////////////
@@ -95,7 +97,7 @@ CO_FCB      EQU     0FF02H      ; Console output abstract file FCB pointer
 ;//
 ;//////////////////////////////////////////////////////////////////////////////
 
-        ORG         0C000H
+        ORG         02800H
 drive_number:
         DB          0
 input_track_sector:

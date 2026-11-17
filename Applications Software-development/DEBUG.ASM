@@ -20,6 +20,8 @@
 ;//                 -> Version ID written to 0x2700
 ;//                 -> Sets XMON debug flag for later XMON versions that needs this
 ;//
+;//             2.0a: Entry at 0x2800
+;//
 
 
 ;//////////////////////////////////////////////////////////////////////////////
@@ -63,7 +65,7 @@ DEBUGX      EQU     0275EH      ; XMON debug flag
 ;//
 ;//////////////////////////////////////////////////////////////////////////////
 
-        ORG         0C000H
+        ORG         02800H
 start:
         MVI         A,TRUE
         STA         DEBUG

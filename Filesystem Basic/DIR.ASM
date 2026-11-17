@@ -93,6 +93,8 @@
 ;//                 -> Fixes the intel-file block-counting bug from v1.2
 ;//                 -> Fixes the drive type bug introduced in v1.5b
 ;//
+;//             2.0a: Entry at 0x2A0A
+;//
 
 
 ;//////////////////////////////////////////////////////////////////////////////
@@ -210,7 +212,7 @@ FM_BINARY   EQU     004H        ; Binary flag
 ;//
 ;//////////////////////////////////////////////////////////////////////////////
 
-        ORG         0C000H
+        ORG         02800H
         JMP         beginning
 
 
@@ -224,35 +226,14 @@ intel_mapfile_name:
         DB          'ISIS',NULL,NULL
         DB          'MAP'
 
-ibm_file_signature:
-        DB          'HDR1'
-ibm_deleted_signature:
-        DB          'DDR1'
-
 sp_backup:
         DS          2
 input_char:
         DS          1
 
-ibm_file_parameter_indexes:
-        DB          01CH
-        DB          022H
-        DB          02AH
-        DB          02FH
-        DB          042H
-        DB          04AH
-
-ibm_read_call:
-        DS          2
-
-lines_left_on_page_counter:
-        DB          24
-
 use_console_flag:
         DB          FALSE
 option_i_flag:
-        DB          FALSE
-first_ibm_file_found_flag:
         DB          FALSE
 
 SO_FCB_backup:
@@ -299,20 +280,6 @@ tape_track_nr_char:
 ;//
 ;//     Main program
 ;//
-;//////////////////////////////////////////////////////////////////////////////
-
-        ;
-        ; Convert character in A to uppercase
-        ;
-to_uppercase:
-        CPI         'a'
-        RM
-        CPI         'z'+1
-        RP
-        ANI         0DFH
-        RET
-
-
 ;//////////////////////////////////////////////////////////////////////////////
 
 start:
@@ -693,162 +660,95 @@ quit:
 
 ;//////////////////////////////////////////////////////////////////////////////
 
-first_digit_found_flag:
-        DB          FALSE
-decimal_magnitude_ptr:
-        DW          00000H
-
-big_number_backup:
-        DB          000H,000H,000H
-big_number:
-        DB          000H,000H,000H
-
-
-;//////////////////////////////////////
-
-print_big_number:
-        MVI         A,' '
-        CALL        print_char
-        XRA         A
-        STA         first_digit_found_flag
         ;
-        ; The case of zero is handled separately to save on time
+        ; Calculate file size based on HL blocks used and final block size E
         ;
-        LXI         H,big_number
-        ORA         M
-        INX         H
-        ORA         M
-        INX         H
-        ORA         M
-        JZ          big_number_is_zero
+calculate_file_size:
         ;
-        ; Set up to divide with magnitudes to produce a 6 digit decimal
+        ; Check for edge-case where file is completely empty
         ;
-        MVI         A,6
-        LXI         H,decimal_magnitude_list+2
-get_next_decimal_digit:
+        MOV         A,L
+        ORA         H
+        JZ          block_count_ready
         ;
-        ; Save pointer to current decimal magnitude constant
+        ; Subtract 1 from HL since we are adding the last block size separately
         ;
-        SHLD        decimal_magnitude_ptr
-        ;
-        ; Prepare division of next decimal magnitude
-        ;
-        PUSH        PSW
-        LXI         D,big_number+2
-        MVI         B,'0'
-subtract_magnitude_const:
-        PUSH        D
-        ;
-        ; Save big number in case next subtraction underflows
-        ;
-        LHLD        big_number+1
-        SHLD        big_number_backup+1
-        LDA         big_number
-        STA         big_number_backup
-        ;
-        ; Subtract decimal magnitude using addition and negative constant
-        ;
-        LHLD        decimal_magnitude_ptr
-        MVI         C,3
-        XRA         A
-subtract_next_bits:
-        ;
-        ; Subtract next 8 bit part of decimal magnitude from big number
-        ;
-        LDAX        D
-        ADC         M
-        STAX        D
-        ;
-        ; Advance to next 8 bits
-        ;
-        PUSH        PSW
-        DCR         C
-        JZ          single_subtraction_done
         DCX         H
-        DCX         D
-        POP         PSW
-        JMP         subtract_next_bits
-
-single_subtraction_done:
+block_count_ready:
         ;
-        ; Check if subtraction underflowed, meaning the division is done
+        ; Multiply full block count with block size of 128
         ;
-        POP         PSW
-        POP         D
-        JNC         single_dvision_done
-        ;
-        ; If not done, add one to decimal digit and continue division
-        ;
-        INR         B
-        JMP         subtract_magnitude_const
-
-single_dvision_done:
-        ;
-        ; Revert the underflowing subtraction, to get the proper remainder
-        ;
-        LHLD        big_number_backup+1
-        SHLD        big_number+1
-        LDA         big_number_backup
+        XRA         A
+        MOV         A,H
+        RAR
         STA         big_number
+        MOV         A,L
+        RAR
+        STA         big_number+1
+        RAR
+        ANI         080H
         ;
-        ; Recover decimal digit and make sure leading zeroes are blanked
+        ; Add final block size E to result
         ;
-        MOV         A,B
-        CPI         '0'
-        JNZ         non_zero_digit_found
-        LDA         first_digit_found_flag
-        ORA         A
-        JNZ         include_next_digit
-        MVI         A,' '
-print_next_big_number_digit:
-        CALL        print_char
-        POP         PSW
-        DCR         A
-        RZ
+        ADD         E
+        STA         big_number+2
+        LDA         big_number+1
+        ACI         0
+        STA         big_number+1
+        RET
+
+
+;//////////////////////////////////////////////////////////////////////////////
+
         ;
-        ; Advance to magnitude constant for next decimal digit
+        ; Count all bits set in sector addressed by HL, and add to total count
         ;
-        LHLD        decimal_magnitude_ptr
-        LXI         D,3
+add_bits_in_sector:
+        ;
+        ; Read sector from disk
+        ;
+        MOV         B,H
+        MOV         C,L
+        LXI         H,input_data_buffer
+        LDA         directory_file_fcb + FCB_DRVNR
+        CALL        DSRDW
+        JC          exit_program
+        ;
+        ; Prepare to count bits in all 128 bytes
+        ;
+        LXI         D,0
+        MVI         B,128
+count_bits_in_next_byte:
+        ;
+        ; Set up bitmask to count bits in byte
+        ;
+        MVI         C,080H
+        MOV         A,C
+count_next_bit_in_byte:
+        ANA         M
+        JZ          done_counting_bit
+        INX         D
+done_counting_bit:
+        ;
+        ; Advance bitmask to next bit
+        ;
+        MOV         A,C
+        RAR
+        MOV         C,A
+        JNC         count_next_bit_in_byte
+        ;
+        ; Advance to next byte of sector
+        ;
+        INX         H
+        DCR         B
+        JNZ         count_bits_in_next_byte
+        ;
+        ; Add bitcount to total count
+        ;
+        LHLD        total_block_count
         DAD         D
-        JMP         get_next_decimal_digit
-
-non_zero_digit_found:
-        MVI         A,TRUE
-        STA         first_digit_found_flag
-include_next_digit:
-        ;
-        ; Recover decimal digit again, for printing
-        ;
-        MOV         A,B
-        JMP         print_next_big_number_digit
-
-
-;//////////////////////////////////////
-
-big_number_is_zero:
-        ;
-        ; Just print a single zero with no further calculations
-        ;
-        MVI         B,5
-        CALL        print_spaces
-        MVI         A,'0'
-        JMP         print_char
-
-
-;//////////////////////////////////////
-
-        ;
-        ; NOTE: negative magnitude constants due to using additions to subtract
-        ;
-decimal_magnitude_list:
-        DB          0FEH,079H,060H
-        DB          0FFH,0D8H,0F0H
-        DB          0FFH,0FCH,018H
-        DB          0FFH,0FFH,09CH
-        DB          0FFH,0FFH,0F6H
-        DB          0FFH,0FFH,0FFH
+        SHLD        total_block_count
+        RET
 
 
 ;//////////////////////////////////////////////////////////////////////////////
@@ -1142,6 +1042,31 @@ tape_track_status_char_ready:
 
 ;//////////////////////////////////////////////////////////////////////////////
 
+ibm_file_signature:
+        DB          'HDR1'
+ibm_deleted_signature:
+        DB          'DDR1'
+
+ibm_file_parameter_indexes:
+        DB          01CH
+        DB          022H
+        DB          02AH
+        DB          02FH
+        DB          042H
+        DB          04AH
+
+ibm_read_call:
+        DS          2
+
+lines_left_on_page_counter:
+        DB          24
+
+first_ibm_file_found_flag:
+        DB          FALSE
+
+
+;//////////////////////////////////////////////////////////////////////////////
+
 use_ibm_ascii_format:
         LXI         H,DSRDW
         JMP         ibm_disk_type_set
@@ -1296,16 +1221,6 @@ read_ibm_sector:
 
 ;//////////////////////////////////////
 
-unrecognized_floppy_format:
-        LXI         D,newline_str
-        CALL        print_str
-        LXI         D,invalid_disk_format_str
-        CALL        print_str
-        JMP         exit_program
-
-
-;//////////////////////////////////////
-
         ;
         ; Compare 4-character strings pointed to by DE and HL
         ;
@@ -1333,6 +1248,180 @@ compare_next_ibm_sig_char:
 ;//
 ;//     Subroutines
 ;//
+;//////////////////////////////////////////////////////////////////////////////
+
+first_digit_found_flag:
+        DB          FALSE
+decimal_magnitude_ptr:
+        DW          00000H
+
+big_number_backup:
+        DB          000H,000H,000H
+big_number:
+        DB          000H,000H,000H
+
+
+;//////////////////////////////////////
+
+print_big_number:
+        MVI         A,' '
+        CALL        print_char
+        XRA         A
+        STA         first_digit_found_flag
+        ;
+        ; The case of zero is handled separately to save on time
+        ;
+        LXI         H,big_number
+        ORA         M
+        INX         H
+        ORA         M
+        INX         H
+        ORA         M
+        JZ          big_number_is_zero
+        ;
+        ; Set up to divide with magnitudes to produce a 6 digit decimal
+        ;
+        MVI         A,6
+        LXI         H,decimal_magnitude_list+2
+get_next_decimal_digit:
+        ;
+        ; Save pointer to current decimal magnitude constant
+        ;
+        SHLD        decimal_magnitude_ptr
+        ;
+        ; Prepare division of next decimal magnitude
+        ;
+        PUSH        PSW
+        LXI         D,big_number+2
+        MVI         B,'0'
+subtract_magnitude_const:
+        PUSH        D
+        ;
+        ; Save big number in case next subtraction underflows
+        ;
+        LHLD        big_number+1
+        SHLD        big_number_backup+1
+        LDA         big_number
+        STA         big_number_backup
+        ;
+        ; Subtract decimal magnitude using addition and negative constant
+        ;
+        LHLD        decimal_magnitude_ptr
+        MVI         C,3
+        XRA         A
+subtract_next_bits:
+        ;
+        ; Subtract next 8 bit part of decimal magnitude from big number
+        ;
+        LDAX        D
+        ADC         M
+        STAX        D
+        ;
+        ; Advance to next 8 bits
+        ;
+        PUSH        PSW
+        DCR         C
+        JZ          single_subtraction_done
+        DCX         H
+        DCX         D
+        POP         PSW
+        JMP         subtract_next_bits
+
+single_subtraction_done:
+        ;
+        ; Check if subtraction underflowed, meaning the division is done
+        ;
+        POP         PSW
+        POP         D
+        JNC         single_dvision_done
+        ;
+        ; If not done, add one to decimal digit and continue division
+        ;
+        INR         B
+        JMP         subtract_magnitude_const
+
+single_dvision_done:
+        ;
+        ; Revert the underflowing subtraction, to get the proper remainder
+        ;
+        LHLD        big_number_backup+1
+        SHLD        big_number+1
+        LDA         big_number_backup
+        STA         big_number
+        ;
+        ; Recover decimal digit and make sure leading zeroes are blanked
+        ;
+        MOV         A,B
+        CPI         '0'
+        JNZ         non_zero_digit_found
+        LDA         first_digit_found_flag
+        ORA         A
+        JNZ         include_next_digit
+        MVI         A,' '
+print_next_big_number_digit:
+        CALL        print_char
+        POP         PSW
+        DCR         A
+        RZ
+        ;
+        ; Advance to magnitude constant for next decimal digit
+        ;
+        LHLD        decimal_magnitude_ptr
+        LXI         D,3
+        DAD         D
+        JMP         get_next_decimal_digit
+
+non_zero_digit_found:
+        MVI         A,TRUE
+        STA         first_digit_found_flag
+include_next_digit:
+        ;
+        ; Recover decimal digit again, for printing
+        ;
+        MOV         A,B
+        JMP         print_next_big_number_digit
+
+
+;//////////////////////////////////////
+
+big_number_is_zero:
+        ;
+        ; Just print a single zero with no further calculations
+        ;
+        MVI         B,5
+        CALL        print_spaces
+        MVI         A,'0'
+        JMP         print_char
+
+
+;//////////////////////////////////////
+
+        ;
+        ; NOTE: negative magnitude constants due to using additions to subtract
+        ;
+decimal_magnitude_list:
+        DB          0FEH,079H,060H
+        DB          0FFH,0D8H,0F0H
+        DB          0FFH,0FCH,018H
+        DB          0FFH,0FFH,09CH
+        DB          0FFH,0FFH,0F6H
+        DB          0FFH,0FFH,0FFH
+
+
+;//////////////////////////////////////////////////////////////////////////////
+
+        ;
+        ; Convert character in A to uppercase
+        ;
+to_uppercase:
+        CPI         'a'
+        RM
+        CPI         'z'+1
+        RP
+        ANI         0DFH
+        RET
+
+
 ;//////////////////////////////////////////////////////////////////////////////
 
         ;
@@ -1474,95 +1563,12 @@ print_word:
 
 ;//////////////////////////////////////////////////////////////////////////////
 
-        ;
-        ; Calculate file size based on HL blocks used and final block size E
-        ;
-calculate_file_size:
-        ;
-        ; Check for edge-case where file is completely empty
-        ;
-        MOV         A,L
-        ORA         H
-        JZ          block_count_ready
-        ;
-        ; Subtract 1 from HL since we are adding the last block size separately
-        ;
-        DCX         H
-block_count_ready:
-        ;
-        ; Multiply full block count with block size of 128
-        ;
-        XRA         A
-        MOV         A,H
-        RAR
-        STA         big_number
-        MOV         A,L
-        RAR
-        STA         big_number+1
-        RAR
-        ANI         080H
-        ;
-        ; Add final block size E to result
-        ;
-        ADD         E
-        STA         big_number+2
-        LDA         big_number+1
-        ACI         0
-        STA         big_number+1
-        RET
-
-
-;//////////////////////////////////////////////////////////////////////////////
-
-        ;
-        ; Count all bits set in sector addressed by HL, and add to total count
-        ;
-add_bits_in_sector:
-        ;
-        ; Read sector from disk
-        ;
-        MOV         B,H
-        MOV         C,L
-        LXI         H,input_data_buffer
-        LDA         directory_file_fcb + FCB_DRVNR
-        CALL        DSRDW
-        JC          exit_program
-        ;
-        ; Prepare to count bits in all 128 bytes
-        ;
-        LXI         D,0
-        MVI         B,128
-count_bits_in_next_byte:
-        ;
-        ; Set up bitmask to count bits in byte
-        ;
-        MVI         C,080H
-        MOV         A,C
-count_next_bit_in_byte:
-        ANA         M
-        JZ          done_counting_bit
-        INX         D
-done_counting_bit:
-        ;
-        ; Advance bitmask to next bit
-        ;
-        MOV         A,C
-        RAR
-        MOV         C,A
-        JNC         count_next_bit_in_byte
-        ;
-        ; Advance to next byte of sector
-        ;
-        INX         H
-        DCR         B
-        JNZ         count_bits_in_next_byte
-        ;
-        ; Add bitcount to total count
-        ;
-        LHLD        total_block_count
-        DAD         D
-        SHLD        total_block_count
-        RET
+unrecognized_floppy_format:
+        LXI         D,newline_str
+        CALL        print_str
+        LXI         D,invalid_disk_format_str
+        CALL        print_str
+        JMP         exit_program
 
 
 ;//////////////////////////////////////////////////////////////////////////////

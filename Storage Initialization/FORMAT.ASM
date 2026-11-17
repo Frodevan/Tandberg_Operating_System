@@ -120,6 +120,8 @@
 ;//
 ;//                 -> Fixes the S argument drive-check bug from v1.7a
 ;//
+;//             2.0a: Entry at 0x3147
+;//
 
 
 ;//////////////////////////////////////////////////////////////////////////////
@@ -254,31 +256,6 @@ FM_BINARY   EQU     004H        ; Binary flag
 
 ;//////////////////////////////////////////////////////////////////////////////
 ;//
-;//     Data buffers
-;//
-;//////////////////////////////////////////////////////////////////////////////
-
-        ORG         02000H
-dest_file_data_buffer:
-        DS          128
-src_file_data_buffer:
-        DS          128
-tape_buffer_overrun:
-        DS          2
-src_file_linking_block:
-        DS          128
-dest_file_linking_block:
-        DS          128
-dir_file_data_buffer:
-        DS          128
-dir_file_linking_block_buffer:
-        DS          128
-scratchpad_ram:
-        DS          16
-
-
-;//////////////////////////////////////////////////////////////////////////////
-;//
 ;//     Signature
 ;//
 ;//////////////////////////////////////////////////////////////////////////////
@@ -294,7 +271,7 @@ scratchpad_ram:
 ;//
 ;//////////////////////////////////////////////////////////////////////////////
 
-        ORG         0BA00H
+        ORG         02800H
 program_origin:
         JMP         beginning
 
@@ -349,6 +326,23 @@ intel_label_str:
 
 data_buffer:
         DS          128
+dest_file_data_buffer:
+        DS          128
+src_file_data_buffer:
+        DS          128
+tape_buffer_overrun:
+        DS          2
+src_file_linking_block:
+        DS          128
+dest_file_linking_block:
+        DS          128
+dir_file_data_buffer:
+        DS          128
+dir_file_linking_block_buffer:
+        DS          128
+scratchpad_ram:
+        DS          16
+
 
 first_directory_block:
         DB          000H
@@ -525,55 +519,6 @@ DEST_FILE_FCB:
 ;//     Main program
 ;//
 ;//////////////////////////////////////////////////////////////////////////////
-
-invalid_drive:
-        LXI         D,invalid_drive_str
-        JMP         print_and_quit
-
-
-;//////////////////////////////////////
-
-invalid_cli_args:
-        LXI         D,invalid_cli_args_str
-        JMP         print_and_quit
-
-
-;//////////////////////////////////////
-
-label_not_found:
-        LXI         D,label_not_found_str
-        JMP         print_and_quit
-
-
-;//////////////////////////////////////
-
-same_drive_not_supported:
-        LXI         D,same_sys_disk_str
-        CPI         'F'
-        JZ          print_and_quit
-        LXI         D,same_sys_tape_str
-
-
-;//////////////////////////////////////
-
-print_and_quit:
-        LHLD        CO_FCB
-        CALL        PUT
-        RC
-quit_program:
-        ;
-        ; Flush any remaining input before quitting
-        ;
-        LDA         input_char
-        CPI         CR
-        RZ
-        LHLD        CI_FCB
-        LXI         D,scratchpad_ram
-        CALL        GET
-        RET
-
-
-;//////////////////////////////////////
 
 start:
 beginning:
@@ -1727,6 +1672,55 @@ operation_aborted:
 quit_program_from_subroutine:
         INX         SP
         INX         SP
+        RET
+
+
+;//////////////////////////////////////////////////////////////////////////////
+
+invalid_drive:
+        LXI         D,invalid_drive_str
+        JMP         print_and_quit
+
+
+;//////////////////////////////////////
+
+invalid_cli_args:
+        LXI         D,invalid_cli_args_str
+        JMP         print_and_quit
+
+
+;//////////////////////////////////////
+
+label_not_found:
+        LXI         D,label_not_found_str
+        JMP         print_and_quit
+
+
+;//////////////////////////////////////
+
+same_drive_not_supported:
+        LXI         D,same_sys_disk_str
+        CPI         'F'
+        JZ          print_and_quit
+        LXI         D,same_sys_tape_str
+
+
+;//////////////////////////////////////
+
+print_and_quit:
+        LHLD        CO_FCB
+        CALL        PUT
+        RC
+quit_program:
+        ;
+        ; Flush any remaining input before quitting
+        ;
+        LDA         input_char
+        CPI         CR
+        RZ
+        LHLD        CI_FCB
+        LXI         D,scratchpad_ram
+        CALL        GET
         RET
 
 
